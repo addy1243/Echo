@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
@@ -29,7 +30,7 @@ class HomeHistoryRegressionTest {
     @Test fun persistedRecentTrackCanAlsoAppearInLibraryAcrossActivityRecreation() {
         val repository = LibraryRepository(context)
         val title = runBlocking {
-            // Home reverses the final twelve library rows, so this fixture is its first row.
+            // Home reverses its final library rows, so this fixture is its first row.
             val lastTitle = repository.tracks.first().lastOrNull()?.title.orEmpty()
             val track = Track(fixtureId, "$lastTitle Echo history regression $fixtureId", fixtureId, album = fixtureId)
             repository.upsertTracks(listOf(track))
@@ -45,7 +46,7 @@ class HomeHistoryRegressionTest {
 
     private fun assertBothHomeSectionsRender(title: String) {
         compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithText("On repeat").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("home-feed").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("home-feed").performScrollToNode(hasText("On repeat"))
         compose.onNodeWithText("On repeat").assertIsDisplayed()

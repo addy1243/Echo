@@ -4,7 +4,7 @@ This file records development changes. A development build or an entry here does
 
 ## Unreleased — 2026-10-25
 
-Current Android source defaults: **0.1.3 / versionCode 4**. Assign a newer version code before publishing an update to an installation already running code 4.
+Current Android source defaults: **0.1.4 / versionCode 5**. Assign a newer version code before publishing an update to an installation already running code 5.
 
 ### Added
 
@@ -21,6 +21,8 @@ Current Android source defaults: **0.1.3 / versionCode 4**. Assign a newer versi
 - Spotify onboarding work: fixed mobile callback and build-time public Client ID configuration. Live account authorization remains a separate verification requirement.
 
 ### Changed
+
+- Home uses a compact header, swipeable discovery song previews, two live mix entry cards, saved playlist cards and useful listening shortcuts before recent/library rows. New music opens its own tab directly. Existing library songs are clearly labeled when used as discovery-loading fallbacks; background discovery no longer blocks import or other actions.
 
 - Normal Settings now points to file import instead of Premium-dependent Spotify login. Existing credentials can still be disconnected; Spotify automatic playlist sync is not promised.
 

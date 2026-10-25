@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -109,27 +110,14 @@ fun EchoApp(vm: EchoViewModel) {
                 if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 NavHost(nav, startDestination = "home", modifier = Modifier.weight(1f)) {
                     composable("home") {
-                        LazyColumn(modifier = Modifier.testTag("home-feed"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                            item { Hero("Your music.\nYour space.", "A little room for everything you love.") }
-                            item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = scan) { Icon(Icons.Default.Sync, null); Text(" Scan music") }; OutlinedButton(onClick = { nav.navigate("discover") }) { Text("Discover") } } }
-                            if (vm.current == null) item { TextButton(onClick = vm::resume, enabled = vm.controller != null) { Icon(Icons.Default.Restore, null); Text(" Resume saved queue") } }
-                            if (tracks.isEmpty()) item { EmptyState("Make yourself at home", "Discover music online, scan your device, or choose an audio file in Library.") }
-                            if (recent.isNotEmpty()) {
-                                item { SectionTitle("On repeat") }
-                                items(recent.take(8), key = { "recent:${it.id}" }) { TrackRow(it, vm, playlists, favorites) { vm.play(recent, recent.indexOf(it)) } }
-                            }
-                            if (playlists.isNotEmpty()) {
-                                item { SectionTitle("Your playlists") }
-                                items(playlists, key = { "playlist:${it.id}" }) { PlaylistCard(it) { nav.navigate("playlist/${it.id}") } }
-                            }
-                            if (tracks.isNotEmpty()) {
-                                item { SectionTitle("From your library") }
-                                items(tracks.takeLast(12).reversed(), key = { "library:${it.id}" }) { TrackRow(it, vm, playlists, favorites) { vm.play(listOf(it)) } }
-                            }
-                        }
+                        HomeScreen(vm, tracks, playlists, favorites, recent, scan,
+                            { tab -> nav.navigate("discover?tab=$tab") },
+                            { nav.navigate("playlist/$it") }, { nav.navigate("library") }, { nav.navigate("search") })
                     }
                     composable("search") { SearchScreen(vm, tracks, playlists, favorites) }
-                    composable("discover") { DiscoveryScreen(vm, playlists, favorites) }
+                    composable("discover?tab={tab}", arguments = listOf(androidx.navigation.navArgument("tab") { type = androidx.navigation.NavType.IntType; defaultValue = 0 })) { back ->
+                        DiscoveryScreen(vm, playlists, favorites, back.arguments?.getInt("tab") ?: 0)
+                    }
                     composable("library") { LibraryScreen(vm, tracks, playlists, favorites, scan, { filePicker.launch(arrayOf("audio/*")) }, { nav.navigate("playlist/$it") }) }
                     composable("playlist/{id}") { back ->
                         val id = back.arguments?.getString("id").orEmpty()
@@ -138,6 +126,100 @@ fun EchoApp(vm: EchoViewModel) {
                     composable("player") { PlayerScreen(vm, tracks, favorites) }
                     composable("settings") { SettingsScreen(vm) }
                 }
+            }
+        }
+    }
+}
+
+@Composable private fun HomeScreen(
+    vm: EchoViewModel, tracks: List<Track>, playlists: List<Playlist>, favorites: Set<String>, recent: List<Track>,
+    scan: () -> Unit, discover: (Int) -> Unit, openPlaylist: (String) -> Unit, library: () -> Unit, search: () -> Unit,
+) {
+    LaunchedEffect(Unit) { if (vm.newMusicResults.isEmpty()) vm.refreshDiscovery() }
+    val suggestions = vm.discoveryResults.ifEmpty { vm.newMusicResults }
+    val preview = suggestions.ifEmpty { tracks.filter { it.sourceUri != null } }.take(5)
+    val liked = tracks.filter { it.id in favorites && it.sourceUri != null }
+    LazyColumn(Modifier.testTag("home-feed"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item(key = "welcome") { Column {
+            Text("Made for today", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("A few discoveries. All your favorites.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } }
+        item(key = "discover-heading") { HomeSectionHeader("Discover", "See all", { discover(0) }) }
+        if (preview.isNotEmpty()) item(key = "discover-songs") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (suggestions.isEmpty()) Text(if (vm.discoveryLoading) "From your collection · refreshing picks" else "From your collection", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(preview, key = { "suggestion:${it.id}" }) { track ->
+                        Surface(onClick = { vm.play(preview, preview.indexOf(track)) }, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
+                            Column(Modifier.width(136.dp).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Artwork(track.artworkUri, 120)
+                                Text(track.title, minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                                Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        } else item(key = "discovery-empty") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (vm.discoveryLoading) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Finding songs for you…") }
+                else Text("Discoveries couldn't load. Try again, or search for an artist.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(enabled = !vm.discoveryLoading, onClick = vm::refreshDiscovery) { Text("Refresh discoveries") }
+            }
+        }
+        item(key = "discover-mixes") { LazyRow(Modifier.testTag("home-mixes"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            item(key = "discovery-mix") { HomeMixCard("Echo discovery", "Picks from your artists", vm.discoveryResults.firstOrNull()?.artworkUri, Color(0xFF40315B)) { discover(0) } }
+            item(key = "new-music-mix") { HomeMixCard("New music", "Explore this month's search", vm.newMusicResults.firstOrNull()?.artworkUri, Color(0xFF234743)) { discover(1) } }
+        } }
+        item(key = "playlists-heading") { HomeSectionHeader("Your playlists", "Open library", library) }
+        if (playlists.isEmpty()) item(key = "playlists-empty") {
+            OutlinedButton(onClick = library, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Add, null); Text(" Create or import a playlist") }
+        } else item(key = "playlist-cards") { LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(playlists.take(6), key = { "playlist:${it.id}" }) { playlist ->
+                Surface(onClick = { openPlaylist(playlist.id) }, shape = RoundedCornerShape(16.dp), tonalElevation = 2.dp) {
+                    Column(Modifier.width(168.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = Violet, modifier = Modifier.size(32.dp))
+                        Text(playlist.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text("Open playlist", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        } }
+        item(key = "quick-actions") { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(enabled = liked.isNotEmpty(), onClick = { vm.play(liked, shuffle = true) }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Favorite, null); Text(" Play liked · ${liked.size}") }
+                OutlinedButton(onClick = search, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Search, null); Text(" Search") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = scan) { Icon(Icons.Default.Sync, null); Text(" Scan music") }
+                if (vm.current == null) TextButton(onClick = vm::resume, enabled = vm.controller != null) { Icon(Icons.Default.Restore, null); Text(" Resume queue") }
+            }
+        } }
+        if (recent.isNotEmpty()) {
+            item(key = "recent-heading") { SectionTitle("On repeat") }
+            items(recent.take(4), key = { "recent:${it.id}" }) { track -> TrackRow(track, vm, playlists, favorites) { vm.play(recent, recent.indexOf(track)) } }
+        }
+        if (tracks.isNotEmpty()) {
+            item(key = "library-heading") { HomeSectionHeader("From your library", "See all", library) }
+            items(tracks.takeLast(4).reversed(), key = { "library:${it.id}" }) { track -> TrackRow(track, vm, playlists, favorites) { vm.play(listOf(track)) } }
+        }
+    }
+}
+
+@Composable private fun HomeSectionHeader(title: String, action: String, click: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        TextButton(onClick = click) { Text(action) }
+    }
+}
+
+@Composable private fun HomeMixCard(title: String, subtitle: String, artwork: String?, color: Color, click: () -> Unit) {
+    Surface(onClick = click, shape = RoundedCornerShape(16.dp), color = color) {
+        Row(Modifier.width(240.dp).padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Artwork(artwork, 48)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -233,9 +315,9 @@ fun EchoApp(vm: EchoViewModel) {
     }
 }
 
-@Composable private fun DiscoveryScreen(vm: EchoViewModel, playlists: List<Playlist>, favorites: Set<String>) {
+@Composable private fun DiscoveryScreen(vm: EchoViewModel, playlists: List<Playlist>, favorites: Set<String>, initialTab: Int = 0) {
     LaunchedEffect(Unit) { if (vm.newMusicResults.isEmpty()) vm.refreshDiscovery() }
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableIntStateOf(initialTab.coerceIn(0, 1)) }
     val songs = if (tab == 0) vm.discoveryResults else vm.newMusicResults
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionTitle("Discover with Echo") }

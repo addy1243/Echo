@@ -4,6 +4,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import org.junit.Rule
 import org.junit.Test
 
@@ -14,6 +15,7 @@ class EchoNavigationTest {
         compose.onNodeWithText("Library", useUnmergedTree = true).performClick()
         compose.onNodeWithText("Your collection").assertIsDisplayed()
         compose.onNodeWithText("Import Spotify playlist file").assertIsDisplayed()
+        compose.onNodeWithText("Import Spotify playlist file").assertIsEnabled()
         compose.onNodeWithText("New playlist").performClick()
         compose.onNodeWithText("Cancel").performClick()
         compose.onNodeWithText("Search", useUnmergedTree = true).performClick()

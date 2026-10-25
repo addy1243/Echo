@@ -136,7 +136,7 @@ class EchoViewModel @Inject constructor(
     fun refreshDiscovery() {
         if (discoveryLoading) return
         discoveryLoading = true
-        runAction {
+        viewModelScope.launch {
             try {
                 val known = library.tracks.first()
                 val liked = library.favorites.first()
@@ -147,7 +147,9 @@ class EchoViewModel @Inject constructor(
                 newMusicResults = fresh
                 discoveryResults = suggestions
                 if (suggestions.isEmpty()) message = "No new discoveries found for these artists. Try refreshing or searching another artist."
-            } finally { discoveryLoading = false }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { message = error.message ?: "Discoveries couldn't load. Try refreshing." }
+            finally { discoveryLoading = false }
         }
     }
 

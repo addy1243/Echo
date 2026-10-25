@@ -24,6 +24,8 @@ Debug APK: `app/build/outputs/apk/debug/app-debug.apk`. Gradle downloads declare
 6. Settings exports/imports metadata-only JSON backups through Android's document picker. Backups contain personal listening metadata and local URIs: store them privately. Merge replaces playlists with matching IDs and retains unrelated playlists; audio files and credentials are excluded. Local URIs may need rematching on another device.
 7. **Discover** builds a basic mix using artist searches from your likes/library and can save it as a dated playlist. **New music** searches this month's releases on YouTube; it can include older recordings. **Smart shuffle · Echo** adds discoveries to a shuffled playback queue without changing the playlist. These are Echo features, not Spotify's recommendation engine. Refresh searches to find new uploads without updating the app.
 
+Home shows up to five discovery song previews and entry cards for Echo discovery/New music, followed by up to six saved playlists, Play liked, Search, Scan, Resume queue and recent/library picks. Discovery loads automatically without blocking those controls. When it is unavailable, saved playable songs can fill the preview with an explicit collection label; no fabricated recommendations are shown.
+
 ## Modules
 
 - `core`: domain models and provider interfaces.

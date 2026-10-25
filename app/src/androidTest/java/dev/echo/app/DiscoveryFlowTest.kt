@@ -50,7 +50,7 @@ class DiscoveryFlowTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             lateinit var model: EchoViewModel
             scenario.onActivity { model = ViewModelProvider(it)[EchoViewModel::class.java] }
-            compose.onNodeWithText("Discover").performClick()
+            compose.onAllNodesWithText("See all").onFirst().performClick()
             compose.onNodeWithText("Discover with Echo").assertIsDisplayed()
             compose.waitUntil(90_000) { !model.discoveryLoading && model.newMusicResults.isNotEmpty() }
             assertTrue(model.newMusicResults.all { it.provider == "youtube" && it.sourceUri != null })

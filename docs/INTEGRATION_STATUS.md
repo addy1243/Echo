@@ -2,6 +2,14 @@
 
 Initial implementation, 2026-10-25. Final verification results will be recorded after integrated checks.
 
+## Home redesign — 0.1.4 / code5
+
+Home now starts with a compact heading, up to five horizontally browsable song previews and Echo discovery/New music mix cards. Saved playlists follow, then Play liked, Search, Scan, Resume queue and recent/library rows. New music opens its tab directly. Automatic discovery uses a separate loading state so import/playback controls remain available. If online picks are absent, existing playable library tracks are explicitly labeled as the fallback; no sample recommendations are shipped. Existing imports, source resolution and playlist data are preserved.
+
+Debug build, all ten app JVM tests and lint pass (zero errors, seven warnings, three hints). API36 emulator layout/navigation checks passed, including the direct New music tab and enabled Library import action. The persisted-history/recreation check initially waited for a header that was offscreen after scroll restoration; its list-readiness condition was corrected and the targeted rerun passed, retaining checks for duplicate track occurrences across Home sections. Logs: `build/home-final-build.log`, `build/home-emulator-tests.log`, `build/home-history-rerun.log`. No new playback/recommendation-quality claim follows from this presentation change.
+
+Final card-height/loading-label polish rebuilt and linted successfully; the layout/navigation rerun passed (`build/home-polish-build.log`, `build/home-layout-final.log`). Home was visually inspected on the emulator, including the labeled library fallback. Version 0.1.4/code5 was installed in place on the reconnected phone and its installed package version verified. No data reset or phone queue fixture was used. Phone playback and large-font/landscape layouts were not checked in this change. No APK release was published.
+
 ## Playlist files and Echo discovery — 0.1.3 / code4
 
 Implemented local Spotify account-data playlist JSON and Exportify CSV imports, preserving order and duplicates with all-or-nothing transactions and new playlist IDs on each import. Imported entries can be explicitly replaced per occurrence with a chosen YouTube recording; stale-position checks protect intervening edits. Home Discover uses up to three library/liked/recent artists for basic search-based discoveries, supports saving a mix, and includes a current-month New music search. Playlist smart shuffle interleaves discoveries in the session queue without changing the saved playlist. Premium-dependent Spotify login is removed from normal Settings; prior credentials remain disconnectable. Details and limits are in [INTEGRATIONS.md](INTEGRATIONS.md#spotify-playlist-files-and-echo-discovery).
