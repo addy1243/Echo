@@ -2,6 +2,16 @@
 
 Initial implementation, 2026-10-25. Final verification results will be recorded after integrated checks.
 
+## Public Spotify share links — 0.1.5 / code6
+
+Implemented Library > Import Spotify link: canonical URL validation, bounded public embed/page reads, identity-checked metadata parsing and declared/exposed count preview before an explicit import. Tracking queries are discarded. No Spotify login, cookies, internal APIs or audio previews are used. Imports create a new local playlist with exposed order/duplicates preserved; completion selects the Playlists tab. Tap the saved playlist to choose recordings. Public totals can be incomplete, so the dialog asks the user to compare the count inside Spotify; this does not provide automatic synchronization.
+
+Verified: all 41 app/data JVM tests pass; debug/test APK builds and lint pass (zero errors, seven warnings, three hints). Three data emulator checks pass, including a live read of the user's supplied link exposing 80 tracks with the same public-page declared count. Three app emulator checks pass: invalid-link inline error/file fallback, live paste/preview/80-track Room import/opening the saved playlist/recording controls, and account-free navigation. Tests assert imported source URIs remain null and audio previews are ignored. Synthetic tests cover partial/unknown count handling, duplicate preservation, mismatched playlist identity and malformed metadata. Live links are supplied through instrumentation arguments; the user's link and tracking values are not included in repository fixtures.
+
+Validation fixes: the standalone data test APK needed internet permission and its coroutine test needed a Unit return. Live UI checks caught a premature async navigation handoff and a completion snackbar intercepting the saved tile; completion now stays in Library without that overlay. Preview dismisses the keyboard, and recording controls are checked through the scrollable playlist. Final logs: `build/spotify-link-live-parser.log`, `build/spotify-link-live-ui.log`, `build/spotify-link-completion-build.log`. Diagnostic failure screenshots remain ignored under captures/.
+
+Installed 0.1.5/code6 in place on the reconnected phone and verified package metadata. No phone data reset or test playlist was inserted there. The real import flow was exercised on the dedicated emulator; phone import/playback and the Spotify app's own count remain unverified. Public/private availability, larger lists and future page changes are not guaranteed. No APK release was published.
+
 ## Home redesign — 0.1.4 / code5
 
 Home now starts with a compact heading, up to five horizontally browsable song previews and Echo discovery/New music mix cards. Saved playlists follow, then Play liked, Search, Scan, Resume queue and recent/library rows. New music opens its tab directly. Automatic discovery uses a separate loading state so import/playback controls remain available. If online picks are absent, existing playable library tracks are explicitly labeled as the fallback; no sample recommendations are shipped. Existing imports, source resolution and playlist data are preserved.

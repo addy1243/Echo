@@ -4,9 +4,11 @@ This file records development changes. A development build or an entry here does
 
 ## Unreleased — 2026-10-25
 
-Current Android source defaults: **0.1.4 / versionCode 5**. Assign a newer version code before publishing an update to an installation already running code 5.
+Current Android source defaults: **0.1.5 / versionCode 6**. Assign a newer version code before publishing an update to an installation already running code 6.
 
 ### Added
+
+- Paste a public Spotify playlist share link, preview exposed/total song counts, then import metadata as a new playlist. Partial/unknown counts are explicit; private or changed pages can use file import. No Spotify login or audio preview extraction.
 
 - Subscription-free Spotify playlist-file import: Exportify CSV and Spotify account-data playlist JSON, preserved order/duplicates and atomic additive imports.
 - Explicit YouTube recording selection for imported song occurrences, with stale-position protection.

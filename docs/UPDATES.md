@@ -8,17 +8,17 @@ When a newer release is found, Echo offers **Update app** / **Later**, displays 
 
 ## Publishing a future update
 
-1. Increase the Android integer `versionCode` above the installed version. Current source defaults are code **5**, version **0.1.4**. `versionName` is the label; update ordering uses `versionCode`. Check the built APK's output metadata too: an older output directory may still contain an APK built with earlier version defaults.
+1. Increase the Android integer `versionCode` above the installed version. Current source defaults are code **6**, version **0.1.5**. `versionName` is the label; update ordering uses `versionCode`. Check the built APK's output metadata too: an older output directory may still contain an APK built with earlier version defaults.
 2. Build/sign the APK with the **same signing certificate** as the installed app. Keep your key safe and outside Git. A fresh CI-generated debug key will not update an existing installation. The current preview APK is debug-signed; a release signed with a different key cannot replace it in place. Export the library before any intentional signing-key migration; this updater does not uninstall or erase your library.
-3. Rename the APK to **`EchoMusic-<versionCode>.apk`**, for example `EchoMusic-6.apk` for an update to code 5.
+3. Rename the APK to **`EchoMusic-<versionCode>.apk`**, for example `EchoMusic-7.apk` for an update to code 6.
 4. Upload it as a release asset under [addy1243/Echo Releases](https://github.com/addy1243/Echo/releases), add notes, and publish as the latest stable release. Source ZIP/TAR files are not APK updates. GitHub's asset metadata must include its SHA-256 digest; if an older asset lacks that digest, upload it again.
 5. Open the older Echo build and choose Settings → Check for updates. Publishing source commits alone does not publish an APK.
 
 Example preview build (still uses this machine's existing debug key):
 
 ```powershell
-.\gradlew.bat :app:assembleDebug -PechoVersionCode=6 -PechoVersionName=0.1.5
-Copy-Item app/build/outputs/apk/debug/app-debug.apk EchoMusic-4.apk
+.\gradlew.bat :app:assembleDebug -PechoVersionCode=7 -PechoVersionName=0.1.6
+Copy-Item app/build/outputs/apk/debug/app-debug.apk EchoMusic-7.apk
 ```
 
 For a release build, use Android Studio's signed APK flow and the original signing key. No release or APK upload is performed by this feature implementation.

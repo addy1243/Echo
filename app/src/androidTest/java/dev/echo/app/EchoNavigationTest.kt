@@ -14,6 +14,7 @@ class EchoNavigationTest {
     @Test fun libraryAndSearchRemainAccessibleWithoutAccount() {
         compose.onNodeWithText("Library", useUnmergedTree = true).performClick()
         compose.onNodeWithText("Your collection").assertIsDisplayed()
+        compose.onNodeWithText("Import Spotify link").assertIsDisplayed()
         compose.onNodeWithText("Import Spotify playlist file").assertIsDisplayed()
         compose.onNodeWithText("Import Spotify playlist file").assertIsEnabled()
         compose.onNodeWithText("New playlist").performClick()

@@ -1,5 +1,7 @@
 # Decisions
 
+- 2026-10-25: Accept full public Spotify playlist share links through bounded public HTML reads, with a user-confirmed preview of exposed versus declared total songs. Unknown/partial counts remain explicit; no account cookies, authentication bypass, internal API calls or Spotify audio are used. Imports create new snapshots through the existing transaction; file import remains available. Public HTML may change and does not establish universal playlist access or automatic synchronization.
+
 - 2026-10-25: User has no Premium. Replace normal Spotify connection UI with local playlist-file import; retain prior credentials/auth implementation without making login a requirement. Imports are snapshots, transactional and additive with new playlist IDs. Select YouTube recordings explicitly per occurrence. Echo discovery and smart shuffle use artist searches, and New music uses a current-month search rather than claiming a verified release feed. This supersedes the onboarding UI decision below; Spotify automatic sync remains unavailable under the current setup.
 
 - 2026-10-24: Use four meaningful modules rather than dozens of empty modules.

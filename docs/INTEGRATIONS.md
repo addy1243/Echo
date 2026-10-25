@@ -10,7 +10,17 @@ Search uses the public MediaWiki HTTPS API, limited to audio in the `Audio files
 
 ## Spotify playlist files and Echo discovery
 
-The user does not have Spotify Premium. Do not resume developer-account onboarding as a prerequisite for using Echo. Spotify's current development-mode owner Premium requirement and playlist access restrictions prevent promising general Spotify auto-sync, even for personal use. The normal Settings screen now directs users to file import; an existing session can still be disconnected. OAuth code/credentials are retained without exposing the connection flow.
+### Public share-link import
+
+In Library choose **Import Spotify link**, paste the full `https://open.spotify.com/playlist/<22-character-id>` share link and tap **Preview playlist**. Tracking queries are discarded before requests. Only exact HTTPS Spotify playlist URLs (default/443 port, no credentials or fragments) are accepted; short `spotify.link` URLs need the full destination link. The client requests public embed/page HTML without account cookies, tokens, Client IDs, Web API calls or login. Redirects are rejected and rate limits stop requests. Responses are bounded to four million characters with 30-second call timeouts.
+
+The embed's `__NEXT_DATA__` entity must match the requested playlist identity. Only valid music-track title/artist/duration/URI metadata is imported; previews and audio URLs are ignored. A public page's base64 `initialState` can independently supply the declared playlist count. The dialog shows exposed/total counts when available, explicitly warns about partial or unknown totals and requires an import tap. A count inconsistency aborts. Larger public embeds can expose only part of a playlist. Changed page formats, private/restricted playlists and network failures retain file import as the fallback; completeness is never inferred from embed length alone.
+
+Import creates a new local playlist, preserving exposed song order and duplicate occurrences using the existing atomic repository operation. It returns to the Playlists tab; tap the saved playlist to use **Find recording**. It is a snapshot, without automatic Spotify sync. Public page counts must be compared with the Spotify app: unofficial HTML can omit songs or change, even when two public representations agree. A user-supplied playlist exposed 80 song entries during development; this alone does not establish support for every playlist or independently verify the account's full playlist count.
+
+### Playlist files
+
+The user does not have Spotify Premium. Do not resume developer-account onboarding as a prerequisite for using Echo. Spotify's current development-mode owner Premium requirement and playlist access restrictions prevent promising general Spotify auto-sync, even for personal use. The normal Settings screen directs users to public-link or file import; an existing session can still be disconnected. OAuth code/credentials are retained without exposing the connection flow.
 
 In Library, choose **Import Spotify playlist file**. Supported UTF-8 inputs:
 

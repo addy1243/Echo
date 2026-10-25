@@ -44,6 +44,7 @@ import dev.echo.data.provider.TrackMatcher
 import dev.echo.app.update.UpdatePrompt
 import dev.echo.app.update.UpdateStatus
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 private val Violet = Color(0xFFBFA4FF)
@@ -338,13 +339,15 @@ fun EchoApp(vm: EchoViewModel) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var create by remember { mutableStateOf(false) }
     var group by remember { mutableStateOf<Pair<String, List<Track>>?>(null) }
+    var linkImport by remember { mutableStateOf(false) }
     val importPlaylist = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importSpotifyFile(uri)
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionTitle("Your collection") }
+        item { Button(enabled = !vm.busy, onClick = { linkImport = true }) { Icon(Icons.Default.Link, null); Spacer(Modifier.width(8.dp)); Text("Import Spotify link") } }
         item { OutlinedButton(enabled = !vm.busy, onClick = { importPlaylist.launch(arrayOf("text/csv", "application/json", "text/plain", "application/vnd.ms-excel", "text/comma-separated-values")) }) { Text("Import Spotify playlist file") } }
-        item { Text("Choose an Exportify CSV or Spotify's downloaded Playlist JSON. No Spotify login needed. Songs are imported in order; choose recordings in the playlist to play them.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Paste a public Spotify playlist link, or choose an Exportify CSV / Spotify playlist JSON. Preview the available song count first. Choose recordings in the imported playlist to play them.", style = MaterialTheme.typography.bodySmall) }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { FilledTonalButton(onClick = { create = true }) { Text("New playlist") }; OutlinedButton(onClick = addFile) { Text("Add file") }; IconButton(onClick = scan) { Icon(Icons.Default.Sync, "Scan device") } } }
         item { ScrollableTabRow(tab, edgePadding = 0.dp) { listOf("Tracks", "Liked", "Playlists", "Albums", "Artists").forEachIndexed { i, title -> Tab(tab == i, { tab = i }, text = { Text(title) }) } } }
         when (tab) {
@@ -361,7 +364,53 @@ fun EchoApp(vm: EchoViewModel) {
         }
     }
     if (create) NameDialog("New playlist", "", { create = false }) { name -> create = false; vm.runAction { openPlaylist(vm.library.createPlaylist(name)) } }
+    if (linkImport) SpotifyLinkDialog(vm, { linkImport = false }) { linkImport = false; tab = 2 }
     group?.let { (title, songs) -> AlertDialog(onDismissRequest = { group = null }, title = { Text(title) }, text = { LazyColumn { items(songs) { TrackRow(it, vm, playlists, favorites) { vm.play(songs, songs.indexOf(it)); group = null } } } }, confirmButton = { TextButton(onClick = { group = null }) { Text("Close") } }) }
+}
+
+@Composable private fun SpotifyLinkDialog(vm: EchoViewModel, close: () -> Unit, imported: () -> Unit) {
+    var link by rememberSaveable { mutableStateOf("") }
+    var preview by remember { mutableStateOf<dev.echo.data.spotify.SpotifyLinkPreview?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    AlertDialog(onDismissRequest = close, title = { Text("Import Spotify link") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedTextField(link, { link = it; preview = null; error = null }, enabled = !loading, label = { Text("Playlist share link") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            preview?.let { result ->
+                Text(result.name, style = MaterialTheme.typography.titleMedium)
+                Text(when {
+                    result.complete -> "${result.tracks.size} of ${result.total} listed tracks available."
+                    result.total != null -> "Only ${result.tracks.size} of ${result.total} tracks are exposed. This imports only those ${result.tracks.size}."
+                    else -> "${result.tracks.size} tracks available. The full playlist count couldn't be verified; songs may be missing."
+                })
+                Text("Check this count against Spotify; public pages can omit songs. Song metadata only—choose recordings after import. This snapshot won't sync Spotify changes.", style = MaterialTheme.typography.bodySmall)
+                LazyColumn(Modifier.heightIn(max = 140.dp)) { itemsIndexed(result.tracks.take(4)) { _, track -> Text("${track.title} · ${track.artist}", modifier = Modifier.padding(vertical = 4.dp), maxLines = 2, overflow = TextOverflow.Ellipsis) } }
+            }
+        }
+    }, confirmButton = {
+        TextButton(enabled = !loading && link.isNotBlank(), onClick = {
+            keyboard?.hide(); focus.clearFocus()
+            loading = true; error = null
+            scope.launch {
+                try {
+                    val result = preview
+                    if (result == null) preview = vm.spotifyLinks.preview(link)
+                    else {
+                        val id = UUID.randomUUID().toString()
+                        vm.library.importPlaylist(id, result.name, result.tracks)
+                        imported()
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (failure: Exception) { error = failure.message ?: "Playlist import failed. Try a file export." }
+                finally { loading = false }
+            }
+        }) { Text(preview?.let { "Import ${it.tracks.size} tracks" } ?: "Preview playlist") }
+    }, dismissButton = { TextButton(onClick = close) { Text("Cancel") } })
 }
 
 @Composable private fun PlaylistScreen(vm: EchoViewModel, id: String, playlist: Playlist?, all: List<Track>, playlists: List<Playlist>, favorites: Set<String>) {
@@ -372,7 +421,7 @@ fun EchoApp(vm: EchoViewModel) {
     var add by remember { mutableStateOf(false) }
     val songs = if (vm.loadedPlaylistId == id) vm.playlistItems else emptyList()
     val firstPlayable = firstPlayableIndex(songs)
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.testTag("playlist-feed"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Hero(playlist?.name ?: "Playlist", "${songs.size} tracks · made for your moments") }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { vm.play(songs, firstPlayable) }, enabled = firstPlayable >= 0) { Icon(Icons.Default.PlayArrow, null); Text("Play") }
@@ -505,7 +554,7 @@ fun EchoApp(vm: EchoViewModel) {
         item { Text("Echo Music ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium) }
         item { OutlinedButton(enabled = updateStatus !is UpdateStatus.Checking && updateStatus !is UpdateStatus.Downloading, onClick = vm::checkUpdates) { Text(if (updateStatus is UpdateStatus.Checking) "Checking for updates…" else "Check for updates") } }
         item { Text("Spotify playlist files", style = MaterialTheme.typography.titleMedium) }
-        item { Text("Import an existing playlist from Library using a CSV or Spotify playlist JSON export. This copies song metadata; it does not sync changes from Spotify or include audio. Echo's discovery and smart shuffle use YouTube searches.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Import from Library using a public Spotify share link, CSV or Spotify playlist JSON. Links preview the available track count first. Imports copy metadata, without Spotify audio or automatic sync. Echo's discovery and smart shuffle use YouTube searches.", style = MaterialTheme.typography.bodySmall) }
         if (connected) item { OutlinedButton(onClick = { vm.runAction("Disconnected") { vm.spotify.disconnect() } }) { Text("Disconnect previous Spotify session") } }
         item { HorizontalDivider(); SectionTitle("Playback & storage") }
         item { Text("Playback sources", style = MaterialTheme.typography.titleMedium) }

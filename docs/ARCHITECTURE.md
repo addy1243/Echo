@@ -4,6 +4,8 @@ Four Gradle modules: `core` (pure Kotlin contracts), `data` (Room, MediaStore, s
 
 Playlist-file parsing (Spotify account JSON / Exportify CSV) stays in `data`; the repository imports all playlists atomically with new IDs. Explicit recording selection replaces one guarded playlist occurrence with a canonical YouTube track. Discovery uses the existing provider's artist searches; pure app helpers filter discoveries and interleave queue entries. No schema migration, automatic Spotify sync, extra backend or new dependency is required.
 
+Public Spotify share links are previewed through bounded, canonical-host HTML reads in `SpotifyPlaylistLinks`. Embed metadata and an independently declared public-page total produce a complete/partial/unknown preview. The UI requires confirmation before using the existing atomic playlist import; auth code and playback resolvers are unchanged.
+
 Canonical model: `dev.echo.core.Track`; URIs are strings at domain boundaries. Spotify metadata may have no audio URI. Duplicate playlist occurrences use independent positions. No destructive database migration or client secrets.
 
 The service owns ExoPlayer. The phone UI connects with MediaController. Car browsers use the same MediaLibraryService and durable library.

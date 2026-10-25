@@ -47,6 +47,7 @@ class EchoViewModel @Inject constructor(
     val library: LibraryRepository,
     val settings: SettingsRepository,
     val spotify: SpotifyRepository,
+    val spotifyLinks: dev.echo.data.spotify.SpotifyPlaylistLinks,
     private val commons: CommonsProvider,
     private val youtube: YouTubeProvider,
     val sources: SourceResolver,

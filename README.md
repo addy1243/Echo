@@ -26,6 +26,8 @@ Debug APK: `app/build/outputs/apk/debug/app-debug.apk`. Gradle downloads declare
 
 Home shows up to five discovery song previews and entry cards for Echo discovery/New music, followed by up to six saved playlists, Play liked, Search, Scan, Resume queue and recent/library picks. Discovery loads automatically without blocking those controls. When it is unavailable, saved playable songs can fill the preview with an explicit collection label; no fabricated recommendations are shown.
 
+For a shared playlist link: Spotify → Share → Copy link, then Echo → Library → **Import Spotify link** → paste → **Preview playlist** → **Import**. Public links can expose only some tracks; check the preview count/warning. Import copies metadata as a new playlist; use **Find recording** to choose audio. Private/restricted playlists still need a file export. Link import does not automatically sync Spotify updates.
+
 ## Modules
 
 - `core`: domain models and provider interfaces.
