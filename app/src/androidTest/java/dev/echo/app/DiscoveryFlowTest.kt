@@ -38,9 +38,11 @@ class DiscoveryFlowTest {
             compose.onNodeWithText("Playlists", useUnmergedTree = true).performClick()
             compose.onNodeWithText(name).performClick()
             compose.onNodeWithText("2 tracks", substring = true).assertIsDisplayed()
-            compose.onAllNodesWithText("Find recording").onFirst().assertIsDisplayed()
             compose.onNodeWithText("Smart shuffle · Echo").assertIsNotEnabled()
+            compose.onNodeWithTag("playlist-feed").performScrollToNode(hasText("Find recording"))
+            compose.onAllNodesWithText("Find recording").onFirst().assertIsDisplayed()
             scenario.recreate()
+            compose.onNodeWithTag("playlist-feed").performScrollToNode(hasText("Find recording"))
             compose.onAllNodesWithText("Find recording").onFirst().assertIsDisplayed()
         }
     }

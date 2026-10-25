@@ -10,6 +10,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LibraryRepositoryTest {
+    @Test fun automaticMatchesPreserveOccurrencesAndRejectStaleEdits() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.inMemoryDatabaseBuilder(context, LibraryDatabase::class.java).build()
+        try {
+            val repository = LibraryRepository(context, database)
+            val imported = Track("spotify:auto", "Song", "Artist", provider = "spotify")
+            val missing = imported.copy(id = "spotify:other")
+            val chosen = Track("youtube:chosen", "Song", "Artist", provider = "youtube", sourceUri = "https://www.youtube.com/watch?v=abcdefghijk")
+            val before = listOf(imported, missing, imported)
+            repository.importPlaylist("auto", "Auto", before)
+            repository.setFavorite(imported.id, true)
+            repository.applyRecordingMatches("auto", before.map { it.id }, mapOf(imported.id to chosen))
+            assertEquals(listOf(chosen.id, missing.id, chosen.id), repository.playlistTracks("auto").map { it.id })
+            assertTrue(repository.favorites.first().containsAll(listOf(imported.id, chosen.id)))
+            assertTrue(runCatching { repository.applyRecordingMatches("auto", before.map { it.id }, mapOf(imported.id to chosen)) }.isFailure)
+            assertEquals(listOf(chosen.id, missing.id, chosen.id), repository.playlistTracks("auto").map { it.id })
+        } finally { database.close() }
+    }
     @Test fun manualMatchSurvivesRefreshCanBeCorrectedAndCleared() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(context, LibraryDatabase::class.java).build()

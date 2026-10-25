@@ -13,10 +13,17 @@ class MainActivity : ComponentActivity() {
     private lateinit var model: EchoViewModel
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         model = ViewModelProvider(this)[EchoViewModel::class.java]
         if (savedInstanceState == null) acceptCallback(intent)
         setContent { EchoApp(model) }
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); acceptCallback(intent) }
     private fun acceptCallback(intent: Intent?) {

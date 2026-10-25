@@ -64,6 +64,18 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
         }
     }
 
+    suspend fun related(track: Track): List<Track> {
+        if (track.provider != id) return emptyList()
+        val videoId = youtubeVideoId(track.sourceUri.orEmpty()) ?: return emptyList()
+        return extract {
+            val info = StreamInfo.getInfo(ServiceList.YouTube, youtubeWatchUrl(videoId))
+            info.errors.forEach { throwKnownYouTubeError(it) }
+            info.relatedItems.orEmpty().filterIsInstance<StreamInfoItem>().mapNotNull(::youtubeTrack)
+                .filter { it.id != track.id && it.durationMs in 60_000..900_000 }
+                .distinctBy(Track::id).take(20)
+        }
+    }
+
     private suspend fun <T> extract(block: () -> T): T = extractorLock.withLock {
         runInterruptible(Dispatchers.IO) {
             try {
@@ -108,10 +120,10 @@ internal fun youtubeTrack(item: StreamInfoItem): Track? {
     val locator = youtubeWatchUrl(id)
     return Track(id = "youtube:$id", title = item.name, artist = item.uploaderName,
         durationMs = item.duration * 1000, provider = "youtube", sourceUri = locator, sourcePage = locator,
-        artworkUri = item.thumbnails.firstOrNull { image ->
+        artworkUri = item.thumbnails.filter { image ->
             image.url.toHttpUrlOrNull()?.let { it.isHttps && it.username.isEmpty() && it.password.isEmpty() &&
                 (it.host == "ytimg.com" || it.host.endsWith(".ytimg.com") || it.host == "googleusercontent.com" || it.host.endsWith(".googleusercontent.com")) } == true
-        }?.url)
+        }.maxByOrNull { it.width.coerceAtLeast(0).toLong() * it.height.coerceAtLeast(0) }?.url)
 }
 
 internal fun selectYouTubeAudio(streams: List<AudioStream>, nowMs: Long = System.currentTimeMillis()): PlayableSource? {

@@ -8,6 +8,10 @@ Public Spotify share links are previewed through bounded, canonical-host HTML re
 
 Canonical model: `dev.echo.core.Track`; URIs are strings at domain boundaries. Spotify metadata may have no audio URI. Duplicate playlist occurrences use independent positions. No destructive database migration or client secrets.
 
+Automatic recording matching uses conservative title/credited-artist/duration comparisons, preferring an unambiguous recording or consistent duplicate uploads. The ViewModel runs bounded per-playlist searches with progress/cancellation, then commits replacements only if the playlist's ordered IDs still match the captured snapshot. Duplicates and original metadata remain, and likes are copied to matched canonical IDs without removing old favorites. No database schema change.
+
+The app observes MediaController events to snapshot current/upcoming entries using the player's actual timeline, shuffle order and repeat-all traversal. Window UIDs guard stale actions; Compose uses saveable integer occurrence keys. The player is a full-screen route with its own queue sheet. Bottom-tab navigation pops to Home without restoring other tabs' nested stacks.
+
 The service owns ExoPlayer. The phone UI connects with MediaController. Car browsers use the same MediaLibraryService and durable library.
 
 YouTube uses NewPipeExtractor for key-free song search and stream resolution. Persisted tracks contain stable provider/video IDs and canonical watch links. The service resolves temporary audio URLs lazily through a Media3 resolving data source, keeping them out of Room and backups. Local files and Commons retain their provider paths; Spotify imports remain metadata-only until locally matched. See [integration setup and maintenance](INTEGRATIONS.md#key-free-youtube-playback) and [release history](../CHANGELOG.md).

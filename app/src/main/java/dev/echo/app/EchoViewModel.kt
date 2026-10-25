@@ -64,6 +64,11 @@ class EchoViewModel @Inject constructor(
     var position by mutableStateOf(0L); private set
     var duration by mutableStateOf(0L); private set
     var revision by mutableStateOf(0); private set
+    internal var queueItems by mutableStateOf<List<QueueEntry>>(emptyList()); private set
+    var recommendedIds by mutableStateOf<Set<String>>(emptySet()); private set
+    var matchingProgress by mutableStateOf<Pair<Int, Int>?>(null); private set
+    private var matchingJob: Job? = null
+    private var playlistLoad: Job? = null
     var message by mutableStateOf<String?>(null)
     var busy by mutableStateOf(false); private set
     var onlineResults by mutableStateOf<List<Track>>(emptyList()); private set
@@ -83,14 +88,14 @@ class EchoViewModel @Inject constructor(
             override fun onError(controller: MediaController, sessionError: SessionError) { message = sessionError.message }
         }).buildAsync()
     private val listener = object : Player.Listener {
-        override fun onEvents(player: Player, events: Player.Events) { sync() }
+        override fun onEvents(player: Player, events: Player.Events) { sync(); queueItems = queueSnapshot(player) }
         override fun onPlayerError(error: PlaybackException) { message = "Playback failed: ${error.errorCodeName}. Check the source or retry." }
     }
     private var updateDownload: Job? = null
     init {
         viewModelScope.launch { updater.check(manual = false) }
         connection.addListener({
-            try { controller = connection.get(); controller?.addListener(listener); sync() }
+            try { controller = connection.get(); controller?.addListener(listener); sync(); queueItems = queueSnapshot(controller!!) }
             catch (e: Exception) { message = "Playback service could not connect. Reopen Echo to retry." }
         }, ContextCompat.getMainExecutor(context))
         viewModelScope.launch { while (true) { sync(); delay(500) } }
@@ -156,10 +161,65 @@ class EchoViewModel @Inject constructor(
 
     fun smartShuffle(items: List<Track>) = runAction {
         require(items.any { it.sourceUri != null }) { "Choose recordings for your imported songs first" }
-        val suggestions = discover(items, items + library.recent.first().take(10))
+        val playable = items.filter { it.sourceUri != null }
+        val anchor = playable.find { it.id == current?.mediaId } ?: playable.first()
+        val previousEntry = queueItems.firstOrNull()?.uid
+        val seed = if (anchor.provider == "youtube") anchor else dev.echo.data.provider.automaticRecordingMatch(anchor, youtube.search("${anchor.title} ${anchor.artist}".take(200)))
+        require(seed != null) { "No clear online recording for this song. Use normal shuffle or choose a recording first." }
+        val suggestions = discoveryCandidates(youtube.related(seed), items + library.recent.first().take(10)).take(10)
         if (suggestions.isEmpty()) {
-            message = "No discoveries found; your playlist is unchanged. Try regular shuffle."
-        } else play(smartMix(items, suggestions), index = 0)
+            message = "No related songs are available for this recording. Your queue is unchanged."
+        } else {
+            require(queueItems.firstOrNull()?.uid == previousEntry) { "Playback changed while finding related songs. Try Smart shuffle again." }
+            val mixed = smartMix(items, suggestions, anchor.id)
+            startPlayback(mixed, 0, false, if (current?.mediaId == anchor.id) position else 0)
+            recommendedIds = mixed.filter { track -> items.none { it.id == track.id } }.map { it.id }.toSet()
+        }
+    }
+
+    fun matchPlaylistAutomatically(id: String) {
+        if (matchingJob?.isActive == true) { message = "Another playlist is being matched. Cancel it first."; return }
+        matchingJob = viewModelScope.launch {
+            try {
+                val songs = library.playlistTracks(id)
+                val missing = songs.filter { it.sourceUri == null && it.provider == "spotify" }.distinctBy { it.id }
+                require(missing.isNotEmpty()) { "This playlist has no unmatched imported songs" }
+                val local = library.tracks.first().filter { it.provider == "local" && it.sourceUri != null }
+                val matches = mutableMapOf<String, Track>()
+                missing.forEachIndexed { index, track ->
+                    matchingProgress = index to missing.size
+                    val localMatch = local.filter { dev.echo.data.provider.TrackMatcher.matches(track, it) }.singleOrNull()
+                    val match = localMatch ?: dev.echo.data.provider.automaticRecordingMatch(track, youtube.search("${track.title} ${track.artist}".take(200)))
+                    if (match != null) matches[track.id] = match
+                    currentCoroutineContext().ensureActive()
+                }
+                library.applyRecordingMatches(id, songs.map { it.id }, matches)
+                if (loadedPlaylistId == id) playlistItems = library.playlistTracks(id)
+                message = "Matched ${matches.size} of ${missing.size} songs. ${missing.size - matches.size} need a recording choice."
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { message = error.message ?: "Matching failed; the playlist was kept unchanged." }
+            finally { matchingProgress = null }
+        }
+    }
+    fun cancelMatching() { matchingJob?.cancel(); message = "Matching cancelled; the playlist was kept unchanged." }
+
+    internal fun jumpQueue(entry: QueueEntry) {
+        val player = controller ?: return
+        if (!currentQueueEntry(entry)) { message = "Queue changed. Choose the song again."; return }
+        player.seekToDefaultPosition(entry.index); player.play()
+    }
+    private fun currentQueueEntry(entry: QueueEntry): Boolean {
+        val timeline = controller?.currentTimeline ?: return false
+        return entry.index in 0 until timeline.windowCount &&
+            timeline.getWindow(entry.index, androidx.media3.common.Timeline.Window()).uid == entry.uid &&
+            controller?.getMediaItemAt(entry.index)?.mediaId == entry.item.mediaId
+    }
+    internal fun removeQueue(entry: QueueEntry) {
+        if (currentQueueEntry(entry) && entry.index != controller?.currentMediaItemIndex) controller?.removeMediaItem(entry.index)
+    }
+    fun clearUpcoming() {
+        val player = controller ?: return
+        queueItems.drop(1).map { it.index }.sortedDescending().forEach(player::removeMediaItem)
     }
 
     fun saveDiscovery() = runAction("Discovery mix saved to Library") {
@@ -174,14 +234,16 @@ class EchoViewModel @Inject constructor(
         require(songs.isNotEmpty()) { "No playable music matches this search" }
         play(songs)
     }
-    fun play(items: List<Track>, index: Int = firstPlayableIndex(items), shuffle: Boolean = false) = runAction {
+    fun play(items: List<Track>, index: Int = firstPlayableIndex(items), shuffle: Boolean = false) = runAction { startPlayback(items, index, shuffle) }
+    private suspend fun startPlayback(items: List<Track>, index: Int, shuffle: Boolean, startPosition: Long = 0) {
         require(items.isNotEmpty()) { "There are no tracks to play" }
         val player = controller ?: error("Playback service is connecting")
         val playable = items.filter { it.sourceUri != null }
         require(playable.isNotEmpty()) { "No audio source is available. Match imported tracks to local music first." }
         require(items.getOrNull(index)?.sourceUri != null) { "This track has no audio source. Choose Match to select a local recording." }
         library.upsertTracks(playable.filter { candidate -> tracks.value.none { it.id == candidate.id } })
-        player.setMediaItems(playable.map { it.mediaItem() }, playableStartIndex(items, index), 0)
+        player.setMediaItems(playable.map { it.mediaItem() }, playableStartIndex(items, index), startPosition.coerceAtLeast(0))
+        recommendedIds = emptySet()
         player.shuffleModeEnabled = shuffle
         player.prepare(); player.play()
     }
@@ -196,9 +258,13 @@ class EchoViewModel @Inject constructor(
     fun resume() { controller?.play() }
     fun favorite(track: Track) = runAction { if (tracks.value.none { it.id == track.id }) library.upsertTracks(listOf(track)); library.setFavorite(track.id, track.id !in favorites.value) }
     fun loadPlaylist(id: String) {
-        loadedPlaylistId = id
-        playlistItems = emptyList()
-        runAction { val songs = library.playlistTracks(id); if (loadedPlaylistId == id) playlistItems = songs }
+        playlistLoad?.cancel()
+        if (loadedPlaylistId != id) { loadedPlaylistId = id; playlistItems = emptyList() }
+        playlistLoad = viewModelScope.launch {
+            try { val songs = library.playlistTracks(id); currentCoroutineContext().ensureActive(); if (loadedPlaylistId == id) playlistItems = songs }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { message = error.message ?: "Playlist couldn't load" }
+        }
     }
     fun mutatePlaylist(id: String, action: suspend () -> Unit) = runAction { action(); val songs = library.playlistTracks(id); if (loadedPlaylistId == id) playlistItems = songs }
     fun searchOnline(query: String) = search(query, commons::search) { onlineResults = it }

@@ -10,6 +10,7 @@
 | Sol | Spotify account onboarding | Owner has no Premium; subscription-free file import replaces normal login UI | Stopped |
 | Sol | Playlist-file import, recording selection, discovery, smart shuffle and new-music searches | Existing Room/YouTube/Media3 paths | Implemented; 39 app/data JVM, 3 data emulator, 2 UI and 1 live discovery checks pass |
 | Sol | Public Spotify share-link preview/import | Canonical public pages; explicit partial/unknown count preview | Implemented; 41 JVM, 3 parser/live data and 3 UI/live checks pass; code6 installed in place |
+| Sol | Compact tabs, Home routing fix, immersive player, playback-ordered queue, recording-based smart shuffle and auto matching | Existing controller/provider/Room paths | Implemented; 45 JVM, 10 distinct app and 5 data scenarios pass; code7 installed in place |
 | Deferred | Laptop application | User's later-priority instruction | Pending |
 | YouTube orchestration + provider/playback/UI agents | Key-free search, lazy native streaming, regressions and maintenance docs | NewPipeExtractor + existing Media3/Room | Implemented; live emulator checks passed |
 | External verification | Spotify authorization, Commons streaming, real car host | Account registration/provider availability/DHU | Pending external checks |

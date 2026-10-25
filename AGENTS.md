@@ -2,6 +2,8 @@
 
 ## Current focus
 
+- 0.1.6 work: compact bottom navigation with no top-level stack restoration, an immersive player and playback-ordered queue sheet. Queue row keys must be Android-saveable occurrence indexes; Media3 window UIDs stay internal for stale-action guards. Smart shuffle uses related songs from an actual recording, not random artist-search results. Auto-match clear imported recordings by title/credited artist/duration; commit guarded playlist replacements atomically, preserving duplicates and likes. Ambiguities keep manual selection.
+
 - Spotify public share-link import uses only canonical `open.spotify.com` public embed/page HTML, never auth cookies/internal tokens. Preview exposed versus total tracks before committing; unknown or partial counts must be explicit. File import remains the fallback. No automatic sync or Spotify audio is provided.
 
 - Home now prioritizes discovery song previews and live mix cards, then the user's playlists, liked-song/search shortcuts and recent/library picks. Preserve section-specific keys and keep automatic discovery loading separate from global action busy state so import/playback stay available.
@@ -22,12 +24,12 @@ Four modules: `core`, `data`, `playback`, `app`. Read `docs/ARCHITECTURE.md`, `d
 - Assets must be `EchoMusic-<versionCode>.apk`, with a newer Android version code and the installed signing certificate.
 - Preserve HTTPS/repository/host validation, exact size/SHA-256 checks, APK identity/signature checks, private staging, cancellation and rate-limit handling.
 - Android's installation permission and user confirmation remain required. Never silently install, bypass protections, or clear app data to force an update.
-- Android source defaults: 0.1.5/code6 for public playlist links; Home was 0.1.4/code5, file import/discovery was 0.1.3/code4, YouTube was 0.1.2/code3 and updater preview was 0.1.1/code2. Recheck source defaults and installed version before changing versioning. Never publish signing keys/API secrets or publish a release without user authorization.
+- Android source defaults: 0.1.6/code7 for navigation/player/queue/matching; public links were 0.1.5/code6. Recheck source defaults and installed version before changing versioning. Never publish signing keys/API secrets or publish a release without user authorization.
 - Updater build/lint, four new JVM checks and four Android checks passed. Live GitHub APK replacement remains unverified because no newer release is published; recheck that external state.
 
 ## Connected Android device
 
-- Latest installation: 0.1.5/code6 was installed in place on the reconnected phone after public-link parser/live UI checks. Android package metadata confirms the version. No phone library/queue fixture tests or manual playback checks were performed for this build; app data was not cleared.
+- Latest installation: 0.1.6/code7 was installed in place after the user reconnected and approved Android's USB debugging computer-trust prompt. Package metadata confirms the version. All queue/library fixture tests ran on the emulator; no phone data reset or manual phone playback check was performed.
 
 - On 2026-10-25 the user reconnected the physical Android16 phone and renewed authorization for Echo development/testing. ADB was freshly verified as `device`; the updater was installed in place and focused tests passed.
 - This supersedes the earlier emulator-only instruction for authorized Echo testing. Device availability is temporary: check `adb devices -l` each session and use an explicit `adb -s <serial>` target.

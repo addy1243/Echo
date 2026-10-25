@@ -13,6 +13,16 @@ import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.stream.StreamType
 
 class YouTubeProviderTest {
+    @Test fun usesLargestTrustedArtworkForFullScreenPlayer() {
+        val item = StreamInfoItem(0, "https://www.youtube.com/watch?v=abcdefghijk", "Song", StreamType.VIDEO_STREAM)
+        item.uploaderName = "Artist"; item.duration = 180
+        item.thumbnails = listOf(
+            org.schabi.newpipe.extractor.Image("https://i.ytimg.com/small", 40, 40, org.schabi.newpipe.extractor.Image.ResolutionLevel.LOW),
+            org.schabi.newpipe.extractor.Image("https://evil.example/large", 1000, 1000, org.schabi.newpipe.extractor.Image.ResolutionLevel.HIGH),
+            org.schabi.newpipe.extractor.Image("https://i.ytimg.com/large", 500, 500, org.schabi.newpipe.extractor.Image.ResolutionLevel.HIGH),
+        )
+        assertEquals("https://i.ytimg.com/large", youtubeTrack(item)!!.artworkUri)
+    }
     private val videoId = "aB12_cD34-e"
     private val mediaUrl = "https://rr1---sn.example.googlevideo.com/videoplayback?expire=2000000000"
 

@@ -37,6 +37,7 @@ class SpotifyLinkImportTest {
             compose.onNodeWithText("Preview playlist").performClick()
             compose.waitUntil(90_000) { compose.onAllNodesWithText("Import $count tracks").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("$count of $count listed tracks available.").assertIsDisplayed()
+            compose.onNodeWithText("Auto-match clear recordings").performClick()
             compose.onNodeWithText("Import $count tracks").performClick()
             compose.waitUntil(15_000) { compose.onAllNodesWithText("Import $count tracks").fetchSemanticsNodes().isEmpty() }
             val created = runBlocking { repository.playlists.first().filter { it.id !in before } }

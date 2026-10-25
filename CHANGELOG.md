@@ -4,9 +4,12 @@ This file records development changes. A development build or an entry here does
 
 ## Unreleased — 2026-10-25
 
-Current Android source defaults: **0.1.5 / versionCode 6**. Assign a newer version code before publishing an update to an installation already running code 6.
+Current Android source defaults: **0.1.6 / versionCode 7**. Assign a newer version code before publishing an update to an installation already running code 7.
 
 ### Added
+
+- Full-screen artwork-first player, compact bottom navigation and a Now playing/Up next queue sheet following real shuffle order, with current-song highlighting and clear-upcoming controls.
+- Automatic matching of clear imported recordings, progress/cancellation, duplicate/like preservation and an atomic guard against overwriting intervening playlist edits. Link import enables matching by default; existing imports have Auto-match recordings.
 
 - Paste a public Spotify playlist share link, preview exposed/total song counts, then import metadata as a new playlist. Partial/unknown counts are explicit; private or changed pages can use file import. No Spotify login or audio preview extraction.
 
@@ -32,6 +35,10 @@ Current Android source defaults: **0.1.5 / versionCode 6**. Assign a newer versi
 - Replaced the YouTube Data API link client and API-key setup UI. Previously stored encrypted keys are preserved but unused by search/playback.
 
 ### Fixed
+
+- Home no longer restores a Library navigation stack when switching tabs. Playlist reloads cancel stale jobs without blanking an already loaded playlist.
+- Queue display uses actual playback order and occurrence identities instead of raw storage order. Queue rows use Android-saveable keys.
+- Smart shuffle uses ranked related songs from a recording rather than broad random artist searches; it preserves the current anchor and position and stops if playback changes during lookup.
 
 - Playlist Play/Shuffle can start at the first playable entry when earlier imported entries have no source.
 - New online searches clear and label results; canceled requests cannot replace newer results.

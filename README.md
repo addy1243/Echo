@@ -28,6 +28,10 @@ Home shows up to five discovery song previews and entry cards for Echo discovery
 
 For a shared playlist link: Spotify → Share → Copy link, then Echo → Library → **Import Spotify link** → paste → **Preview playlist** → **Import**. Public links can expose only some tracks; check the preview count/warning. Import copies metadata as a new playlist; use **Find recording** to choose audio. Private/restricted playlists still need a file export. Link import does not automatically sync Spotify updates.
 
+**Auto-match clear recordings** is enabled in the link preview. Existing imported playlists offer **Auto-match recordings**. Echo checks song title, credited artist and known duration, with local matches first; only unclear results require Find recording. Progress and Cancel stay visible while you browse. Matching commits once at the end and stops on failures or intervening playlist edits. Original metadata and likes are retained.
+
+The full player opens from the mini-player. **Up next** follows actual playback/shuffle order, highlights the current occurrence and offers removal/clear-upcoming actions. Smart shuffle uses related results from a specific recording, inserts one recommendation after each three playlist songs and leaves the saved playlist unchanged. It does not fall back to unrelated artist-search results when recommendations are unavailable.
+
 ## Modules
 
 - `core`: domain models and provider interfaces.

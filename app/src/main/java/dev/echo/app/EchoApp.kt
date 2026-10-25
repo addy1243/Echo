@@ -10,6 +10,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -34,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.Role
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
 import androidx.navigation.compose.*
@@ -55,6 +58,7 @@ fun EchoApp(vm: EchoViewModel) {
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route ?: "home"
+    val activeTab = when { route.startsWith("playlist/") -> "library"; route.startsWith("discover") -> "home"; else -> route }
     val tracks by vm.tracks.collectAsStateWithLifecycle()
     val playlists by vm.playlists.collectAsStateWithLifecycle()
     val favorites by vm.favorites.collectAsStateWithLifecycle()
@@ -94,14 +98,19 @@ fun EchoApp(vm: EchoViewModel) {
         UpdatePrompt(vm)
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
-            topBar = { TopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.GraphicEq, null, tint = Violet); Spacer(Modifier.width(10.dp)); Text("echo", fontWeight = FontWeight.Bold, letterSpacing = 2.sp) } },
+            topBar = { if (route != "player") TopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.GraphicEq, null, tint = Violet); Spacer(Modifier.width(10.dp)); Text("echo", fontWeight = FontWeight.Bold, letterSpacing = 2.sp) } },
                 navigationIcon = { if (route !in listOf("home", "search", "library", "settings")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = { IconButton(onClick = { nav.navigate("settings") { launchSingleTop = true } }) { Icon(Icons.Default.Settings, "Settings") } }) },
-            bottomBar = { Column {
+            bottomBar = { if (route != "player") Column {
                 if (vm.current != null && route != "player") MiniPlayer(vm) { nav.navigate("player") { launchSingleTop = true } }
-                NavigationBar {
+                Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).navigationBarsPadding().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                     listOf(Triple("home", "Home", Icons.Default.Home), Triple("search", "Search", Icons.Default.Search), Triple("library", "Library", Icons.Default.LibraryMusic)).forEach { (key, label, icon) ->
-                        NavigationBarItem(selected = route == key, onClick = { nav.navigate(key) { popUpTo("home") { saveState = true }; launchSingleTop = true; restoreState = true } }, icon = { Icon(icon, label) }, label = { Text(label) })
+                        Column(Modifier.weight(1f).fillMaxHeight().testTag("tab-$key").selectable(selected = activeTab == key, role = Role.Tab, onClick = {
+                            nav.navigate(key) { popUpTo("home"); launchSingleTop = true }
+                        }), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            Icon(icon, null, tint = if (activeTab == key) Violet else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(21.dp))
+                            Text(label, fontSize = 11.sp, fontWeight = if (activeTab == key) FontWeight.Bold else FontWeight.Normal, color = if (activeTab == key) Violet else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             } },
@@ -109,6 +118,10 @@ fun EchoApp(vm: EchoViewModel) {
             Column(Modifier.fillMaxSize().padding(padding)) {
                 (credentialError ?: historyError)?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) }
                 if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                vm.matchingProgress?.let { (done, total) -> Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Matching recordings · $done/$total", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = vm::cancelMatching) { Text("Cancel") }
+                } }
                 NavHost(nav, startDestination = "home", modifier = Modifier.weight(1f)) {
                     composable("home") {
                         HomeScreen(vm, tracks, playlists, favorites, recent, scan,
@@ -124,7 +137,7 @@ fun EchoApp(vm: EchoViewModel) {
                         val id = back.arguments?.getString("id").orEmpty()
                         PlaylistScreen(vm, id, playlists.find { it.id == id }, tracks, playlists, favorites)
                     }
-                    composable("player") { PlayerScreen(vm, tracks, favorites) }
+                    composable("player") { PlayerScreen(vm, tracks, favorites) { nav.popBackStack() } }
                     composable("settings") { SettingsScreen(vm) }
                 }
             }
@@ -235,7 +248,7 @@ fun EchoApp(vm: EchoViewModel) {
 }
 @Composable private fun SectionTitle(title: String) { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
 @Composable private fun EmptyState(title: String, body: String) { Column(Modifier.padding(vertical = 20.dp)) { Text(title, style = MaterialTheme.typography.titleLarge); Spacer(Modifier.height(8.dp)); Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-@Composable private fun Artwork(uri: String?, size: Int = 56) {
+@Composable internal fun Artwork(uri: String?, size: Int = 56) {
     Box(Modifier.size(size.dp).clip(RoundedCornerShape((size / 6).dp)).background(Brush.linearGradient(listOf(Color(0xFF493962), Color(0xFF263B43)))), contentAlignment = Alignment.Center) {
         Icon(Icons.Default.GraphicEq, null, tint = Violet, modifier = Modifier.size((size / 2).dp))
         if (!uri.isNullOrBlank()) AsyncImage(uri, "Album artwork", modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
@@ -279,7 +292,7 @@ fun EchoApp(vm: EchoViewModel) {
     if (credits) Credits(track) { credits = false }
 }
 
-@Composable private fun Credits(track: Track, close: () -> Unit) {
+@Composable internal fun Credits(track: Track, close: () -> Unit) {
     val context = LocalContext.current
     AlertDialog(onDismissRequest = close, title = { Text("Audio credits") }, text = { Column {
         Text(track.attribution.orEmpty())
@@ -373,6 +386,7 @@ fun EchoApp(vm: EchoViewModel) {
     var preview by remember { mutableStateOf<dev.echo.data.spotify.SpotifyLinkPreview?>(null) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var autoMatch by rememberSaveable { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
@@ -388,7 +402,8 @@ fun EchoApp(vm: EchoViewModel) {
                     result.total != null -> "Only ${result.tracks.size} of ${result.total} tracks are exposed. This imports only those ${result.tracks.size}."
                     else -> "${result.tracks.size} tracks available. The full playlist count couldn't be verified; songs may be missing."
                 })
-                Text("Check this count against Spotify; public pages can omit songs. Song metadata only—choose recordings after import. This snapshot won't sync Spotify changes.", style = MaterialTheme.typography.bodySmall)
+                Text("Check this count against Spotify; public pages can omit songs. This snapshot won't sync Spotify changes.", style = MaterialTheme.typography.bodySmall)
+                Row(Modifier.toggleable(value = autoMatch, enabled = !loading, role = Role.Checkbox, onValueChange = { autoMatch = it }), verticalAlignment = Alignment.CenterVertically) { Checkbox(autoMatch, null, enabled = !loading); Text("Auto-match clear recordings", style = MaterialTheme.typography.bodySmall) }
                 LazyColumn(Modifier.heightIn(max = 140.dp)) { itemsIndexed(result.tracks.take(4)) { _, track -> Text("${track.title} · ${track.artist}", modifier = Modifier.padding(vertical = 4.dp), maxLines = 2, overflow = TextOverflow.Ellipsis) } }
             }
         }
@@ -403,6 +418,7 @@ fun EchoApp(vm: EchoViewModel) {
                     else {
                         val id = UUID.randomUUID().toString()
                         vm.library.importPlaylist(id, result.name, result.tracks)
+                        if (autoMatch) vm.matchPlaylistAutomatically(id)
                         imported()
                     }
                 } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -431,7 +447,11 @@ fun EchoApp(vm: EchoViewModel) {
             playlist?.spotifyId?.let { spotifyId -> IconButton(onClick = { vm.mutatePlaylist(id) { vm.spotify.importPlaylist(spotifyId) } }) { Icon(Icons.Default.Refresh, "Refresh from Spotify; replaces playlist contents") } }
         } }
         item { OutlinedButton(enabled = firstPlayable >= 0 && !vm.busy, onClick = { vm.smartShuffle(songs) }) { Text("Smart shuffle · Echo") } }
-        item { Text("Smart shuffle adds discoveries between your songs for this listening session. Your saved playlist stays as it is.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Smart shuffle uses songs related to the current recording, with one recommendation after three playlist songs. Your saved playlist stays as it is.", style = MaterialTheme.typography.bodySmall) }
+        if (songs.any { it.sourceUri == null && it.provider == "spotify" }) item {
+            OutlinedButton(enabled = vm.matchingProgress == null, onClick = { vm.matchPlaylistAutomatically(id) }) { Text("Auto-match recordings") }
+            Text("Title, artist and duration must agree. Only unclear matches need Find recording. Cancelling keeps this playlist unchanged.", style = MaterialTheme.typography.bodySmall)
+        }
         if (songs.isEmpty()) item { EmptyState("Start the soundtrack", "Add tracks from your library using the plus button.") }
         itemsIndexed(songs, key = { index, _ -> index }) { index, track ->
             Column {
@@ -473,7 +493,7 @@ fun EchoApp(vm: EchoViewModel) {
 }
 
 @Composable private fun MiniPlayer(vm: EchoViewModel, open: () -> Unit) {
-    Surface(Modifier.fillMaxWidth().padding(horizontal = 8.dp).clickable(onClick = open), shape = RoundedCornerShape(12.dp), color = Color(0xFF302B3D)) {
+    Surface(Modifier.fillMaxWidth().padding(horizontal = 8.dp).testTag("mini-player").clickable(onClick = open), shape = RoundedCornerShape(12.dp), color = Color(0xFF302B3D)) {
         Column {
             Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Artwork(vm.current?.mediaMetadata?.artworkUri?.toString(), 42); Spacer(Modifier.width(12.dp))
@@ -484,44 +504,6 @@ fun EchoApp(vm: EchoViewModel) {
             LinearProgressIndicator(progress = { if (vm.duration > 0) (vm.position.toFloat() / vm.duration).coerceIn(0f, 1f) else 0f }, modifier = Modifier.fillMaxWidth().height(2.dp))
         }
     }
-}
-
-@Composable private fun PlayerScreen(vm: EchoViewModel, tracks: List<Track>, favorites: Set<String>) {
-    var queue by remember { mutableStateOf(false) }
-    var credits by remember { mutableStateOf(false) }
-    var seeking by remember { mutableStateOf<Float?>(null) }
-    val current = tracks.find { it.id == vm.current?.mediaId }
-    val controller = vm.controller
-    val revision = vm.revision
-    LazyColumn(contentPadding = PaddingValues(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        item { Text("NOW PLAYING", color = Violet, letterSpacing = 3.sp, style = MaterialTheme.typography.labelMedium) }
-        item { Artwork(vm.current?.mediaMetadata?.artworkUri?.toString(), 280) }
-        item { Column(Modifier.fillMaxWidth()) { Text(vm.current?.mediaMetadata?.title?.toString() ?: "Choose a song", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text(vm.current?.mediaMetadata?.artist?.toString().orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-        item { Column {
-            Slider(value = seeking ?: vm.position.toFloat().coerceIn(0f, vm.duration.toFloat().coerceAtLeast(1f)), onValueChange = { seeking = it }, onValueChangeFinished = { seeking?.let { controller?.seekTo(it.toLong()) }; seeking = null }, valueRange = 0f..vm.duration.toFloat().coerceAtLeast(1f), enabled = vm.duration > 0)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(time(vm.position)); Text(time(vm.duration)) }
-        } }
-        item { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly) {
-            IconButton(onClick = { controller?.shuffleModeEnabled = controller?.shuffleModeEnabled != true }) { Icon(Icons.Default.Shuffle, "Shuffle", tint = if (controller?.shuffleModeEnabled == true && revision >= 0) Violet else Color.Gray) }
-            IconButton(onClick = { controller?.seekToPrevious() }) { Icon(Icons.Default.SkipPrevious, "Previous", modifier = Modifier.size(32.dp)) }
-            FilledIconButton(onClick = vm::toggle, modifier = Modifier.size(72.dp)) { if (vm.buffering) CircularProgressIndicator(Modifier.size(28.dp)) else Icon(if (vm.playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (vm.playing) "Pause" else "Play", modifier = Modifier.size(36.dp)) }
-            IconButton(onClick = { controller?.seekToNextMediaItem() }) { Icon(Icons.Default.SkipNext, "Next", modifier = Modifier.size(32.dp)) }
-            IconButton(onClick = { controller?.repeatMode = when (controller?.repeatMode) { Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL; Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE; else -> Player.REPEAT_MODE_OFF } }) { Icon(if (controller?.repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat, "Repeat mode ${controller?.repeatMode}", tint = if (controller?.repeatMode != Player.REPEAT_MODE_OFF && revision >= 0) Violet else Color.Gray) }
-        } }
-        item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            IconButton(enabled = current != null, onClick = { current?.let(vm::favorite) }) { Icon(if (current?.id in favorites) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Like song", tint = Violet) }
-            TextButton(onClick = { queue = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, null); Text(" Queue") }
-            if (current?.attribution != null) TextButton(onClick = { credits = true }) { Text("Credits") }
-        } }
-        item { Text("Source: ${current?.provider ?: "none"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-    }
-    if (queue) AlertDialog(onDismissRequest = { queue = false }, title = { Text("Playback queue") }, text = {
-        LazyColumn { items(controller?.mediaItemCount ?: 0) { index -> val item = controller?.getMediaItemAt(index); Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { controller?.seekToDefaultPosition(index); controller?.play() }, modifier = Modifier.weight(1f)) { Text(item?.mediaMetadata?.title?.toString() ?: "Track ${index + 1}") }
-            IconButton(onClick = { controller?.removeMediaItem(index); vm.message = "Removed from queue" }) { Icon(Icons.Default.Close, "Remove from queue") }
-        } } }
-    }, confirmButton = { TextButton(onClick = { queue = false }) { Text("Done") } })
-    if (credits && current != null) Credits(current) { credits = false }
 }
 
 @Composable private fun SettingsScreen(vm: EchoViewModel) {
@@ -554,7 +536,7 @@ fun EchoApp(vm: EchoViewModel) {
         item { Text("Echo Music ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium) }
         item { OutlinedButton(enabled = updateStatus !is UpdateStatus.Checking && updateStatus !is UpdateStatus.Downloading, onClick = vm::checkUpdates) { Text(if (updateStatus is UpdateStatus.Checking) "Checking for updates…" else "Check for updates") } }
         item { Text("Spotify playlist files", style = MaterialTheme.typography.titleMedium) }
-        item { Text("Import from Library using a public Spotify share link, CSV or Spotify playlist JSON. Links preview the available track count first. Imports copy metadata, without Spotify audio or automatic sync. Echo's discovery and smart shuffle use YouTube searches.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Import from Library using a public Spotify share link, CSV or Spotify playlist JSON. Links preview the available track count first. Clear recordings can match automatically; ambiguous songs need a choice. Imports don't include Spotify audio or automatic sync.", style = MaterialTheme.typography.bodySmall) }
         if (connected) item { OutlinedButton(onClick = { vm.runAction("Disconnected") { vm.spotify.disconnect() } }) { Text("Disconnect previous Spotify session") } }
         item { HorizontalDivider(); SectionTitle("Playback & storage") }
         item { Text("Playback sources", style = MaterialTheme.typography.titleMedium) }

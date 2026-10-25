@@ -14,11 +14,11 @@ class DiscoveryMixTest {
     @Test fun insertsAtMostOneDiscoveryPerThreePreservingOriginalOccurrences() {
         val original = listOf(song("a"), song("b"), song("a"), song("c"))
         val discoveries = listOf(song("x"), song("y"), song("z"), song("a"))
-        val mixed = smartMix(original, discoveries)
-        assertEquals(6, mixed.size)
+        val mixed = smartMix(original, discoveries, "b")
+        assertEquals(5, mixed.size)
+        assertEquals("b", mixed.first().id)
         assertEquals(original.groupingBy { it.id }.eachCount(), mixed.filter { it.id in setOf("a", "b", "c") }.groupingBy { it.id }.eachCount())
         assertTrue(mixed[3].id in setOf("x", "y", "z"))
-        assertTrue(mixed[5].id in setOf("x", "y", "z"))
-        assertNotEquals(mixed[3].id, mixed[5].id)
+        assertEquals("x", mixed[3].id)
     }
 }

@@ -115,6 +115,16 @@ class LibraryRepository internal constructor(private val context: Context, priva
         replaceEntries(id, ids)
     }
 
+    suspend fun applyRecordingMatches(id: String, expectedIds: List<String>, matches: Map<String, Track>) = database.withTransaction {
+        requirePlaylist(id)
+        require(dao.playlistIds(id) == expectedIds) { "Playlist changed while matching. Retry to keep your edits." }
+        require(matches.keys.all { it in expectedIds } && matches.values.all { it.provider in setOf("local", "youtube") && it.sourceUri != null }) { "Invalid recording match" }
+        upsertTracks(matches.values.toList())
+        val liked = dao.allFavorites().toSet()
+        matches.forEach { (importedId, recording) -> if (importedId in liked) dao.favorite(FavoriteEntity(recording.id)) }
+        replaceEntries(id, expectedIds.map { matches[it]?.id ?: it })
+    }
+
     /** Library metadata only; does not contain settings, credentials, or audio files. */
     suspend fun exportBackup(): String = withContext(Dispatchers.IO) {
         database.withTransaction {
