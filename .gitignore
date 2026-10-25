@@ -1,0 +1,10 @@
+.gradle/
+.gradle-user/
+.kotlin/
+**/build/
+local.properties
+.idea/
+*.jks
+*.keystore
+captures/
+emulator-*.log

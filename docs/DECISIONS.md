@@ -1,0 +1,11 @@
+# Decisions
+
+- 2026-10-25: User has no Premium. Replace normal Spotify connection UI with local playlist-file import; retain prior credentials/auth implementation without making login a requirement. Imports are snapshots, transactional and additive with new playlist IDs. Select YouTube recordings explicitly per occurrence. Echo discovery and smart shuffle use artist searches, and New music uses a current-month search rather than claiming a verified release feed. This supersedes the onboarding UI decision below; Spotify automatic sync remains unavailable under the current setup.
+
+- 2026-10-24: Use four meaningful modules rather than dozens of empty modules.
+- Use installed Gradle 8.14, AGP 8.11.1 and SDK 36 when compatible; Java 17 bytecode.
+- Local files are the first playback source. Online sources must document playback permission.
+- Spotify uses authorization code + PKCE; YouTube discovery opens official external playback.
+- 2026-10-25: At the user's request, replace key-based YouTube links with key-free NewPipe song search and lazy in-app audio resolution. Preserve stable video identities in existing storage; keep Spotify imports metadata-only. This supersedes the original external-only YouTube decision. Pin the extractor version and require real playback evidence after updates; do not promise all-song availability.
+- 2026-10-25: GitHub updater targets public `addy1243/Echo` stable releases. Assets encode Android version code in `EchoMusic-<code>.apk`; SHA-256, package, version, SDK and installed signer checks precede Android's user-confirmed installer. Startup checks once daily; Settings can check immediately. No release was published.
+- 2026-10-25: For Spotify onboarding, bundle Echo's owned public client ID at build time and use the fixed registered mobile callback with PKCE. Remove normal runtime developer fields; preserve HTTPS callback support internally. Dashboard acceptance/live OAuth require separate verification. This onboarding decision did not change YouTube; the user's subsequent return to YouTube scope is recorded in the key-free playback decision above.
