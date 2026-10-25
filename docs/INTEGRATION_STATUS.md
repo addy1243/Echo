@@ -10,6 +10,8 @@ Verified in this change: debug APK and both test APKs build; all 39 app/data JVM
 
 The import tests use synthetic exports; the user's real Spotify export and Exportify login have not been tested. Live discovery verifies results/queue construction, not recommendation quality, release dates or playback of every returned song. New-music results can include old recordings. No automatic Spotify synchronization, background release notifications or GitHub APK release publication is claimed. Existing YouTube provider/playback changes, licenses, retry limits and library data were preserved. A local source snapshot was saved under `build/preservation/` before final validation.
 
+After validation, 0.1.3/code4 was installed in place on the explicitly reconnected phone (`RZGL42D8VML`), replacing 0.1.1/code2 with Android's same-key install. Package metadata confirms the installed version. No phone data reset, queue fixture or manual playback test was performed. Source was pushed to `addy1243/Echo`, branch `codex/playlist-discovery`; this did not publish an APK release.
+
 ## Key-free YouTube playback — 2026-10-25
 
 Implemented NewPipeExtractor v0.26.5 YouTube Music song search, stable video identities in existing library/backup storage, and lazy stream resolution inside the existing Media3 service. YouTube search is the default Discover/Search view. Results use native playback, queue, likes and playlists. Removed the Data API key UI and external-only discovery client; old encrypted credentials remain untouched and unused. No database migration or local-library reset. Provider version, required Android desugaring/shrinker rules, bundled GPL license/notices and the update procedure are recorded in [INTEGRATIONS.md](INTEGRATIONS.md#key-free-youtube-playback).

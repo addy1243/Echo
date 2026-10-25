@@ -23,6 +23,8 @@ Four modules: `core`, `data`, `playback`, `app`. Read `docs/ARCHITECTURE.md`, `d
 
 ## Connected Android device
 
+- Latest installation: 0.1.3/code4 was installed in place on the reconnected phone after import/discovery emulator validation. Android package metadata confirms the version. No phone library/queue fixture tests or manual playback checks were performed for this build; app data was not cleared.
+
 - On 2026-10-25 the user reconnected the physical Android16 phone and renewed authorization for Echo development/testing. ADB was freshly verified as `device`; the updater was installed in place and focused tests passed.
 - This supersedes the earlier emulator-only instruction for authorized Echo testing. Device availability is temporary: check `adb devices -l` each session and use an explicit `adb -s <serial>` target.
 - Preserve the library, preferences and credentials. Use in-place same-key installs; do not uninstall `dev.echo.music`, clear its data, or alter unrelated phone apps/settings without explicit authorization.
