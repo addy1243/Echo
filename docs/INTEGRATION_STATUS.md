@@ -4,6 +4,14 @@ Initial implementation, 2026-10-25. Final verification results will be recorded 
 
 
 
+## Live Google authorization blocked — 2026-10-27
+
+The owner supplied a phone screenshot showing Google's **Access blocked: Echo** and `403: access_denied` during account/Drive authorization. Request details include the Android OAuth client and identity plus `drive.appdata` scopes. This is a confirmed failed live authorization attempt; prior emulator/build/parser checks remain valid but do not prove real login or Drive access.
+
+The first proposed setup check is **Google Auth Platform → Audience → Test users** in the Android client's Cloud project: if the project is External / Testing, add the exact selected Google account, save and retry the normal consent flow. Google's Testing exception for basic identity does not cover the additional Drive scope. The project's current Audience settings, test-user change and successful retry have not been observed, so the test-user explanation remains a hypothesis rather than a confirmed root cause. Account/admin restrictions are other possible causes. See [setup and troubleshooting](ACCOUNTS.md#troubleshooting-error-403-access_denied), [Google Audience rules](https://support.google.com/cloud/answer/15549945?hl=en) and [error-code guidance](https://support.google.com/accounts/answer/16668185?hl=en).
+
+Live Google authorization, playlist upload/download and two-device convergence remain unresolved. No app code, OAuth scopes, client credentials or published release was changed for this documentation update; no account email or screenshot was copied into the repository.
+
 ## Published Android 0.1.9 / code10 — 2026-10-27
 
 Published [v0.1.9](https://github.com/addy1243/Echo/releases/tag/v0.1.9), exact source commit `2c32cb911541dd384f5abff11ff952cdc4a6dc8b`. APK25430385bytes/SHA-256 `fbfbad12de1a5696503bc6a5491fcf181756986977a3e2e3c2997ae109815e29`; source94034140bytes/SHA-256 `e903b5e00e7a3a530578c146b8073ca3459702065ba265e94f9248627fcad173`. Both GitHub asset digests and public stable/latest state were verified. Three actual code8→public-code10 checks passed: background cancellation/partial cleanup, screen-off completion and exact digest/identity/installer handoff without accepting installation (`build/code10-public-update-emulator.log`,19.222 seconds).

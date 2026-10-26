@@ -12,13 +12,31 @@ Older SDK-based sessions require an explicit new account choice after upgrading 
 
 ## Owner console setup
 
-1. Enable the Google Drive API in the Google Cloud project and configure the consent screen/test users as appropriate.
+1. Enable the Google Drive API in the Google Cloud project containing Echo's Android OAuth client. In **Google Auth Platform → Audience**, check the user type and publishing status. For personal testing with **External / Testing**, add each Google account that will connect Drive under **Test users → Add users**, then save. Creating an OAuth client alone does not complete this setup.
 2. Register an Android OAuth client for package dev.echo.music and the SHA-1 of the certificate that signs the installed APK. Google documents AccountManager OAuth token requests using this package/certificate registration.
 3. Current same-key preview certificate SHA-1: **19:76:9A:84:6D:ED:1F:EF:93:6E:48:42:3B:3E:D8:4A:24:14:B9:CA**. Recheck another machine/release signing identity; private keys must never be shared or committed.
 4. The Web client created earlier is retained as an owner reference in gradle.properties, but the platform flow does not use a Web audience, secret, browser redirect, Desktop client or loopback workaround. No additional redirect URL is required for this AccountManager integration.
 5. On an Android device with Google's account provider, explicitly select your account and approve identity/Drive access. Verify real authentication, revoked consent, switching accounts and two-device transfers before claiming live account sync is validated.
 
 The platform flow is documented by Google and Android, and deterministic profile/selection/migration checks are included. It still needs a fresh real-account grant on the owner's setup. A successful build or visible sign-in button does not prove Google's authenticator accepts the registered client. A device without the Google account provider can use Echo locally and export/import library backups instead.
+
+## Troubleshooting: Error 403 `access_denied`
+
+On 2026-10-27 the owner reported Google's **Access blocked: Echo** screen with `403: access_denied`. The request details showed the registered Android client and `drive.appdata` alongside identity scopes. This establishes a failed live Google authorization attempt; it does not establish the cause or a successful Drive connection. Echo's client-side checks and emulator tests do not replace this live verification.
+
+A likely cause is an External project in Testing whose selected account is missing from the test-user list. Check this first:
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/) and select the project containing the Android OAuth client shown in the error. Use the Android client's project, rather than assuming a separately created Web client belongs to the same project.
+2. Open **Google Auth Platform → Audience** and inspect the publishing status. If it is **Testing**, find **Test users → Add users**.
+3. Add the exact Google account selected in Echo and save. Repeat for each account used during testing.
+4. Close the Google error screen. Return to **Profile → Connect Drive / Sync now** and retry; if Echo is signed out, start with **Sign in with Google**. Approve the normal Google consent prompts.
+5. Confirm that authorization actually finishes, then verify a real playlist save/sync before marking the integration working. A saved console setting or an enabled button is not proof of authorization.
+
+Google exempts requests limited to basic identity scopes from the Testing allowlist requirement. Echo's separate Drive request includes `drive.appdata`, so that exception does not apply to this request. Testing grants for scopes beyond basic identity expire after seven days; a later consent prompt can therefore be expected. Keep Testing for the current setup check; switching to Production is not required to test an explicitly listed account. See [Google's Audience rules](https://support.google.com/cloud/answer/15549945?hl=en).
+
+If the account is already listed, inspect the full **Access blocked** message outside the request-details popup and confirm the selected Cloud project. Google also lists account-type and administrator restrictions as possible causes of this error; the screenshot alone cannot distinguish them. Recheck the Android package/signing SHA-1 against the installed APK using the owner setup above. Do not recreate the Web client or add browser redirect URLs as a speculative fix for the Android AccountManager flow. See [Google's error-code guidance](https://support.google.com/accounts/answer/16668185?hl=en).
+
+The test-user change and a successful retry have not yet been confirmed. Live account authorization and two-device Drive sync remain unresolved. No APK rebuild or app-data reset is needed merely to update the Cloud test-user list.
 
 ## Sync behavior and data
 
@@ -31,6 +49,7 @@ Cloud snapshots include playlist names/IDs and referenced track metadata. Audio,
 Responses/identities/source hosts are validated, bodies bounded, redirects disabled and rate limits respected. More than100 app-data files stops the sync explicitly. A network failure preserves local data; remote devices applied earlier in a multi-device operation can stay applied. Export a separate backup for independent recovery; sync snapshots are not immutable backup history.
 
 References: [Google Android OAuth clients and AccountManager](https://support.google.com/cloud/answer/15549257?hl=en), [Android AccountManager](https://developer.android.com/reference/android/accounts/AccountManager), [Google userinfo](https://developers.google.com/resources/api-libraries/documentation/oauth2/v2/python/latest/oauth2_v2.userinfo.html), [Drive app-data folder](https://developers.google.com/workspace/drive/api/guides/appdata). Executed evidence and remaining limits are in [integration status](INTEGRATION_STATUS.md).
+
 ## Profile device count
 
 Profile shows the local playlist count and the signed-in verified Google email. After a successful sync it shows the number of recognized per-installation playlist snapshots found in that account, including the confirmed current upload, with the last-checked time. Reports are stored per account; before the first successful sync the count is unknown. This is not online presence: registrations may be offline and reinstalls have separate identities. Duplicate snapshot registrations stop sync rather than inflating the count. Device removal and remote sign-out are not implemented.
