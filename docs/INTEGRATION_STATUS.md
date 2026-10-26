@@ -3,6 +3,15 @@
 Initial implementation, 2026-10-25. Final verification results will be recorded after integrated checks.
 
 
+
+## Published GitHub update — v0.1.8 / code9 — 2026-10-26
+
+Published https://github.com/addy1243/Echo/releases/tag/v0.1.8 as public stable/latest at exact release commit2bb31c605a2cf31ec2ea5151ab26ea8a18e20bdb. APK29814483bytes/SHA-256a2daf451c21939144ef05a1a2479fa174444463f3608ccc1eb38f12a0eb33bc9 and full corresponding source94016740bytes/SHA-25607922fb5ffcd2d6fd59e724a61c7d120256095d9ce84d1debd0c1f843383a5c0 were uploaded and GitHub digests verified before publication. The source ZIP contains392 entries and a135-component source URL/hash manifest; root source, GPL grant, build scripts and dependency sources match the tag. No private keys, credentials or app data were included.
+
+LiveGitHubUpdateTest passed against installed code8 using the real unauthenticated latest-release API and public APK download. It verified release selection, SHA-256/size, APK identity/SDK/same signer, private staging and normal installer/permission intent. Installed version stayed8; system permission/installation confirmation was not bypassed or accepted. Duration7.36seconds. Final candidate validation passed all five updater Android checks too. Logs: build/release/live-github-update-emulator.log and build/release/gpl-updater-candidate-emulator.log. Source commit/tag were pushed to codex/playlist-discovery/v0.1.8; publication evidence docs may be a later commit than the immutable APK source tag.
+
+Actual phone installation, system installer completion, Google account consent and live Drive/two-device sync remain unverified. Android's normal approval steps are still required. Earlier no-release/held-publication statements below are historical states superseded by this record.
+
 ## GPL-compatible update build — 0.1.8 / code9 — 2026-10-26
 
 The owner approved GPL-3.0-or-later and public release. Added LICENSE/COPYING and replaced bundled Google identity SDKs with Android AccountManager account selection/token consent plus verified Google email/subject and separate Drive scope. No GET_ACCOUNTS permission or account enumeration is used; tokens stay out of persistent storage. A pending-consent guard prevents automatic sync from dropping a user authorization result. Live owner Google authentication/Drive access remains unverified.

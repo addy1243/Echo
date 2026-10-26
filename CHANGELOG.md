@@ -2,13 +2,13 @@
 
 This file records development changes. A development build or an entry here does not mean an APK was published to GitHub Releases.
 
-## Release candidate — 0.1.8 / versionCode 9 — 2026-10-26
+## 0.1.8 / versionCode 9 — published 2026-10-26
 
-- Prepared a newer same-key configured APK named `EchoMusic-9.apk` for the existing GitHub updater; preserved code8 as an upgrade baseline.
+- Published [v0.1.8](https://github.com/addy1243/Echo/releases/tag/v0.1.8) with same-key `EchoMusic-9.apk` and exact corresponding source at commit2bb31c6; preserved code8 as the emulator upgrade baseline. The real public download passed checksum, identity and installer-handoff checks without silent installation.
 - Verified GitHub repository write access, APK identity/version/signing certificate, and build/unit/lint checks. Added an opt-in Android check of the actual newer candidate against the installed app.
 - Owner approved GPL-3.0-or-later. Replaced bundled proprietary Google identity SDKs with Android account selection/token authorization and verified Google userinfo, retained separate Drive consent, added packaged runtime notices/source access and matching dependency-source packaging. Live owner Google authorization remains unverified; see [release readiness](docs/RELEASE_READINESS.md).
 
-## Unreleased — 0.1.7 / versionCode 8 — 2026-10-26
+## 0.1.7 development work included in 0.1.8 — 2026-10-26
 
 - Playlist Add to queue offers playlist order, Shuffle and Smart shuffle while preserving current playback and prior upcoming songs. Search taps play only the selected song before continuing the existing queue, including actual shuffled traversal. New Shuffle sessions choose a random playable occurrence and retain every occurrence in repeat-off mode; Smart shuffle randomizes fresh-session anchors while retaining active playback when applicable.
 - Service-owned sleep timer with 15/30/45/60-minute choices, visible countdown, replacement and cancellation. Expiry pauses without clearing queue/position, including while the screen is off; service destruction clears the timer. See [queue behavior](docs/QUEUE_ACTIONS.md) and [timer semantics](docs/SLEEP_TIMER.md).

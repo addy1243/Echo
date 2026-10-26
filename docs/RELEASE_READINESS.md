@@ -2,12 +2,17 @@
 
 The owner authorized public GitHub updates and approved GPL-3.0-or-later on 2026-10-26. GitHub write access was verified privately through the configured Git credential helper. Credentials and private signing keys are never printed, committed or uploaded.
 
-## Prepared release
+
+**Published:** [v0.1.8](https://github.com/addy1243/Echo/releases/tag/v0.1.8), release ID424426308, exact commit2bb31c605a2cf31ec2ea5151ab26ea8a18e20bdb. GitHub verified APK size29814483 and SHA-256a2daf451c21939144ef05a1a2479fa174444463f3608ccc1eb38f12a0eb33bc9; matching source ZIP size94016740 and SHA-25607922fb5ffcd2d6fd59e724a61c7d120256095d9ce84d1debd0c1f843383a5c0. Both are public release assets. The unauthenticated latest-release API exposes the stable release correctly.
+
+**Live verification passed:** installed code8 downloaded the public code9 APK through the real updater, verified checksum/size/package/SDK/signer, staged it privately and returned the normal permission/installer intent. The installed version stayed8 because the test did not accept system installation. Log: build/release/live-github-update-emulator.log (one passing live scenario,7.36seconds). The final GPL code9 candidate also passed all five updater Android checks against code8 (build/release/gpl-updater-candidate-emulator.log). No phone install/reset or credential/signing-key publication occurred.
+
+## Release artifacts
 
 - APK: build/release/EchoMusic-9.apk, package dev.echo.music, version0.1.8/code9, minimum SDK26.
 - APK SHA-256: a2daf451c21939144ef05a1a2479fa174444463f3608ccc1eb38f12a0eb33bc9.
 - Signing certificate SHA-256: c71752f76fa5e39cc5c653688e7abfdbf108900fd6334202f4e641b7884531ad, identical to code8 and the existing preview signing identity. The published APK remains debug-signed to preserve in-place updates; a differently signed APK will be rejected.
-- Source: build/release/EchoMusic-9-source.zip will be produced from the reviewed release commit by scripts/package_corresponding_source.py. It includes the exact Echo sources/build scripts, pinned NewPipe/desugaring repository sources, runtime dependency source archives and a URL/SHA-256 manifest. No caches, app-data captures or signing keys are included.
+- Source: build/release/EchoMusic-9-source.zip was produced from the reviewed release commit by scripts/package_corresponding_source.py. It includes the exact Echo sources/build scripts, pinned NewPipe/desugaring repository sources, runtime dependency source archives and a URL/SHA-256 manifest. No caches, app-data captures or signing keys are included.
 - Preserved baseline: build/release/EchoMusic-8-baseline.apk, used only for isolated emulator upgrade checks.
 
 ## Distribution resolution
@@ -28,4 +33,4 @@ Logs: build/release/platform-auth-build.log, build/release/gpl-platform-final-bu
 
 Create the stable/latest v0.1.8 release at the exact reviewed commit, upload EchoMusic-9.apk and matching EchoMusic-9-source.zip, and verify GitHub's public SHA-256/size metadata before making the release available. No token or signing key may be attached. The updater ignores drafts/prereleases/equal or older versions and verifies download bytes, package, SDK and signer before installer handoff.
 
-LiveGitHubUpdateTest explicitly opts in to the real public endpoint/download using installed code8 and expected code9/hash. It validates private staging and the normal installer/permission intent without accepting system installation. Android permission and user confirmation remain required. Publication/live results are appended to integration status after those actions succeed; this preparation document alone does not claim they occurred.
+LiveGitHubUpdateTest explicitly opts in to the real public endpoint/download using installed code8 and expected code9/hash. It validates private staging and the normal installer/permission intent without accepting system installation. Android permission and user confirmation remain required. Public-release/live results are recorded above and in integration status. Actual system installer completion, physical-phone updates and owner Google account/Drive access remain unverified.

@@ -1,6 +1,6 @@
 # GitHub updates
 
-See [CHANGELOG.md](../CHANGELOG.md) for development release notes. Key-free YouTube playback is recorded as **Unreleased**; updating documentation or building an APK does not publish a GitHub release.
+Published stable release: [Echo Music 0.1.8 / code9](https://github.com/addy1243/Echo/releases/tag/v0.1.8), with the same-key `EchoMusic-9.apk` and exact corresponding source archive. The live updater on code8 successfully discovered, downloaded and verified code9 and prepared normal installer handoff. Installation permission/confirmation was not automated. See [CHANGELOG.md](../CHANGELOG.md) and [integration evidence](INTEGRATION_STATUS.md).
 
 Echo checks the latest published stable release from `addy1243/Echo` once per 24 hours at startup. Settings → Check for updates checks immediately. No notification is shown when there is no newer compatible asset. Drafts and prereleases are ignored. A public repository is required; no GitHub token or client secret is included in the APK.
 
@@ -21,7 +21,7 @@ Example preview build (still uses this machine's existing debug key):
 Copy-Item app/build/outputs/apk/debug/app-debug.apk EchoMusic-9.apk
 ```
 
-For a release build, use Android Studio's signed APK flow and the original signing key. No release or APK upload is performed by this feature implementation.
+For a release build, use Android Studio's signed APK flow and the original signing key. The 0.1.8 release was published with owner authorization; future releases require their own authorized publication and newer version code.
 
 ## Integrity and recovery
 

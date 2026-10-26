@@ -7,7 +7,7 @@
 | Persistence | Room library, MediaStore, settings, tests | core contracts | Completed |
 | Playback | Media3 service, car hierarchy, controller helpers | core + persistence contracts | Completed |
 | Integrations | Spotify PKCE/import, authorized provider, matching, YouTube, tests | core contracts | Completed |
-| Sol + integration review | GitHub updater, validation, popup and phone checks | Public repo + signing identity | Completed |
+| Sol + integration review | GitHub updater, validation, popup and phone checks | Public repo + signing identity | v0.1.8 published; real code8 download/identity/installer-handoff passed on emulator; installer confirmation remains user action |
 | Sol | Spotify account onboarding | Owner has no Premium; subscription-free file import replaces normal login UI | Stopped |
 | Sol | Playlist-file import, recording selection, discovery, smart shuffle and new-music searches | Existing Room/YouTube/Media3 paths | Implemented; 39 app/data JVM, 3 data emulator, 2 UI and 1 live discovery checks pass |
 | Sol | Public Spotify share-link preview/import | Canonical public pages; explicit partial/unknown count preview | Implemented; 41 JVM, 3 parser/live data and 3 UI/live checks pass; code6 installed in place |
