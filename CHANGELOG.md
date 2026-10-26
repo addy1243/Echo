@@ -2,7 +2,7 @@
 
 This file records development changes. A development build or an entry here does not mean an APK was published to GitHub Releases.
 
-## 0.1.9 / versionCode 10 — 2026-10-27
+## 0.1.9 / versionCode 10 — published 2026-10-27
 
 - Drag upcoming queue rows to arrange real playback order, including shuffled and repeat-all queues. Current playback and duplicate occurrences are preserved; stale drags are rejected. Move up/down accessibility actions are available.
 - User-started app updates and manual song downloads continue in Android foreground services with progress/cancellation notifications and bounded screen-off wake locks. Song downloads show actual received bytes and percentages when totals are known. Notification taps open Downloads. Completion offers installation only through user action.

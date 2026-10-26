@@ -4,7 +4,9 @@ Initial implementation, 2026-10-25. Final verification results will be recorded 
 
 
 
-## Android 0.1.9 / code10 candidate — 2026-10-27
+## Published Android 0.1.9 / code10 — 2026-10-27
+
+Published [v0.1.9](https://github.com/addy1243/Echo/releases/tag/v0.1.9), exact source commit `2c32cb911541dd384f5abff11ff952cdc4a6dc8b`. APK25430385bytes/SHA-256 `fbfbad12de1a5696503bc6a5491fcf181756986977a3e2e3c2997ae109815e29`; source94034140bytes/SHA-256 `e903b5e00e7a3a530578c146b8073ca3459702065ba265e94f9248627fcad173`. Both GitHub asset digests and public stable/latest state were verified. Three actual code8→public-code10 checks passed: background cancellation/partial cleanup, screen-off completion and exact digest/identity/installer handoff without accepting installation (`build/code10-public-update-emulator.log`,19.222 seconds).
 
 Implemented upcoming-row long-press drag/drop with accessible Move up/down, actual shuffled/repeat-all playback ordering and stale-action rejection; current playback and duplicate occurrences are preserved. Added Profile with Google/Drive controls, local playlist count and per-account registrations from the last successful sync. Device counts are unknown before successful sync and do not imply online presence.
 

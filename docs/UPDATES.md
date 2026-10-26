@@ -1,6 +1,6 @@
 # GitHub updates
 
-Published stable release: [Echo Music 0.1.8 / code9](https://github.com/addy1243/Echo/releases/tag/v0.1.8), with the same-key `EchoMusic-9.apk` and exact corresponding source archive. The live updater on code8 successfully discovered, downloaded and verified code9 and prepared normal installer handoff. Installation permission/confirmation was not automated. See [CHANGELOG.md](../CHANGELOG.md) and [integration evidence](INTEGRATION_STATUS.md).
+Published stable release: [Echo Music 0.1.9 / code10](https://github.com/addy1243/Echo/releases/tag/v0.1.9), with same-key `EchoMusic-10.apk` and exact corresponding source at commit `2c32cb911541dd384f5abff11ff952cdc4a6dc8b`. The real updater on the code8 emulator passed public code10 background completion, cancellation, checksum/identity verification and normal installer handoff without accepting installation. See [CHANGELOG.md](../CHANGELOG.md) and [integration evidence](INTEGRATION_STATUS.md).
 
 Echo checks the latest published stable release from `addy1243/Echo` once per 24 hours at startup. Settings → Check for updates checks immediately. No notification is shown when there is no newer compatible asset. Drafts and prereleases are ignored. A public repository is required; no GitHub token or client secret is included in the APK.
 

@@ -30,6 +30,8 @@ Four modules: `core`, `data`, `playback`, `app`. Read `docs/ARCHITECTURE.md`, `d
 
 ## In-app updates
 
+- v0.1.9/code10 is published with same-key APK and matching GPL source. Actual code8→public10 background cancellation/completion, digest/identity and installer-handoff checks passed; no system installer was accepted.
+
 - Owner approved GPL-3.0-or-later and public release. v0.1.8/code9 is published with the same-key APK, matching source/dependency bundle and packaged notices; no proprietary Google identity SDK is bundled. Real code8 public download/checksum/signature/staging and installer-handoff passed, and the code8 UI displayed Update ready 0.1.8. Android installer acceptance, phone updates and live Google consent remain unverified. Preserve the validated distribution and update path; see docs/RELEASE_READINESS.md.
 
 - Implemented in `app/src/main/java/dev/echo/app/update/`; release contract and setup are in `docs/UPDATES.md`.
