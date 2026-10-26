@@ -2,6 +2,7 @@
 
 | Owner | Scope | Dependencies | State |
 |---|---|---|---|
+| Orchestrator + player/artwork, history and offline subagents | Player playlist actions, artwork, listening events/preferences, downloads/cache, Google account/Drive sync, queue append/search/shuffle and sleep timer | Public Web client ID configured; live OAuth/Drive consent remains owner verification; see ACCOUNTS.md | Integrated for 0.1.7/code8; executed checks in INTEGRATION_STATUS.md |
 | Sol | Gradle, Compose UI, integration, build | core contracts | Completed |
 | Persistence | Room library, MediaStore, settings, tests | core contracts | Completed |
 | Playback | Media3 service, car hierarchy, controller helpers | core + persistence contracts | Completed |

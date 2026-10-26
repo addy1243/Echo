@@ -10,9 +10,27 @@ import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class UpdateParsingTest {
+    @Suppress("DEPRECATION")
+    @Test fun preparedUpdateHasTheInstalledIdentityAndANewerVersion() {
+        val arguments = InstrumentationRegistry.getArguments()
+        val path = arguments.getString("preparedUpdatePath")
+        assumeTrue("Provide a prepared update APK to verify a real upgrade candidate", path != null)
+        val expected = requireNotNull(arguments.getString("preparedUpdateCode")).toLong()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        val installed = context.packageManager.getPackageInfo(context.packageName, flags)
+        val candidate = requireNotNull(context.packageManager.getPackageArchiveInfo(path!!, flags)) { "Cannot read update APK" }
+        fun certificates(info: android.content.pm.PackageInfo) =
+            (if (Build.VERSION.SDK_INT >= 28) info.signingInfo!!.apkContentsSigners else info.signatures!!).map { it.toCharsString() }.toSet()
+        validateApkIdentity(candidate.packageName, context.packageName, PackageInfoCompat.getLongVersionCode(candidate),
+            PackageInfoCompat.getLongVersionCode(installed), expected, candidate.applicationInfo!!.minSdkVersion,
+            Build.VERSION.SDK_INT, certificates(candidate), certificates(installed))
+    }
+
     private fun release(version: Long = 3) = JSONObject().put("tag_name", "v0.1.2").put("name", "Echo 0.1.2")
         .put("body", "Playback fixes").put("draft", false).put("prerelease", false)
         .put("assets", JSONArray().put(JSONObject().put("name", "EchoMusic-$version.apk").put("state", "uploaded")

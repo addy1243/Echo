@@ -48,7 +48,9 @@ class NavigationPlayerTest {
             .put("data".toByteArray()).putInt(samples * 2)
         audio.writeBytes(wav.array())
         val songs = (1..3).map { Track("$fixture-$it", "Queue song $it", fixture, durationMs = 60_000, sourceUri = Uri.fromFile(audio).toString()) }
-        runBlocking { LibraryRepository(context).upsertTracks(songs) }
+        val library = LibraryRepository(context)
+        val playlistName = "$fixture playlist"
+        val playlistId = runBlocking { library.upsertTracks(songs); library.createPlaylist(playlistName) }
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 lateinit var model: EchoViewModel
@@ -66,9 +68,21 @@ class NavigationPlayerTest {
                 compose.onNodeWithTag("mini-player").performClick()
                 compose.onNodeWithTag("player-screen").assertIsDisplayed()
                 compose.onNodeWithTag("tab-home").assertDoesNotExist()
+                val savedCurrent = model.current!!.mediaId
+                repeat(2) {
+                    compose.onNodeWithContentDescription("Add current song to playlist").performClick()
+                    compose.onNodeWithText(playlistName).performClick()
+                }
+                compose.waitUntil(10_000) { runBlocking { library.playlistTracks(playlistId).size == 2 } }
+                assertEquals(listOf(savedCurrent, savedCurrent), runBlocking { library.playlistTracks(playlistId).map { it.id } })
                 capture("echo-player-preview.png")
                 compose.onNodeWithContentDescription("Open queue").performClick()
                 compose.onNodeWithText("Your queue").assertIsDisplayed()
+                val upcoming = model.queueItems[1].item
+                compose.onAllNodesWithContentDescription("Add ${upcoming.mediaMetadata.title} to playlist").onFirst().performClick()
+                compose.onNodeWithText(playlistName).performClick()
+                compose.waitUntil(10_000) { runBlocking { library.playlistTracks(playlistId).size == 3 } }
+                assertEquals(upcoming.mediaId, runBlocking { library.playlistTracks(playlistId).last().id })
                 capture("echo-queue-preview.png")
                 val previous = model.queueItems.first().uid
                 scenario.onActivity { model.controller!!.seekToNextMediaItem() }
@@ -83,6 +97,7 @@ class NavigationPlayerTest {
         } finally {
             SQLiteDatabase.openDatabase(context.getDatabasePath("echo-library.db").path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
                 db.setForeignKeyConstraintsEnabled(true)
+                db.delete("playlists", "id = ?", arrayOf(playlistId))
                 songs.forEach { db.delete("tracks", "id = ?", arrayOf(it.id)) }
                 db.delete("artists", "name = ?", arrayOf(fixture))
                 db.delete("albums", "artist = ?", arrayOf(fixture))

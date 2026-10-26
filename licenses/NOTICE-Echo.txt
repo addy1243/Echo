@@ -1,0 +1,16 @@
+Echo Music's original source code is licensed under the GNU General Public
+License, version 3 or (at your option) any later version (GPL-3.0-or-later).
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. The complete GPL version 3 text is included in
+NewPipeExtractor-GPL-3.0.txt in these assets and in COPYING in the source.
+
+You may redistribute and modify Echo under those GPL terms. Third-party
+components retain their own copyrights and licenses; see runtime/DEPENDENCIES.txt,
+runtime/ARTIFACT_NOTICES.txt and the other license texts in these assets.
+
+Matching source is provided alongside each distributed APK at:
+https://github.com/addy1243/Echo/releases
+
+This grant does not license third-party music, artwork or service access.

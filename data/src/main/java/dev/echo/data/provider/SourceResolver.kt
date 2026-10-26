@@ -6,12 +6,14 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.echo.core.AudioSourceProvider
 import dev.echo.core.PlayableSource
 import dev.echo.core.Track
+import dev.echo.data.offline.OfflineRepository
 import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class SourceResolver @Inject constructor(@ApplicationContext private val context: Context, youtube: YouTubeProvider) {
+class SourceResolver @Inject constructor(@ApplicationContext private val context: Context, youtube: YouTubeProvider,
+    private val offline: OfflineRepository) {
     private val preferences = context.getSharedPreferences("sources", Context.MODE_PRIVATE)
     private val providers: List<AudioSourceProvider> = listOf(LocalAudioProvider(context), youtube, CommonsProvider())
     init {
@@ -30,6 +32,8 @@ class SourceResolver @Inject constructor(@ApplicationContext private val context
         }
 
     suspend fun resolve(track: Track): PlayableSource? {
+        offline.localSource(track)?.let { return it }
+        if (offline.settings.value.offlineOnly && track.provider != "local") return null
         var failure: Exception? = null
         for (id in priority) {
             val provider = providers.firstOrNull { it.id == id } ?: continue

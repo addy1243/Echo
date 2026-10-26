@@ -23,13 +23,21 @@ import kotlinx.coroutines.withContext
 @Singleton
 class LibraryRepository internal constructor(private val context: Context, private val database: LibraryDatabase) {
     @Inject constructor(@ApplicationContext context: Context) : this(
-        context, Room.databaseBuilder(context, LibraryDatabase::class.java, "echo-library.db").build(),
+        context, Room.databaseBuilder(context, LibraryDatabase::class.java, "echo-library.db").addMigrations(MIGRATION_1_2).build(),
     )
     private val dao = database.libraryDao()
     val tracks: Flow<List<Track>> = dao.tracks().map { rows -> rows.map { it.model() } }
     val playlists: Flow<List<Playlist>> = dao.playlists().map { rows -> rows.map { it.model() } }
     val favorites: Flow<Set<String>> = dao.favorites().map { it.toSet() }
     val recent: Flow<List<Track>> = dao.recent().map { rows -> rows.map { it.model() } }
+    private val historyEvents = dao.listeningHistory().map { rows -> rows.filter {
+        it.history.playedAt >= System.currentTimeMillis() - 90L * 24 * 60 * 60 * 1000
+    }.map {
+        ListeningEvent(it.history.id, it.track.model(), ListeningEventType.valueOf(it.history.event),
+            it.history.playedAt, it.history.listenedMs, it.history.durationMs)
+    } }
+    val listeningHistory: Flow<List<ListeningEvent>> = historyEvents.map { it.take(500) }
+    val listeningPreferences: Flow<Map<String, ListeningPreference>> = historyEvents.map(::listeningPreferences)
 
     suspend fun upsertTracks(tracks: List<Track>) = database.withTransaction {
         require(tracks.all { it.id.isNotBlank() && it.durationMs >= 0 }) { "Tracks need an ID and a non-negative duration" }
@@ -79,16 +87,22 @@ class LibraryRepository internal constructor(private val context: Context, priva
         if (liked) dao.favorite(FavoriteEntity(trackId)) else dao.unfavorite(trackId)
     }
 
-    suspend fun recordPlayed(trackId: String) = database.withTransaction {
+    suspend fun recordPlayed(trackId: String) = recordListeningEvent(trackId, ListeningEventType.PLAYED)
+
+    suspend fun recordListeningEvent(trackId: String, event: ListeningEventType, listenedMs: Long = 0, durationMs: Long = 0) = database.withTransaction {
         require(dao.hasTrack(trackId)) { "Track does not exist" }
-        dao.record(HistoryEntity(trackId = trackId, playedAt = System.currentTimeMillis()))
-        dao.trimHistory()
+        require(listenedMs >= 0 && durationMs >= 0) { "Listening times cannot be negative" }
+        val now = System.currentTimeMillis()
+        dao.record(HistoryEntity(trackId = trackId, playedAt = now, event = event.name, listenedMs = listenedMs, durationMs = durationMs))
+        dao.trimHistory(now - 90L * 24 * 60 * 60 * 1000)
     }
+
+    suspend fun clearListeningHistory() = dao.clearHistory()
 
     suspend fun matchLocalTrack(importedTrackId: String, localTrackId: String) = database.withTransaction {
         val imported = requireNotNull(dao.track(importedTrackId)) { "Imported track does not exist" }
         val local = requireNotNull(dao.track(localTrackId)) { "Local track does not exist" }
-        require(imported.id != local.id && imported.provider != "local") { "Choose an imported track to match" }
+        require(imported.id != local.id && (imported.provider != "local" || imported.sourceUri == null)) { "Choose an imported track to match" }
         require(local.provider == "local" && !local.sourceUri.isNullOrBlank()) { "Choose a playable local recording" }
         dao.matchLocal(LocalTrackMatchEntity(importedTrackId, localTrackId))
     }
@@ -151,6 +165,26 @@ class LibraryRepository internal constructor(private val context: Context, priva
             backup.favorites.forEach { dao.favorite(FavoriteEntity(it)) }
             backup.matches.forEach { matchLocalTrack(it.importedTrackId, it.localTrackId) }
         }
+    }
+
+    /** Compare the complete snapshot inside the transaction so sync cannot overwrite intervening edits. */
+    suspend fun applyCloudPlaylists(expectedBackup: String, mergedBackup: String, deletedPlaylistIds: Set<String>) = database.withTransaction {
+        check(exportBackup() == expectedBackup) { "Library changed during sync. Retry to keep your edits." }
+        val backup = LibraryBackup.parse(mergedBackup)
+        upsertTracks(backup.tracks.map { incoming ->
+            val existing = dao.track(incoming.id)?.model()
+            if (existing != null) existing else incoming.copy(
+                sourceUri = if (incoming.provider == "local") null else incoming.sourceUri,
+            )
+        })
+        backup.playlists.forEach { entry ->
+            dao.upsertPlaylist(PlaylistEntity(entry.playlist.id, entry.playlist.name, entry.playlist.spotifyId))
+            replaceEntries(entry.playlist.id, entry.trackIds)
+            val spotifyId = entry.playlist.spotifyId
+            if (spotifyId != null) dao.upsertImport(ImportedPlaylistEntity(entry.playlist.id, "spotify", spotifyId, System.currentTimeMillis()))
+            else dao.clearImport(entry.playlist.id)
+        }
+        deletedPlaylistIds.forEach { dao.deletePlaylist(it) }
     }
 
     suspend fun importPlaylist(id: String, name: String, tracks: List<Track>, spotifyId: String? = null) = database.withTransaction {

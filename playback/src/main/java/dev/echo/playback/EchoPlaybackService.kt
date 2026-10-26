@@ -2,6 +2,8 @@ package dev.echo.playback
 
 import android.app.PendingIntent
 import android.net.Uri
+import android.os.SystemClock
+import android.os.Bundle
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -19,13 +21,17 @@ import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionError
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.ListenableFuture
 import dagger.hilt.android.AndroidEntryPoint
 import dev.echo.core.PlayableSource
 import dev.echo.core.Track
 import dev.echo.data.library.LibraryRepository
+import dev.echo.data.library.ListeningEventType
 import dev.echo.data.provider.SourceResolver
+import dev.echo.data.offline.OfflineRepository
 import dev.echo.data.provider.YouTubeRequestException
 import javax.inject.Inject
 import java.io.IOException
@@ -39,6 +45,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
@@ -51,6 +59,8 @@ import org.json.JSONArray
 class EchoPlaybackService : MediaLibraryService() {
     @Inject lateinit var repository: LibraryRepository
     @Inject lateinit var resolver: SourceResolver
+    @Inject lateinit var sleepTimer: SleepTimerController
+    @Inject lateinit var offline: OfflineRepository
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var player: ExoPlayer
@@ -61,6 +71,14 @@ class EchoPlaybackService : MediaLibraryService() {
     private var recoveryJob: Job? = null
     private var recoveryAttempts = 0
     private var lastPlaybackId: String? = null
+    private val listeningTracker = ListeningTracker { id, event, listened, duration ->
+        scope.launch {
+            try { repository.recordListeningEvent(id, event, listened, duration) } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                Log.w("EchoPlayback", "Could not record listening event")
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -75,7 +93,9 @@ class EchoPlaybackService : MediaLibraryService() {
                     val data = ResolvingDataSource.Factory(DefaultDataSource.Factory(this@EchoPlaybackService)) { spec ->
                         try {
                             val source = cache.get(System.currentTimeMillis())
-                            if (Uri.parse(source.uri).scheme != "https") throw IOException("Invalid online source")
+                            val scheme = Uri.parse(source.uri).scheme
+                            if (scheme !in setOf("https", "file")) throw IOException("Invalid playback source")
+                            if (offline.settings.value.offlineOnly && scheme == "https") throw IOException("Offline mode: download this song first")
                             spec.withUri(Uri.parse(source.uri)).withAdditionalHeaders(source.headers)
                         } catch (error: Exception) {
                             if (error is CancellationException) throw error
@@ -95,7 +115,11 @@ class EchoPlaybackService : MediaLibraryService() {
                 val http = DefaultHttpDataSource.Factory()
                     .setDefaultRequestProperties(source.headers)
                 return DefaultMediaSourceFactory(this@EchoPlaybackService)
-                    .setDataSourceFactory(DefaultDataSource.Factory(this@EchoPlaybackService, http))
+                    .setDataSourceFactory(ResolvingDataSource.Factory(DefaultDataSource.Factory(this@EchoPlaybackService, http)) { spec ->
+                        if (offline.settings.value.offlineOnly && spec.uri.scheme == "https")
+                            throw IOException("Offline mode: download this song first")
+                        spec
+                    })
                     .setLoadErrorHandlingPolicy(EchoLoadErrorPolicy())
                     .createMediaSource(mediaItem)
             }
@@ -105,6 +129,7 @@ class EchoPlaybackService : MediaLibraryService() {
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
                 .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
+            .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
         val builder = MediaLibrarySession.Builder(this, player, LibraryCallback())
         packageManager.getLaunchIntentForPackage(packageName)?.let { intent ->
@@ -112,8 +137,41 @@ class EchoPlaybackService : MediaLibraryService() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
         }
         session = builder.build()
+        scope.launch {
+            while (true) {
+                if (sleepTimer.tick()) player.pause()
+                delay(1000)
+            }
+        }
+        scope.launch {
+            offline.settings.map { it.offlineOnly }.distinctUntilChanged().collect { offlineOnly ->
+                if (offlineOnly) {
+                    val tag = player.currentMediaItem?.localConfiguration?.tag
+                    if (tag is Track || tag is PlayableSource && Uri.parse(tag.uri).scheme == "https") player.stop()
+                }
+            }
+        }
+        scope.launch {
+            var observedQualifiedPlays: Map<String, Int>? = null
+            combine(repository.listeningPreferences, repository.tracks, offline.settings) { preferences, tracks, _ ->
+                val counts = preferences.mapValues { it.value.qualifiedPlays }
+                val previous = observedQualifiedPlays
+                observedQualifiedPlays = counts
+                val increased = qualifiedPlayIncreases(previous, counts)
+                tracks.filter { it.id in increased }.forEach { track ->
+                    offline.considerAutomaticCache(track, counts[track.id] ?: 0)
+                }
+            }.collect()
+        }
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val outcome = when (reason) {
+                    Player.MEDIA_ITEM_TRANSITION_REASON_AUTO, Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> ListeningEventType.COMPLETED
+                    Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> ListeningEventType.SKIPPED
+                    else -> ListeningEventType.INTERRUPTED
+                }
+                listeningTracker.transition(mediaItem?.mediaId, player.duration, SystemClock.elapsedRealtime(), outcome,
+                    replacement = reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED)
                 if (mediaItem?.mediaId != lastPlaybackId) {
                     recoveryAttempts = 0
                     recoveryJob?.cancel()
@@ -122,10 +180,16 @@ class EchoPlaybackService : MediaLibraryService() {
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                listeningTracker.playing(player.currentMediaItem?.mediaId, player.duration, isPlaying, SystemClock.elapsedRealtime())
                 if (isPlaying) recoveryAttempts = 0
             }
 
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) listeningTracker.finish(ListeningEventType.COMPLETED, SystemClock.elapsedRealtime())
+            }
+
             override fun onPlayerError(error: PlaybackException) {
+                listeningTracker.error(SystemClock.elapsedRealtime())
                 if (error.isSourceResolutionFailure()) {
                     recoveryJob?.cancel()
                     return
@@ -177,16 +241,8 @@ class EchoPlaybackService : MediaLibraryService() {
             override fun onEvents(player: Player, events: Player.Events) {
                 if (events.contains(Player.EVENT_TIMELINE_CHANGED)) queueWasSet = true
                 if (queueWasSet) persistQueue()
-                if (player.isPlaying && (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
-                        events.contains(Player.EVENT_IS_PLAYING_CHANGED))) {
-                    player.currentMediaItem?.mediaId?.let { id ->
-                        scope.launch {
-                            try { repository.recordPlayed(id) } catch (error: Exception) {
-                                if (error is CancellationException) throw error
-                                Log.w("EchoPlayback", "Could not record playback history")
-                            }
-                        }
-                    }
+                if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+                    listeningTracker.playing(player.currentMediaItem?.mediaId, player.duration, player.isPlaying, SystemClock.elapsedRealtime())
                 }
             }
         })
@@ -209,6 +265,7 @@ class EchoPlaybackService : MediaLibraryService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession = session
 
     override fun onDestroy() {
+        sleepTimer.cancel()
         if (::player.isInitialized) {
             if (queueWasSet) persistQueue()
             if (::session.isInitialized) session.release()
@@ -250,6 +307,10 @@ class EchoPlaybackService : MediaLibraryService() {
     }
 
     private suspend fun resolve(track: Track): MediaItem? {
+        offline.localSource(track)?.let { source ->
+            return track.toMediaItem().buildUpon().setUri(source.uri).setTag(source).build()
+        }
+        if (offline.settings.value.offlineOnly && track.provider != "local") return null
         if (track.provider == "youtube") {
             val uri = track.sourceUri ?: return null
             // Force a fresh source on retries; Media3 otherwise reuses the same watch locator and signed URL cache.
@@ -312,7 +373,28 @@ class EchoPlaybackService : MediaLibraryService() {
     private inner class LibraryCallback : MediaLibrarySession.Callback {
         override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
             if (controller.packageName != packageName && !controller.isTrusted) return MediaSession.ConnectionResult.reject()
-            return MediaSession.ConnectionResult.AcceptedResultBuilder(session).build()
+            val builder = MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+            if (controller.uid == android.os.Process.myUid() && controller.packageName == packageName) {
+                builder.setAvailableSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
+                    .add(SessionCommand(QueueCommands.APPEND, Bundle.EMPTY))
+                    .add(SessionCommand(QueueCommands.START_SHUFFLED, Bundle.EMPTY))
+                    .add(SessionCommand(QueueCommands.PLAY_SELECTED, Bundle.EMPTY)).build())
+            }
+            return builder.build()
+        }
+
+        override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand, args: Bundle): ListenableFuture<SessionResult> = scope.future {
+            if (controller.uid != android.os.Process.myUid() || controller.packageName != packageName)
+                return@future SessionResult(SessionResult.RESULT_ERROR_PERMISSION_DENIED)
+            try {
+                recoveryJob?.cancel()
+                editQueue(player, repository, customCommand.customAction, args, ::resolve)
+                SessionResult(SessionResult.RESULT_SUCCESS)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                SessionResult(SessionResult.RESULT_ERROR_BAD_VALUE, Bundle().apply { putString("error", error.message ?: "Queue action failed") })
+            }
         }
 
         override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
@@ -414,3 +496,6 @@ internal class PlaybackSourceCache(private val resolve: () -> PlayableSource?) {
 
 internal fun shouldRefreshOnlineSource(provider: String?, status: Int?, attempts: Int): Boolean =
     provider == "youtube" && status == 403 && attempts == 0
+
+internal fun qualifiedPlayIncreases(previous: Map<String, Int>?, current: Map<String, Int>): Set<String> =
+    if (previous == null) emptySet() else current.filter { (id, count) -> count > (previous[id] ?: 0) }.keys

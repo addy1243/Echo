@@ -25,10 +25,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.Player
 import dev.echo.core.Track
+import dev.echo.core.Playlist
 
-@Composable internal fun PlayerScreen(vm: EchoViewModel, tracks: List<Track>, favorites: Set<String>, close: () -> Unit) {
+@Composable internal fun PlayerScreen(vm: EchoViewModel, tracks: List<Track>, playlists: List<Playlist>, favorites: Set<String>, close: () -> Unit) {
     var showQueue by remember { mutableStateOf(false) }
     var credits by remember { mutableStateOf(false) }
+    var add by remember { mutableStateOf<Track?>(null) }
     var seeking by remember { mutableStateOf<Float?>(null) }
     val current = tracks.find { it.id == vm.current?.mediaId }
     val player = vm.controller
@@ -55,8 +57,11 @@ import dev.echo.core.Track
                     Text(vm.current?.mediaMetadata?.artist?.toString().orEmpty(), style = MaterialTheme.typography.bodyLarge, color = Color(0xFFC8C1CE), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 IconButton(enabled = current != null, onClick = { current?.let(vm::favorite) }) { Icon(if (current?.id in favorites) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Like song", tint = accent) }
+                IconButton(enabled = current != null, onClick = { add = current }) { Icon(Icons.Default.PlaylistAdd, "Add current song to playlist", tint = accent) }
             }
             Spacer(Modifier.height(18.dp))
+            current?.let { DownloadTrackAction(vm, it) }
+            SleepTimerControls(vm)
             val progress = seeking ?: vm.position.toFloat().coerceIn(0f, vm.duration.toFloat().coerceAtLeast(1f))
             Slider(progress, { seeking = it }, valueRange = 0f..vm.duration.toFloat().coerceAtLeast(1f), enabled = vm.duration > 0,
                 onValueChangeFinished = { seeking?.let { player?.seekTo(it.toLong()) }; seeking = null }, modifier = Modifier.fillMaxWidth().testTag("player-seek"))
@@ -83,11 +88,12 @@ import dev.echo.core.Track
             Spacer(Modifier.height(16.dp))
         }
     }
-    if (showQueue) QueueSheet(vm) { showQueue = false }
+    if (showQueue) QueueSheet(vm, tracks, onAdd = { add = it }) { showQueue = false }
+    add?.let { track -> AddToPlaylistDialog(track, vm, playlists) { add = null } }
     if (credits && current != null) Credits(current) { credits = false }
 }
 
-@Composable private fun QueueSheet(vm: EchoViewModel, close: () -> Unit) {
+@Composable private fun QueueSheet(vm: EchoViewModel, tracks: List<Track>, onAdd: (Track) -> Unit, close: () -> Unit) {
     val entries = vm.queueItems
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -101,10 +107,10 @@ import dev.echo.core.Track
             if (entries.isEmpty()) Text("Choose a song to start listening.")
             else {
                 Text("Now playing", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp))
-                QueueRow(entries.first(), vm, true)
+                QueueRow(entries.first(), vm, true, tracks, onAdd)
                 Text("Up next · ${entries.size - 1}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(vertical = 16.dp))
                 LazyColumn(Modifier.weight(1f), state = listState) {
-                    items(entries.drop(1), key = { it.index }) { entry -> QueueRow(entry, vm, false) }
+                    items(entries.drop(1), key = { it.index }) { entry -> QueueRow(entry, vm, false, tracks, onAdd) }
                     if (entries.size == 1) item { Text("You're at the end of the queue.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
@@ -112,7 +118,7 @@ import dev.echo.core.Track
     }
 }
 
-@Composable private fun QueueRow(entry: QueueEntry, vm: EchoViewModel, current: Boolean) {
+@Composable private fun QueueRow(entry: QueueEntry, vm: EchoViewModel, current: Boolean, tracks: List<Track>, onAdd: (Track) -> Unit) {
     Surface(onClick = { vm.jumpQueue(entry) }, color = if (current) Color(0xFF332B40) else Color.Transparent, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().testTag(if (current) "queue-current" else "queue-next-${entry.index}")) {
         Row(Modifier.padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Artwork(entry.item.mediaMetadata.artworkUri?.toString(), 44)
@@ -121,6 +127,8 @@ import dev.echo.core.Track
                 Text(entry.item.mediaMetadata.artist?.toString().orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (entry.item.mediaId in vm.recommendedIds) Text("Recommended", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
+            val track = tracks.find { it.id == entry.item.mediaId }
+            IconButton(enabled = track != null, onClick = { track?.let(onAdd) }) { Icon(Icons.Default.PlaylistAdd, "Add ${entry.item.mediaMetadata.title} to playlist") }
             if (current) Icon(Icons.Default.GraphicEq, "Playing now", tint = MaterialTheme.colorScheme.primary)
             else IconButton(onClick = { vm.removeQueue(entry) }) { Icon(Icons.Default.Close, "Remove ${entry.item.mediaMetadata.title} from queue") }
         }

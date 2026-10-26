@@ -2,6 +2,20 @@
 
 Native Kotlin Android personal music player. Android 8.0+; Kotlin, Compose Material 3, Room, Hilt, Media3 and DataStore. Open this folder in Android Studio.
 
+Echo Music's original source is licensed under GPL-3.0-or-later; see [LICENSE](LICENSE), [COPYING](COPYING) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms and matching source. Settings → Licenses & source displays the packaged notices.
+
+## 0.1.7 development features
+
+In a playlist, **Add playlist to queue** offers Playlist order, Shuffle or Smart shuffle and preserves existing playback/upcoming songs. Search result taps play just the selected song, then continue the prior queue. Shuffle starts from a random playable occurrence, with every occurrence reachable in a new repeat-off session. Smart shuffle keeps active playback or chooses a random anchor for a fresh session. The full player also offers a **Sleep timer** (15/30/45/60 minutes) that pauses without clearing the queue and runs while the player screen is closed. See [queue behavior](docs/QUEUE_ACTIONS.md) and [sleep timer](docs/SLEEP_TIMER.md).
+
+The player and queue can add any saved/recommended recording to an existing or new playlist. Full-player artwork requests a larger recognized Google image variant with original-image fallback; source images still limit detail.
+
+Use a song's **Download** action to pin private offline audio. **Settings → Downloads & cache** lists saved/pending/failed items with retry, cancel and remove, and has separate **Offline mode** and **Cache frequently played songs** switches. The automatic cache is opt-in after three qualified listens on unmetered internet, with a separate 256 MiB budget. Explicit downloads have a 2 GiB budget and are never automatically evicted. Keep Echo open during transfers; interrupted downloads restart through Retry. See [offline design and limits](docs/OFFLINE.md).
+
+**Settings → Listening history** shows starts, skips, completions, interruptions and errors, with a confirmed clear action. Up to 5,000 events/90 days inform small preference adjustments within real related-song results; the screen shows the latest 500. Logs remain local. See [history semantics](docs/HISTORY_NOTES.md).
+
+**Settings → Google account & playlist sync** supports optional Google sign-in/out and private Drive playlist synchronization, manually or approximately every minute while Echo is open. Concurrent playlist edits produce conflict copies. Google sign-in uses Android's installed Google account provider rather than bundled proprietary identity SDKs. Actual Google authorization and Drive transfers still need live verification of the owner's Android package/signing registration, consent and Drive API setup. See [account setup, sync behavior and limits](docs/ACCOUNTS.md). Local library/audio stays on the device after sign-out; it is not an account-isolated local library. Audio, likes and listening history do not sync.
+
 ## Build
 
 Use JDK 17 or 21, Android SDK 36 and build tools 35.0.0. Set `ANDROID_HOME` to your SDK, or put `sdk.dir=C:/path/to/Android/Sdk` in untracked `local.properties`.
@@ -74,8 +88,8 @@ In-app updates use [GitHub Releases](https://github.com/addy1243/Echo/releases).
 
 Use Android Studio **Build → Generate Signed App Bundle / APK**, create/select your private signing key outside the repository and select release. `gradlew :app:assembleRelease` creates an unsigned APK until signing is configured. Never commit keystores, tokens or client secrets. Preserve your signing key to install future upgrades without erasing the library. No publication or paid service is configured.
 
-The initial database is version 1 with exported Room schemas. Future schema changes must increment the version and provide tested migrations; destructive migration fallback is absent.
+The database is version 2 with an explicit non-destructive migration from version 1 and exported Room schemas. Future schema changes must increment the version and provide tested migrations; destructive migration fallback is absent.
 
 ## Current limits
 
-This is an initial implementation pending the checks recorded in integration status, not a production certification. There are no app-introduced ads, podcasts, DRM bypass or stream downloads. Key-free YouTube uses unofficial extraction and cannot guarantee every song, region or future availability. Playback selects original progressive audio at normal speed; there is no transcoding/quality selector. Discovery is basic artist-search matching, and New music is not a verified release-date feed. Cached deleted local files remain visible and can prevent mixed queues from loading. Artwork uses Coil; individual document files without artwork use a generated visual. Android Auto requires host/device validation and searches only saved tracks. Spotify file imports are snapshots with no automatic Spotify synchronization. The bundled Spotify Client ID is public; no client secret or account credentials are included.
+This is an initial implementation pending the checks recorded in integration status, not a production certification. There are no app-introduced ads, podcasts or DRM bypass. Offline downloads and automatic caching have the limits described above. Key-free YouTube uses unofficial extraction and cannot guarantee every song, region or future availability. Playback selects original progressive audio at normal speed; there is no transcoding/quality selector. Discovery uses artist-search seeds and local listening evidence; Smart shuffle ranks recording-related results. New music is not a verified release-date feed. Cached deleted local files remain visible and can prevent mixed queues from loading. Artwork uses Coil; individual document files without artwork use a generated visual. Android Auto requires host/device validation and searches only saved tracks. Spotify file imports are snapshots with no automatic Spotify synchronization. The bundled Spotify Client ID is public; no client secret or account credentials are included.

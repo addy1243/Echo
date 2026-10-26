@@ -49,7 +49,16 @@ internal data class PlaylistTrackEntity(val playlistId: String, val position: In
 internal data class FavoriteEntity(@PrimaryKey val trackId: String)
 
 @Entity(tableName = "playback_history", foreignKeys = [ForeignKey(entity = TrackEntity::class, parentColumns = ["id"], childColumns = ["trackId"], onDelete = ForeignKey.CASCADE)], indices = [Index("trackId")])
-internal data class HistoryEntity(@PrimaryKey(autoGenerate = true) val id: Long = 0, val trackId: String, val playedAt: Long)
+internal data class HistoryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val trackId: String,
+    val playedAt: Long,
+    @ColumnInfo(defaultValue = "'PLAYED'") val event: String = "PLAYED",
+    @ColumnInfo(defaultValue = "0") val listenedMs: Long = 0,
+    @ColumnInfo(defaultValue = "0") val durationMs: Long = 0,
+)
+
+internal data class ListeningHistoryRow(@Embedded val history: HistoryEntity, @Relation(parentColumn = "trackId", entityColumn = "id") val track: TrackEntity)
 
 @Entity(tableName = "track_mappings", primaryKeys = ["provider", "externalId"], foreignKeys = [ForeignKey(entity = TrackEntity::class, parentColumns = ["id"], childColumns = ["trackId"], onDelete = ForeignKey.CASCADE)], indices = [Index("trackId")])
 internal data class TrackMappingEntity(val provider: String, val externalId: String, val trackId: String)
@@ -81,7 +90,7 @@ internal interface LibraryDao {
     @Query("SELECT * FROM playable_tracks ORDER BY title COLLATE NOCASE, id") fun tracks(): Flow<List<PlayableTrackView>>
     @Query("SELECT * FROM playlists ORDER BY name COLLATE NOCASE, id") fun playlists(): Flow<List<PlaylistEntity>>
     @Query("SELECT trackId FROM favorites") fun favorites(): Flow<List<String>>
-    @Query("SELECT playable_tracks.* FROM playable_tracks INNER JOIN playback_history ON playable_tracks.id = playback_history.trackId GROUP BY playable_tracks.id ORDER BY MAX(playback_history.id) DESC LIMIT 100") fun recent(): Flow<List<PlayableTrackView>>
+    @Query("SELECT playable_tracks.* FROM playable_tracks INNER JOIN playback_history ON playable_tracks.id = playback_history.trackId WHERE playback_history.event = 'PLAYED' GROUP BY playable_tracks.id ORDER BY MAX(playback_history.id) DESC LIMIT 100") fun recent(): Flow<List<PlayableTrackView>>
     @Query("SELECT playable_tracks.* FROM playable_tracks INNER JOIN playlist_tracks ON playable_tracks.id = playlist_tracks.trackId WHERE playlistId = :id ORDER BY position") suspend fun playlistTracks(id: String): List<PlayableTrackView>
     @Query("SELECT * FROM tracks WHERE id = :id") suspend fun track(id: String): TrackEntity?
     @Query("SELECT * FROM tracks ORDER BY id") suspend fun allTracks(): List<TrackEntity>
@@ -107,10 +116,20 @@ internal interface LibraryDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun favorite(favorite: FavoriteEntity)
     @Query("DELETE FROM favorites WHERE trackId = :id") suspend fun unfavorite(id: String)
     @Insert suspend fun record(history: HistoryEntity)
-    @Query("DELETE FROM playback_history WHERE id NOT IN (SELECT id FROM playback_history ORDER BY id DESC LIMIT 1000)") suspend fun trimHistory()
+    @Transaction @Query("SELECT * FROM playback_history ORDER BY id DESC LIMIT 5000") fun listeningHistory(): Flow<List<ListeningHistoryRow>>
+    @Query("DELETE FROM playback_history WHERE playedAt < :oldest OR id NOT IN (SELECT id FROM playback_history ORDER BY id DESC LIMIT 5000)") suspend fun trimHistory(oldest: Long)
+    @Query("DELETE FROM playback_history") suspend fun clearHistory()
 }
 
-@Database(entities = [TrackEntity::class, ArtistEntity::class, AlbumEntity::class, PlaylistEntity::class, PlaylistTrackEntity::class, FavoriteEntity::class, HistoryEntity::class, TrackMappingEntity::class, LocalTrackMatchEntity::class, CachedMetadataEntity::class, ImportedPlaylistEntity::class], views = [PlayableTrackView::class], version = 1, exportSchema = true)
+@Database(entities = [TrackEntity::class, ArtistEntity::class, AlbumEntity::class, PlaylistEntity::class, PlaylistTrackEntity::class, FavoriteEntity::class, HistoryEntity::class, TrackMappingEntity::class, LocalTrackMatchEntity::class, CachedMetadataEntity::class, ImportedPlaylistEntity::class], views = [PlayableTrackView::class], version = 2, exportSchema = true)
 internal abstract class LibraryDatabase : RoomDatabase() {
     abstract fun libraryDao(): LibraryDao
+}
+
+internal val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE playback_history ADD COLUMN event TEXT NOT NULL DEFAULT 'PLAYED'")
+        db.execSQL("ALTER TABLE playback_history ADD COLUMN listenedMs INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE playback_history ADD COLUMN durationMs INTEGER NOT NULL DEFAULT 0")
+    }
 }

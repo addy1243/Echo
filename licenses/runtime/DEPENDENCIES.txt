@@ -1,0 +1,679 @@
+Echo Music runtime dependency notices
+Third-party components retain their original licenses and copyrights.
+Exact artifact hashes and variant membership: dependency-inventory.json.
+Original notices embedded in upstream binaries: ARTIFACT_NOTICES.txt.
+
+androidx.activity:activity:1.10.1
+Variants: debugRuntimeClasspath, debugRuntimeClasspath, releaseRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.activity:activity-compose:1.10.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.activity:activity-ktx:1.10.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.annotation:annotation-experimental:1.4.1
+Variants: debugRuntimeClasspath, debugRuntimeClasspath, releaseRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.annotation:annotation-jvm:1.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.appcompat:appcompat-resources:1.6.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.arch.core:core-common:2.2.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.arch.core:core-runtime:2.2.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.autofill:autofill:1.0.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: http://source.android.com
+
+androidx.browser:browser:1.8.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.collection:collection-jvm:1.5.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.collection:collection-ktx:1.5.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.animation:animation-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.animation:animation-core-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.foundation:foundation-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.foundation:foundation-layout-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.material:material-android:1.8.3
+Variants: debugRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.material:material-icons-core-android:1.7.8
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.material:material-icons-extended-android:1.7.8
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.material:material-ripple-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.material3:material3-android:1.3.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.runtime:runtime-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.runtime:runtime-saveable-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.ui:ui-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.ui:ui-geometry-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.ui:ui-graphics-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.ui:ui-text-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.ui:ui-tooling-android:1.8.3
+Variants: debugRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.ui:ui-tooling-data-android:1.8.3
+Variants: debugRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.ui:ui-tooling-preview-android:1.8.3
+Variants: debugRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.ui:ui-unit-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.compose.ui:ui-util-android:1.8.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.concurrent:concurrent-futures:1.1.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: http://source.android.com
+
+androidx.core:core:1.16.0
+Variants: debugRuntimeClasspath, debugRuntimeClasspath, releaseRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.core:core-ktx:1.16.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.core:core-viewtree:1.0.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.customview:customview:1.0.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: http://source.android.com
+
+androidx.customview:customview-poolingcontainer:1.0.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.datastore:datastore-android:1.1.7
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.datastore:datastore-core-android:1.1.7
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.datastore:datastore-core-okio-jvm:1.1.7
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.datastore:datastore-preferences-android:1.1.7
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.datastore:datastore-preferences-core-android:1.1.7
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.datastore:datastore-preferences-external-protobuf:1.1.7
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: BSD-3-Clause - https://opensource.org/licenses/BSD-3-Clause
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.datastore:datastore-preferences-proto:1.1.7
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.emoji2:emoji2:1.4.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.exifinterface:exifinterface:1.3.7
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.fragment:fragment:1.5.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.graphics:graphics-path:1.0.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.interpolator:interpolator:1.0.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: http://source.android.com
+
+androidx.lifecycle:lifecycle-common-java8:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-common-jvm:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-livedata:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-livedata-core:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-livedata-core-ktx:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-process:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-runtime-android:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-runtime-compose-android:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-runtime-ktx-android:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-viewmodel:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-viewmodel-android:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-viewmodel-compose-android:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-viewmodel-savedstate:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-viewmodel-savedstate-android:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.loader:loader:1.0.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: http://source.android.com
+
+androidx.media:media:1.7.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.media3:media3-common:1.6.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/androidx/media
+
+androidx.media3:media3-container:1.6.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/androidx/media
+
+androidx.media3:media3-database:1.6.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/androidx/media
+
+androidx.media3:media3-datasource:1.6.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/androidx/media
+
+androidx.media3:media3-decoder:1.6.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/androidx/media
+
+androidx.media3:media3-exoplayer:1.6.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/androidx/media
+
+androidx.media3:media3-exoplayer-hls:1.6.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/androidx/media
+
+androidx.media3:media3-extractor:1.6.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/androidx/media
+
+androidx.media3:media3-session:1.6.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/androidx/media
+
+androidx.navigation:navigation-common-android:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.navigation:navigation-compose-android:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.navigation:navigation-runtime-android:2.9.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.profileinstaller:profileinstaller:1.4.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.room:room-common-jvm:2.7.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.room:room-ktx:2.7.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.room:room-runtime-android:2.7.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.savedstate:savedstate:1.3.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.savedstate:savedstate-android:1.3.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.savedstate:savedstate-compose-android:1.3.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.savedstate:savedstate-ktx:1.3.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.sqlite:sqlite-android:2.5.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.sqlite:sqlite-framework-android:2.5.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.startup:startup-runtime:1.1.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.tracing:tracing:1.2.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.vectordrawable:vectordrawable:1.1.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: http://source.android.com
+
+androidx.vectordrawable:vectordrawable-animated:1.1.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: http://source.android.com
+
+androidx.versionedparcelable:versionedparcelable:1.1.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: http://source.android.com
+
+androidx.viewpager:viewpager:1.0.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: http://source.android.com
+
+com.android.tools:desugar_jdk_libs_configuration_nio:2.1.5
+Variants: coreLibraryDesugaring
+License: BSD-3-Clause - https://opensource.org/licenses/BSD-3-Clause
+Upstream source: https://r8.googlesource.com/r8
+
+com.android.tools:desugar_jdk_libs_nio:2.1.5
+Variants: coreLibraryDesugaring
+License: GNU General Public License, version 2, with the Classpath Exception - https://github.com/google/desugar_jdk_libs/blob/master/LICENSE
+Upstream source: https://github.com/google/desugar_jdk_libs
+
+com.github.TeamNewPipe:nanojson:e9d656ddb49a412a5a0a5d5ef20ca7ef09549996
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Apache-2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/TeamNewPipe/nanojson/tree/e9d656ddb49a412a5a0a5d5ef20ca7ef09549996
+
+com.github.teamnewpipe:NewPipeExtractor:v0.26.5
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: GNU General Public License v3.0 or later - https://www.gnu.org/licenses/gpl-3.0.txt
+Upstream source: https://github.com/TeamNewPipe/NewPipeExtractor
+
+com.google.accompanist:accompanist-drawablepainter:0.32.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/google/accompanist/
+
+com.google.code.findbugs:jsr305:3.0.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://code.google.com/p/jsr-305/
+
+com.google.dagger:dagger:2.56.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Apache 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/google/dagger/
+
+com.google.dagger:dagger-lint-aar:2.56.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Apache 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/google/dagger/
+
+com.google.dagger:hilt-android:2.56.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Apache 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/google/dagger/
+
+com.google.dagger:hilt-core:2.56.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Apache 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/google/dagger/
+
+com.google.errorprone:error_prone_annotations:2.28.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Apache 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: See the artifact's upstream Maven POM
+
+com.google.guava:failureaccess:1.0.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/google/guava
+
+com.google.guava:guava:33.3.1-android
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/google/guava
+
+com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/google/guava
+
+com.google.j2objc:j2objc-annotations:3.0.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: http://github.com/google/j2objc
+
+com.google.protobuf:protobuf-javalite:4.35.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: BSD-3-Clause - https://github.com/protocolbuffers/protobuf/blob/v35.1/LICENSE
+Upstream source: https://github.com/protocolbuffers/protobuf/tree/v35.1
+
+com.squareup.okhttp3:okhttp:4.12.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/square/okhttp
+
+com.squareup.okio:okio-jvm:3.9.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/square/okio/
+
+com.squareup.retrofit2:retrofit:2.11.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/square/retrofit/
+
+io.coil-kt:coil:2.7.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/coil-kt/coil
+
+io.coil-kt:coil-base:2.7.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/coil-kt/coil
+
+io.coil-kt:coil-compose:2.7.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/coil-kt/coil
+
+io.coil-kt:coil-compose-base:2.7.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/coil-kt/coil
+
+jakarta.inject:jakarta.inject-api:2.0.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/eclipse-ee4j/injection-api
+
+javax.inject:javax.inject:1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: http://code.google.com/p/atinject/source/checkout
+
+org.checkerframework:checker-qual:3.43.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The MIT License - http://opensource.org/licenses/MIT
+Upstream source: https://github.com/typetools/checker-framework.git
+
+org.jetbrains:annotations:23.0.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/java-annotations
+
+org.jetbrains.kotlin:kotlin-android-extensions-runtime:1.9.22
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/kotlin
+
+org.jetbrains.kotlin:kotlin-parcelize-runtime:1.9.22
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/kotlin
+
+org.jetbrains.kotlin:kotlin-stdlib:2.1.20
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/kotlin
+
+org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/kotlin
+
+org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/kotlin
+
+org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Apache-2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/Kotlin/kotlinx.coroutines
+
+org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Apache-2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/Kotlin/kotlinx.coroutines
+
+org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.10.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Apache-2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/Kotlin/kotlinx.coroutines
+
+org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.7.3
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/Kotlin/kotlinx.serialization
+
+org.jsoup:jsoup:1.22.2
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The MIT License - https://jsoup.org/license
+Upstream source: https://github.com/jhy/jsoup
+
+org.jspecify:jspecify:1.0.0
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: The Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/jspecify/jspecify/
+
+org.mozilla:rhino:1.8.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Mozilla Public License, Version 2.0 - http://www.mozilla.org/MPL/2.0/index.txt
+Upstream source: git@github.com:mozilla/rhino.git
+
+org.mozilla:rhino-engine:1.8.1
+Variants: debugRuntimeClasspath, releaseRuntimeClasspath
+License: Mozilla Public License, Version 2.0 - http://www.mozilla.org/MPL/2.0/index.txt
+Upstream source: git@github.com:mozilla/rhino.git

@@ -2,6 +2,11 @@
 
 ## Current focus
 
+- Queue append/search-selected/new-shuffle operations now use app-UID-only service commands with bounded stable IDs, stale selected-occurrence checks and explicit shuffle traversal. Preserve existing upcoming order, duplicates, repeat-all wrap and current playback. Fresh shuffle starts randomly with all occurrences reachable; completed/idle Smart shuffle sessions must not retain a stale anchor. Read docs/QUEUE_ACTIONS.md. Sleep timers belong to the service, use a monotonic deadline, pause without clearing and cancel on service destruction; read docs/SLEEP_TIMER.md.
+
+- 0.1.7/code8 adds player/queue playlist actions, improved recognized artwork requests, local listening events/preferences, private offline downloads and separate opt-in frequent-song caching. Preserve the non-destructive Room v1→v2 migration, actual listening-time semantics, storage/integrity/cancellation safeguards and emulator-only queue fixtures. Read docs/OFFLINE.md and docs/HISTORY_NOTES.md before changing these paths.
+- Google sign-in/out and private Drive playlist sync are implemented. The GPL-compatible build uses Android AccountManager and the installed Google account provider, verified Google userinfo and separate Drive consent. No proprietary identity SDK is bundled; the earlier Web ID is only a console reference. Live OAuth/Drive verification remains pending. Do not claim live login or cross-device transfers. Sync requires explicit consent, excludes audio/credentials/likes/history/local paths, qualifies local track IDs and preserves concurrent edits as conflict copies. Local libraries remain device-wide after sign-out. Read docs/ACCOUNTS.md; unseen stale snapshots can restore deletions without global tombstones.
+
 - 0.1.6 work: compact bottom navigation with no top-level stack restoration, an immersive player and playback-ordered queue sheet. Queue row keys must be Android-saveable occurrence indexes; Media3 window UIDs stay internal for stale-action guards. Smart shuffle uses related songs from an actual recording, not random artist-search results. Auto-match clear imported recordings by title/credited artist/duration; commit guarded playlist replacements atomically, preserving duplicates and likes. Ambiguities keep manual selection.
 
 - Spotify public share-link import uses only canonical `open.spotify.com` public embed/page HTML, never auth cookies/internal tokens. Preview exposed versus total tracks before committing; unknown or partial counts must be explicit. File import remains the fallback. No automatic sync or Spotify audio is provided.
@@ -19,12 +24,14 @@ Four modules: `core`, `data`, `playback`, `app`. Read `docs/ARCHITECTURE.md`, `d
 
 ## In-app updates
 
+- Code9 release preparation verified GitHub write access and a same-key newer APK. Publication is held for the owner''s whole-app license decision and unresolved bundled Google auth SDK/NewPipe GPL compatibility and notices; see docs/RELEASE_READINESS.md. No release, tag, source push or whole-app license grant has been made. Do not bypass updater verification or describe this candidate as published.
+
 - Implemented in `app/src/main/java/dev/echo/app/update/`; release contract and setup are in `docs/UPDATES.md`.
 - Uses public GitHub Releases at `addy1243/Echo`: automatic startup check at most daily and manual check in Settings.
 - Assets must be `EchoMusic-<versionCode>.apk`, with a newer Android version code and the installed signing certificate.
 - Preserve HTTPS/repository/host validation, exact size/SHA-256 checks, APK identity/signature checks, private staging, cancellation and rate-limit handling.
 - Android's installation permission and user confirmation remain required. Never silently install, bypass protections, or clear app data to force an update.
-- Android source defaults: 0.1.6/code7 for navigation/player/queue/matching; public links were 0.1.5/code6. Recheck source defaults and installed version before changing versioning. Never publish signing keys/API secrets or publish a release without user authorization.
+- Android source defaults: 0.1.8/code9 as a local update candidate; accounts/offline/history were 0.1.7/code8; navigation/player/queue/matching were 0.1.6/code7 and public links were 0.1.5/code6. Recheck source defaults and installed version before changing versioning. Never publish signing keys/API secrets or publish a release without user authorization.
 - Updater build/lint, four new JVM checks and four Android checks passed. Live GitHub APK replacement remains unverified because no newer release is published; recheck that external state.
 
 ## Connected Android device

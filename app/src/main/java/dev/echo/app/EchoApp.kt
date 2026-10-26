@@ -55,6 +55,7 @@ private val Ink = Color(0xFF101014)
 
 @Composable
 fun EchoApp(vm: EchoViewModel) {
+    dev.echo.app.account.AccountSyncHost(vm)
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route ?: "home"
@@ -137,8 +138,11 @@ fun EchoApp(vm: EchoViewModel) {
                         val id = back.arguments?.getString("id").orEmpty()
                         PlaylistScreen(vm, id, playlists.find { it.id == id }, tracks, playlists, favorites)
                     }
-                    composable("player") { PlayerScreen(vm, tracks, favorites) { nav.popBackStack() } }
-                    composable("settings") { SettingsScreen(vm) }
+                    composable("player") { PlayerScreen(vm, tracks, playlists, favorites) { nav.popBackStack() } }
+                    composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }) }
+                    composable("licenses") { LicensesScreen() }
+                    composable("history") { HistoryScreen(vm) }
+                    composable("downloads") { DownloadsScreen(vm) }
                 }
             }
         }
@@ -249,9 +253,11 @@ fun EchoApp(vm: EchoViewModel) {
 @Composable private fun SectionTitle(title: String) { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
 @Composable private fun EmptyState(title: String, body: String) { Column(Modifier.padding(vertical = 20.dp)) { Text(title, style = MaterialTheme.typography.titleLarge); Spacer(Modifier.height(8.dp)); Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
 @Composable internal fun Artwork(uri: String?, size: Int = 56) {
+    val requested = if (size >= 140) playerArtwork(uri) else uri
+    var fallback by remember(requested) { mutableStateOf(false) }
     Box(Modifier.size(size.dp).clip(RoundedCornerShape((size / 6).dp)).background(Brush.linearGradient(listOf(Color(0xFF493962), Color(0xFF263B43)))), contentAlignment = Alignment.Center) {
         Icon(Icons.Default.GraphicEq, null, tint = Violet, modifier = Modifier.size((size / 2).dp))
-        if (!uri.isNullOrBlank()) AsyncImage(uri, "Album artwork", modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+        if (!uri.isNullOrBlank()) AsyncImage(if (fallback) uri else requested, "Album artwork", modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop, onError = { fallback = true })
     }
 }
 @Composable private fun PlaylistCard(playlist: Playlist, click: () -> Unit) {
@@ -281,14 +287,13 @@ fun EchoApp(vm: EchoViewModel) {
                 DropdownMenuItem(text = { Text("Play next") }, onClick = { menu = false; vm.enqueue(track, true) })
                 DropdownMenuItem(text = { Text("Add to queue") }, onClick = { menu = false; vm.enqueue(track) })
                 DropdownMenuItem(text = { Text("Add to playlist") }, onClick = { menu = false; add = true })
-                if (track.id.startsWith("spotify:") && track.provider == "local") DropdownMenuItem(text = { Text("Clear local match") }, onClick = { menu = false; vm.runAction("Local match cleared") { vm.library.clearLocalMatch(track.id) } })
+                DownloadTrackAction(vm, track)
+                if ((track.id.startsWith("spotify:") || track.id.startsWith("cloud-local:")) && track.provider == "local") DropdownMenuItem(text = { Text("Clear local match") }, onClick = { menu = false; vm.runAction("Local match cleared") { vm.library.clearLocalMatch(track.id) } })
                 if (track.attribution != null) DropdownMenuItem(text = { Text("Credits & license") }, onClick = { menu = false; credits = true })
             }
         }
     }
-    if (add) AlertDialog(onDismissRequest = { add = false }, title = { Text("Add to playlist") }, text = {
-        LazyColumn { if (playlists.isEmpty()) item { Text("Create a playlist in Library first.") }; items(playlists) { playlist -> TextButton(onClick = { add = false; vm.runAction("Added to ${playlist.name}") { if (vm.tracks.value.none { it.id == track.id }) vm.library.upsertTracks(listOf(track)); vm.library.addToPlaylist(playlist.id, track.id) } }) { Text(playlist.name) } } }
-    }, confirmButton = { TextButton(onClick = { add = false }) { Text("Close") } })
+    if (add) AddToPlaylistDialog(track, vm, playlists) { add = false }
     if (credits) Credits(track) { credits = false }
 }
 
@@ -308,23 +313,23 @@ fun EchoApp(vm: EchoViewModel) {
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionTitle("Find your next favorite") }
         item { OutlinedTextField(query, { query = it }, label = { Text("Songs, artists or albums") }, leadingIcon = { Icon(Icons.Default.Search, null) }, modifier = Modifier.fillMaxWidth(), singleLine = true) }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Library", "Licensed audio", "YouTube").forEachIndexed { index, label -> FilterChip(source == index, { source = index }, label = { Text(label) }) } } }
+        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Library", "Licensed audio", "YouTube").forEachIndexed { index, label -> FilterChip(source == index, { source = index }, label = { Text(label) }, modifier = Modifier.testTag("search-source-$index")) } } }
         if (vm.isSearching) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         if (source == 0) {
             val filtered = if (query.isBlank()) emptyList() else tracks.filter { "${it.title} ${it.artist} ${it.album}".contains(query, true) }
             if (query.isBlank()) items(history) { TextButton(onClick = { query = it }) { Icon(Icons.Default.History, null); Text("  $it") } }
             else if (filtered.isEmpty()) item { EmptyState("No results", "Try another title, artist or album.") }
-            items(filtered, key = { it.id }) { TrackRow(it, vm, playlists, favorites) { vm.runAction { vm.settings.rememberSearch(query) }; vm.play(filtered, filtered.indexOf(it)) } }
+            items(filtered, key = { it.id }) { TrackRow(it, vm, playlists, favorites) { vm.runAction { vm.settings.rememberSearch(query) }; vm.playSelected(it) } }
         } else if (source == 1) {
             item { Text("Search openly licensed audio on Wikimedia Commons. Credits and licenses are available on each recording.", style = MaterialTheme.typography.bodySmall) }
             item { Button(enabled = query.isNotBlank(), onClick = { vm.searchOnline(query) }) { Text("Search licensed audio") } }
             if (vm.searchedQuery.isNotBlank()) item { Text("Results for “${vm.searchedQuery}”", style = MaterialTheme.typography.bodySmall) }
-            items(vm.onlineResults, key = { it.id }) { TrackRow(it, vm, playlists, favorites) { vm.play(vm.onlineResults, vm.onlineResults.indexOf(it)) } }
+            items(vm.onlineResults, key = { it.id }) { TrackRow(it, vm, playlists, favorites) { vm.playSelected(it) } }
         } else {
             item { Text("Find music on YouTube and play it in Echo. No API key needed. Some recordings may be unavailable.", style = MaterialTheme.typography.bodySmall) }
             item { Button(enabled = query.isNotBlank(), onClick = { vm.searchYouTube(query) }) { Text("Search YouTube") } }
             if (vm.searchedQuery.isNotBlank()) item { Text("Results for “${vm.searchedQuery}”", style = MaterialTheme.typography.bodySmall) }
-            items(vm.youtubeResults, key = { it.id }) { TrackRow(it, vm, playlists, favorites) { vm.play(vm.youtubeResults, vm.youtubeResults.indexOf(it)) } }
+            items(vm.youtubeResults, key = { it.id }) { TrackRow(it, vm, playlists, favorites) { vm.playSelected(it) } }
         }
     }
 }
@@ -436,7 +441,10 @@ fun EchoApp(vm: EchoViewModel) {
     var onlineMatch by remember { mutableStateOf<Pair<Int, Track>?>(null) }
     var add by remember { mutableStateOf(false) }
     val songs = if (vm.loadedPlaylistId == id) vm.playlistItems else emptyList()
-    val firstPlayable = firstPlayableIndex(songs)
+    var queueMenu by remember { mutableStateOf(false) }
+    val offlineSettings by vm.offlineSettings.collectAsStateWithLifecycle()
+    val downloads by vm.offlineSongs.collectAsStateWithLifecycle()
+    val firstPlayable = firstPlayableIndex(songs, offlineSettings.offlineOnly, downloads.filter { it.status == "saved" }.map { it.trackId }.toSet())
     LazyColumn(Modifier.testTag("playlist-feed"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Hero(playlist?.name ?: "Playlist", "${songs.size} tracks · made for your moments") }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -446,7 +454,10 @@ fun EchoApp(vm: EchoViewModel) {
             IconButton(onClick = { rename = true }) { Icon(Icons.Default.Edit, "Rename") }
             playlist?.spotifyId?.let { spotifyId -> IconButton(onClick = { vm.mutatePlaylist(id) { vm.spotify.importPlaylist(spotifyId) } }) { Icon(Icons.Default.Refresh, "Refresh from Spotify; replaces playlist contents") } }
         } }
-        item { OutlinedButton(enabled = firstPlayable >= 0 && !vm.busy, onClick = { vm.smartShuffle(songs) }) { Text("Smart shuffle · Echo") } }
+        item { OutlinedButton(enabled = firstPlayable >= 0 && !vm.busy && !offlineSettings.offlineOnly, onClick = { vm.smartShuffle(songs) }) { Text("Smart shuffle · Echo") } }
+        item {
+            OutlinedButton(enabled = firstPlayable >= 0 && !vm.busy, onClick = { queueMenu = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, null); Spacer(Modifier.width(8.dp)); Text("Add playlist to queue") }
+        }
         item { Text("Smart shuffle uses songs related to the current recording, with one recommendation after three playlist songs. Your saved playlist stays as it is.", style = MaterialTheme.typography.bodySmall) }
         if (songs.any { it.sourceUri == null && it.provider == "spotify" }) item {
             OutlinedButton(enabled = vm.matchingProgress == null, onClick = { vm.matchPlaylistAutomatically(id) }) { Text("Auto-match recordings") }
@@ -470,6 +481,13 @@ fun EchoApp(vm: EchoViewModel) {
             }
         }
     }
+    if (queueMenu) AlertDialog(onDismissRequest = { queueMenu = false }, title = { Text("Add playlist to queue") }, text = {
+        Column {
+            listOf("Playlist order" to QueueAddMode.NORMAL, "Shuffle" to QueueAddMode.SHUFFLE, "Smart shuffle" to QueueAddMode.SMART).forEach { (label, mode) ->
+                TextButton(enabled = mode != QueueAddMode.SMART || !offlineSettings.offlineOnly, onClick = { queueMenu = false; vm.appendPlaylist(songs, mode) }) { Text(label) }
+            }
+        }
+    }, confirmButton = { TextButton(onClick = { queueMenu = false }) { Text("Cancel") } })
     if (rename) NameDialog("Rename playlist", playlist?.name.orEmpty(), { rename = false }) { name -> rename = false; vm.runAction { vm.library.renamePlaylist(id, name) } }
     onlineMatch?.let { (position, imported) ->
         AlertDialog(onDismissRequest = { onlineMatch = null }, title = { Text("Choose a recording") }, text = {
@@ -506,7 +524,7 @@ fun EchoApp(vm: EchoViewModel) {
     }
 }
 
-@Composable private fun SettingsScreen(vm: EchoViewModel) {
+@Composable private fun SettingsScreen(vm: EchoViewModel, openHistory: () -> Unit, openDownloads: () -> Unit, openLicenses: () -> Unit) {
     val updateStatus by vm.updater.status.collectAsStateWithLifecycle()
     val connected by vm.spotify.connected.collectAsStateWithLifecycle()
     var sourcePriority by remember { mutableStateOf(vm.sources.priority) }
@@ -533,12 +551,17 @@ fun EchoApp(vm: EchoViewModel) {
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { SectionTitle("Make Echo yours") }
+        item { dev.echo.app.account.AccountSection(vm) }
+        item { OutlinedButton(onClick = openHistory) { Text("Listening history") } }
         item { Text("Echo Music ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium) }
+        item { OutlinedButton(onClick = openLicenses) { Text("Licenses & source") } }
         item { OutlinedButton(enabled = updateStatus !is UpdateStatus.Checking && updateStatus !is UpdateStatus.Downloading, onClick = vm::checkUpdates) { Text(if (updateStatus is UpdateStatus.Checking) "Checking for updates…" else "Check for updates") } }
         item { Text("Spotify playlist files", style = MaterialTheme.typography.titleMedium) }
         item { Text("Import from Library using a public Spotify share link, CSV or Spotify playlist JSON. Links preview the available track count first. Clear recordings can match automatically; ambiguous songs need a choice. Imports don't include Spotify audio or automatic sync.", style = MaterialTheme.typography.bodySmall) }
         if (connected) item { OutlinedButton(onClick = { vm.runAction("Disconnected") { vm.spotify.disconnect() } }) { Text("Disconnect previous Spotify session") } }
         item { HorizontalDivider(); SectionTitle("Playback & storage") }
+        item { OfflineSettingsSection(vm) }
+        item { OutlinedButton(onClick = openDownloads) { Text("Downloads & cache") } }
         item { Text("Playback sources", style = MaterialTheme.typography.titleMedium) }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("local", "youtube", "commons").forEach { id -> FilterChip(id in sourcePriority, onClick = { vm.runAction { sourcePriority = if (id in sourcePriority) sourcePriority - id else sourcePriority + id; vm.sources.priority = sourcePriority } }, label = { Text(when (id) { "local" -> "Local files"; "youtube" -> "YouTube"; else -> "Commons" }) }) }
@@ -549,7 +572,7 @@ fun EchoApp(vm: EchoViewModel) {
             OutlinedButton(onClick = { importBackup.launch(arrayOf("application/json")) }) { Text("Import backup") }
         } }
         item { Text("Backups contain library metadata, playlists, likes and local matches. Import merges tracks and replaces playlists with matching IDs. Audio files and API credentials are excluded.", style = MaterialTheme.typography.bodySmall) }
-        item { Text("Original source quality · normal speed\nLocal files stay on your device. Echo does not download streams.\nThe queue, playlists, likes and history are saved locally.\nDark theme · Android Auto browsing through Media3.") }
+        item { Text("Original source quality · normal speed\nDownloads and listening history stay on this device.\nPlaylists can sync privately with your Google account.\nDark theme · Android Auto browsing through Media3.") }
         item { OutlinedButton(onClick = { vm.runAction("Artwork cache cleared") { coil.Coil.imageLoader(context).memoryCache?.clear(); coil.Coil.imageLoader(context).diskCache?.clear() } }) { Text("Clear artwork cache") } }
         item { Text("Android Auto requires testing on a phone and Desktop Head Unit. See playback/VALIDATION.md in the project.", style = MaterialTheme.typography.bodySmall) }
     }

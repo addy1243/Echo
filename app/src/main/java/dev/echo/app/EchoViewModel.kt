@@ -16,6 +16,9 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.session.SessionError
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
+import dev.echo.playback.QueueCommands
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.echo.core.Track
@@ -39,6 +42,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 @HiltViewModel
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -52,11 +58,21 @@ class EchoViewModel @Inject constructor(
     private val youtube: YouTubeProvider,
     val sources: SourceResolver,
     val updater: AppUpdater,
+    val sleepTimer: dev.echo.playback.SleepTimerController,
+    val offline: dev.echo.data.offline.OfflineRepository,
+    val googleAccounts: dev.echo.app.account.GoogleAccounts,
+    private val driveSync: dev.echo.app.account.DrivePlaylistSync,
 ) : ViewModel() {
+    val offlineSongs = offline.songs
+    val sleepTimerRemainingMs = sleepTimer.remainingMs
+    fun setSleepTimer(minutes: Int) { sleepTimer.start(minutes) }
+    fun cancelSleepTimer() { sleepTimer.cancel() }
+    val offlineSettings = offline.settings
     val tracks = library.tracks.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val playlists = library.playlists.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val favorites = library.favorites.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
     val recent = library.recent.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val listeningHistory = library.listeningHistory.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     var controller by mutableStateOf<MediaController?>(null); private set
     var current by mutableStateOf<MediaItem?>(null); private set
     var playing by mutableStateOf(false); private set
@@ -92,6 +108,89 @@ class EchoViewModel @Inject constructor(
         override fun onPlayerError(error: PlaybackException) { message = "Playback failed: ${error.errorCodeName}. Check the source or retry." }
     }
     private var updateDownload: Job? = null
+    var accountBusy by mutableStateOf(false); private set
+    var accountStatus by mutableStateOf<String?>(null); private set
+    var googleAccountChoice by mutableStateOf<android.content.Intent?>(null); private set
+    var driveResolution by mutableStateOf<android.content.Intent?>(null)
+        private set
+    private var pendingGoogleAccount: android.accounts.Account? = null
+    private var driveAccount: String? = null
+    private var accountJob: Job? = null
+
+    fun signInGoogle() { if (!accountBusy) googleAccountChoice = googleAccounts.chooseAccountIntent() }
+    fun accountChoiceLaunched() { googleAccountChoice = null }
+    fun completeGoogleSignIn(data: android.content.Intent?) = accountAction {
+        val account = dev.echo.app.account.googleAccountFromSelection(data)
+        val authorization = googleAccounts.signIn(account)
+        if (authorization.resolution != null) {
+            pendingGoogleAccount = account
+            driveAccount = null
+            driveResolution = authorization.resolution
+            accountStatus = "Approve Google account verification to sign in."
+        } else accountStatus = "Signed in. Connect Drive to save and sync playlists."
+    }
+    fun signOutGoogle() = accountAction {
+        pendingGoogleAccount = null; driveAccount = null; driveResolution = null; googleAccountChoice = null
+        googleAccounts.signOut()
+        accountStatus = "Signed out. This device's library and downloads were kept."
+    }
+    fun setAutomaticSync(enabled: Boolean) {
+        googleAccounts.setAutomatic(enabled)
+        if (enabled) syncGoogle(manual = true)
+    }
+    fun syncGoogle(manual: Boolean) {
+        if (accountBusy || pendingGoogleAccount != null || driveAccount != null || googleAccountChoice != null || driveResolution != null ||
+            (!manual && !googleAccounts.automatic.value)) return
+        accountAction {
+            check(!offline.settings.value.offlineOnly) { "Turn off Offline mode to sync playlists" }
+            val email = googleAccounts.email.value ?: error("Sign in first")
+            val authorization = googleAccounts.authorize()
+            if (authorization.resolution != null) {
+                if (manual) {
+                    driveAccount = email
+                    driveResolution = authorization.resolution
+                    accountStatus = "Approve Google Drive access to sync playlists."
+                } else {
+                    googleAccounts.setAutomatic(false)
+                    accountStatus = "Connect Drive in Settings to resume automatic sync."
+                }
+            } else {
+                check(googleAccounts.email.value == email) { "Account changed; retry sync" }
+                accountStatus = driveSync.synchronize(requireNotNull(authorization.accessToken), email)
+                loadedPlaylistId?.let(::loadPlaylist)
+            }
+        }
+    }
+    fun driveResolutionLaunched() { driveResolution = null }
+    fun completeDriveAuthorization(approved: Boolean) = accountAction {
+        val signIn = pendingGoogleAccount.also { pendingGoogleAccount = null }
+        if (signIn != null) {
+            check(approved) { "Google sign-in cancelled. Local data was kept." }
+            val authorization = googleAccounts.signIn(signIn)
+            check(authorization.resolution == null && authorization.accessToken != null) { "Google authorization was not granted. Check the Android OAuth registration and try again." }
+            accountStatus = "Signed in. Connect Drive to save and sync playlists."
+            return@accountAction
+        }
+        val expected = driveAccount.also { driveAccount = null } ?: error("Drive request expired; try again")
+        check(approved) { "Drive connection cancelled. Local playlists were kept." }
+        check(!offline.settings.value.offlineOnly) { "Turn off Offline mode to sync playlists" }
+        val result = googleAccounts.authorize()
+        check(result.resolution == null && result.accessToken != null) { "Drive permission was not granted. Check Android OAuth registration and try again." }
+        check(googleAccounts.email.value == expected) { "Account changed; retry sync" }
+        accountStatus = driveSync.synchronize(requireNotNull(result.accessToken), expected)
+        loadedPlaylistId?.let(::loadPlaylist)
+    }
+    fun cancelAccountOperation() { accountJob?.cancel(); accountStatus = "Account operation cancelled." }
+    private fun accountAction(block: suspend () -> Unit) {
+        if (accountBusy) return
+        accountJob = viewModelScope.launch {
+            accountBusy = true
+            try { block() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { accountStatus = error.message ?: "Google account operation failed; retry in Settings." }
+            finally { accountBusy = false }
+        }
+    }
     init {
         viewModelScope.launch { updater.check(manual = false) }
         connection.addListener({
@@ -111,6 +210,18 @@ class EchoViewModel @Inject constructor(
         finally { busy = false }
     }
     fun scan() = runAction("Local library updated") { library.scanLocal() }
+    fun downloadTrack(track: Track) = runAction {
+        if (tracks.value.none { it.id == track.id }) library.upsertTracks(listOf(track))
+        offline.download(track)
+    }
+    fun cancelDownload(trackId: String) = runAction { offline.cancel(trackId) }
+    fun removeDownload(trackId: String) = runAction { offline.remove(trackId) }
+    fun clearAutomaticCache() = runAction { offline.clearAutomaticCache() }
+    fun setOfflineOnly(enabled: Boolean) {
+        offline.setOfflineOnly(enabled)
+        if (enabled) { searchJob?.cancel(); matchingJob?.cancel() }
+    }
+    fun setAutomaticCache(enabled: Boolean) = offline.setAutoCache(enabled)
     fun importSpotifyFile(uri: Uri) = runAction {
         val (text, name) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
@@ -134,12 +245,13 @@ class EchoViewModel @Inject constructor(
 
     private suspend fun discover(seeds: List<Track>, known: List<Track>): List<Track> {
         // shortcut: artist searches seed discovery; use a richer recommendation provider when available.
-        val artists = seeds.map { it.artist }.filter { it.isNotBlank() && it != "Unknown artist" }.distinct().shuffled().take(3)
+        val artists = seeds.map { it.artist }.filter { it.isNotBlank() && it != "Unknown artist" }.distinct().take(3)
         val candidates = artists.flatMap { youtube.search(it.take(200)) }
         return discoveryCandidates(candidates, known).shuffled().take(20)
     }
 
     fun refreshDiscovery() {
+        if (offlineSettings.value.offlineOnly) { message = "Offline mode: play downloaded or local music"; return }
         if (discoveryLoading) return
         discoveryLoading = true
         viewModelScope.launch {
@@ -147,11 +259,13 @@ class EchoViewModel @Inject constructor(
                 val known = library.tracks.first()
                 val liked = library.favorites.first()
                 val history = library.recent.first()
-                val seeds = (known.filter { it.id in liked } + history + known).distinctBy { it.artist }
+                val preferences = library.listeningPreferences.first()
+                val seeds = preferredCandidates((known.filter { it.id in liked } + history + known).distinctBy { it.id }, preferences, known)
+                    .distinctBy { it.artist }
                 val fresh = youtube.search("new music releases ${java.time.YearMonth.now()}")
                 val suggestions = if (seeds.isEmpty()) fresh else discover(seeds, known + history.take(10))
                 newMusicResults = fresh
-                discoveryResults = suggestions
+                discoveryResults = preferredCandidates(suggestions, preferences, known)
                 if (suggestions.isEmpty()) message = "No new discoveries found for these artists. Try refreshing or searching another artist."
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { message = error.message ?: "Discoveries couldn't load. Try refreshing." }
@@ -160,24 +274,37 @@ class EchoViewModel @Inject constructor(
     }
 
     fun smartShuffle(items: List<Track>) = runAction {
-        require(items.any { it.sourceUri != null }) { "Choose recordings for your imported songs first" }
-        val playable = items.filter { it.sourceUri != null }
-        val anchor = playable.find { it.id == current?.mediaId } ?: playable.first()
+        val retainedId = current?.mediaId.takeIf { controller?.playbackState == Player.STATE_READY || controller?.playbackState == Player.STATE_BUFFERING }
+        val anchor = smartShuffleAnchor(items, retainedId)
         val previousEntry = queueItems.firstOrNull()?.uid
-        val seed = if (anchor.provider == "youtube") anchor else dev.echo.data.provider.automaticRecordingMatch(anchor, youtube.search("${anchor.title} ${anchor.artist}".take(200)))
-        require(seed != null) { "No clear online recording for this song. Use normal shuffle or choose a recording first." }
-        val suggestions = discoveryCandidates(youtube.related(seed), items + library.recent.first().take(10)).take(10)
-        if (suggestions.isEmpty()) {
-            message = "No related songs are available for this recording. Your queue is unchanged."
-        } else {
+        val mixed = smartQueue(items, anchor)
+        if (mixed.isNotEmpty()) {
             require(queueItems.firstOrNull()?.uid == previousEntry) { "Playback changed while finding related songs. Try Smart shuffle again." }
-            val mixed = smartMix(items, suggestions, anchor.id)
-            startPlayback(mixed, 0, false, if (current?.mediaId == anchor.id) position else 0)
+            val keepPosition = retainedId == anchor.id && current?.mediaId == retainedId &&
+                (controller?.playbackState == Player.STATE_READY || controller?.playbackState == Player.STATE_BUFFERING)
+            startPlayback(mixed, 0, false, if (keepPosition) position else 0)
             recommendedIds = mixed.filter { track -> items.none { it.id == track.id } }.map { it.id }.toSet()
         }
     }
 
+    private suspend fun smartQueue(items: List<Track>, anchor: Track): List<Track> {
+        require(!offlineSettings.value.offlineOnly) { "Smart shuffle needs internet. Use normal shuffle for downloaded music." }
+        val seed = if (anchor.provider == "youtube") anchor else dev.echo.data.provider.automaticRecordingMatch(anchor, youtube.search("${anchor.title} ${anchor.artist}".take(200)))
+        require(seed != null) { "No clear online recording for this song. Use normal shuffle or choose a recording first." }
+        val preferences = library.listeningPreferences.first()
+        val suggestions = preferredCandidates(
+            discoveryCandidates(youtube.related(seed), items + library.recent.first().take(10)),
+            preferences, library.tracks.first(),
+        ).take(10)
+        if (suggestions.isEmpty()) {
+            message = "No related songs are available for this recording. Your queue is unchanged."
+            return emptyList()
+        }
+        return smartMix(items, suggestions, anchor.id)
+    }
+
     fun matchPlaylistAutomatically(id: String) {
+        if (offlineSettings.value.offlineOnly) { message = "Turn off Offline mode to find recordings"; return }
         if (matchingJob?.isActive == true) { message = "Another playlist is being matched. Cancel it first."; return }
         matchingJob = viewModelScope.launch {
             try {
@@ -234,20 +361,78 @@ class EchoViewModel @Inject constructor(
         require(songs.isNotEmpty()) { "No playable music matches this search" }
         play(songs)
     }
-    fun play(items: List<Track>, index: Int = firstPlayableIndex(items), shuffle: Boolean = false) = runAction { startPlayback(items, index, shuffle) }
+    fun play(items: List<Track>, index: Int = firstPlayableIndex(items, offlineSettings.value.offlineOnly,
+        offlineSongs.value.filter { it.status == "saved" }.map { it.trackId }.toSet()), shuffle: Boolean = false) = runAction { startPlayback(items, index, shuffle) }
     private suspend fun startPlayback(items: List<Track>, index: Int, shuffle: Boolean, startPosition: Long = 0) {
         require(items.isNotEmpty()) { "There are no tracks to play" }
         val player = controller ?: error("Playback service is connecting")
-        val playable = items.filter { it.sourceUri != null }
+        val downloaded = offlineSongs.value.filter { it.status == "saved" }.map { it.trackId }.toSet()
+        fun available(track: Track) = track.sourceUri != null &&
+            (!offlineSettings.value.offlineOnly || track.provider == "local" || track.id in downloaded)
+        val playable = items.filter(::available)
+        val selected = if (shuffle) randomPlayableIndex(items, offlineSettings.value.offlineOnly, downloaded) else index
+        require(!offlineSettings.value.offlineOnly || items.getOrNull(selected)?.let(::available) == true) { "This song is not available offline. Download it first or turn off Offline mode." }
         require(playable.isNotEmpty()) { "No audio source is available. Match imported tracks to local music first." }
-        require(items.getOrNull(index)?.sourceUri != null) { "This track has no audio source. Choose Match to select a local recording." }
+        require(items.getOrNull(selected)?.sourceUri != null) { "This track has no audio source. Choose Match to select a local recording." }
+        if (shuffle) {
+            sendQueueCommand(QueueCommands.START_SHUFFLED, playable, items.take(selected).count(::available))
+            recommendedIds = emptySet()
+            return
+        }
         library.upsertTracks(playable.filter { candidate -> tracks.value.none { it.id == candidate.id } })
-        player.setMediaItems(playable.map { it.mediaItem() }, playableStartIndex(items, index), startPosition.coerceAtLeast(0))
+        player.setMediaItems(playable.map { it.mediaItem() }, items.take(selected).count(::available), startPosition.coerceAtLeast(0))
         recommendedIds = emptySet()
         player.shuffleModeEnabled = shuffle
         player.prepare(); player.play()
     }
+    fun playSelected(track: Track) = runAction { sendQueueCommand(QueueCommands.PLAY_SELECTED, listOf(track)) }
+
+    fun appendPlaylist(items: List<Track>, mode: QueueAddMode) = runAction {
+        val playable = queueAvailable(items)
+        require(playable.isNotEmpty()) { "This playlist has no songs available in the current listening mode" }
+        val additions = when (mode) {
+            QueueAddMode.NORMAL -> playable
+            QueueAddMode.SHUFFLE -> playable.shuffled()
+            QueueAddMode.SMART -> smartQueue(playable, smartShuffleAnchor(playable, null))
+        }
+        if (additions.isNotEmpty()) {
+            sendQueueCommand(QueueCommands.APPEND, additions)
+            recommendedIds = recommendedIds + additions.filter { addition -> items.none { it.id == addition.id } }.map { it.id }
+            message = "Added ${additions.size} songs to queue"
+        }
+    }
+
+    private fun queueAvailable(items: List<Track>): List<Track> = items.filter { track ->
+        track.sourceUri != null && (!offlineSettings.value.offlineOnly || track.provider == "local" ||
+            offlineSongs.value.any { it.trackId == track.id && it.status == "saved" })
+    }
+
+    private suspend fun sendQueueCommand(action: String, items: List<Track>, startIndex: Int = -1) {
+        require(items.isNotEmpty() && queueAvailable(items).size == items.size) { "Choose a playable song available in the current listening mode" }
+        val player = controller ?: error("Playback service is connecting")
+        require(items.size <= 5000 && items.sumOf { it.id.length.toLong() } <= 100_000) { "Add up to 5000 songs at a time" }
+        library.upsertTracks(items.distinctBy { it.id }.filter { candidate -> tracks.value.none { it.id == candidate.id } })
+        val args = android.os.Bundle().apply {
+            putStringArrayList(QueueCommands.TRACK_IDS, ArrayList(items.map { it.id }))
+            if (startIndex >= 0) putInt(QueueCommands.START_INDEX, startIndex)
+        }
+        val future = player.sendCustomCommand(SessionCommand(action, android.os.Bundle.EMPTY), args)
+        val result = suspendCancellableCoroutine<SessionResult> { continuation ->
+            continuation.invokeOnCancellation { future.cancel(false) }
+            future.addListener({
+                if (continuation.isActive) {
+                    try { continuation.resume(future.get()) }
+                    catch (error: Exception) { continuation.resumeWithException(error) }
+                }
+            }, ContextCompat.getMainExecutor(context))
+        }
+        check(result.resultCode == SessionResult.RESULT_SUCCESS) { result.extras.getString("error") ?: "Queue action failed. Try again." }
+    }
     fun enqueue(track: Track, next: Boolean = false) = runAction("Added to queue") {
+        if (!next) { sendQueueCommand(QueueCommands.APPEND, listOf(track)); return@runAction }
+        require(!offlineSettings.value.offlineOnly || track.provider == "local" || offlineSongs.value.any { it.trackId == track.id && it.status == "saved" }) {
+            "Download this song before adding it to the offline queue"
+        }
         require(track.sourceUri != null) { "This track has no audio source" }
         if (tracks.value.none { it.id == track.id }) library.upsertTracks(listOf(track))
         val player = controller ?: error("Playback service is connecting")
@@ -270,6 +455,7 @@ class EchoViewModel @Inject constructor(
     fun searchOnline(query: String) = search(query, commons::search) { onlineResults = it }
     fun searchYouTube(query: String) = search(query, youtube::search) { youtubeResults = it }
     private fun search(query: String, fetch: suspend (String) -> List<Track>, publish: (List<Track>) -> Unit) {
+        if (offlineSettings.value.offlineOnly) { message = "Offline mode: search your saved library instead"; return }
         searchJob?.cancel()
         val request = ++searchRequest
         val submittedQuery = query.trim()
@@ -295,7 +481,8 @@ class EchoViewModel @Inject constructor(
     override fun onCleared() { controller?.removeListener(listener); MediaController.releaseFuture(connection) }
 }
 
-internal fun firstPlayableIndex(items: List<Track>): Int = items.indexOfFirst { it.sourceUri != null }
+internal fun firstPlayableIndex(items: List<Track>, offlineOnly: Boolean = false, downloaded: Set<String> = emptySet()): Int =
+    items.indexOfFirst { it.sourceUri != null && (!offlineOnly || it.provider == "local" || it.id in downloaded) }
 
 internal suspend fun <T> publishSearchResult(fetch: suspend () -> T, publish: (T) -> Unit) {
     val result = fetch()
