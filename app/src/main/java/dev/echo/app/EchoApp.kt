@@ -58,6 +58,9 @@ fun EchoApp(vm: EchoViewModel) {
     dev.echo.app.account.AccountSyncHost(vm)
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
+    LaunchedEffect(vm.requestedDownloads, entry) {
+        if (vm.requestedDownloads && entry != null) { nav.navigate("downloads") { launchSingleTop = true }; vm.requestedDownloads = false }
+    }
     val route = entry?.destination?.route ?: "home"
     val activeTab = when { route.startsWith("playlist/") -> "library"; route.startsWith("discover") -> "home"; else -> route }
     val tracks by vm.tracks.collectAsStateWithLifecycle()
@@ -100,12 +103,12 @@ fun EchoApp(vm: EchoViewModel) {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
             topBar = { if (route != "player") TopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.GraphicEq, null, tint = Violet); Spacer(Modifier.width(10.dp)); Text("echo", fontWeight = FontWeight.Bold, letterSpacing = 2.sp) } },
-                navigationIcon = { if (route !in listOf("home", "search", "library", "settings")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+                navigationIcon = { if (route !in listOf("home", "search", "library", "profile", "settings")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = { IconButton(onClick = { nav.navigate("settings") { launchSingleTop = true } }) { Icon(Icons.Default.Settings, "Settings") } }) },
             bottomBar = { if (route != "player") Column {
                 if (vm.current != null && route != "player") MiniPlayer(vm) { nav.navigate("player") { launchSingleTop = true } }
                 Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).navigationBarsPadding().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-                    listOf(Triple("home", "Home", Icons.Default.Home), Triple("search", "Search", Icons.Default.Search), Triple("library", "Library", Icons.Default.LibraryMusic)).forEach { (key, label, icon) ->
+                    listOf(Triple("home", "Home", Icons.Default.Home), Triple("search", "Search", Icons.Default.Search), Triple("library", "Library", Icons.Default.LibraryMusic), Triple("profile", "Profile", Icons.Default.Person)).forEach { (key, label, icon) ->
                         Column(Modifier.weight(1f).fillMaxHeight().testTag("tab-$key").selectable(selected = activeTab == key, role = Role.Tab, onClick = {
                             nav.navigate(key) { popUpTo("home"); launchSingleTop = true }
                         }), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -139,7 +142,8 @@ fun EchoApp(vm: EchoViewModel) {
                         PlaylistScreen(vm, id, playlists.find { it.id == id }, tracks, playlists, favorites)
                     }
                     composable("player") { PlayerScreen(vm, tracks, playlists, favorites) { nav.popBackStack() } }
-                    composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }) }
+                    composable("profile") { ProfileScreen(vm) }
+                    composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }, { nav.navigate("profile") }) }
                     composable("licenses") { LicensesScreen() }
                     composable("history") { HistoryScreen(vm) }
                     composable("downloads") { DownloadsScreen(vm) }
@@ -524,7 +528,7 @@ fun EchoApp(vm: EchoViewModel) {
     }
 }
 
-@Composable private fun SettingsScreen(vm: EchoViewModel, openHistory: () -> Unit, openDownloads: () -> Unit, openLicenses: () -> Unit) {
+@Composable private fun SettingsScreen(vm: EchoViewModel, openHistory: () -> Unit, openDownloads: () -> Unit, openLicenses: () -> Unit, openProfile: () -> Unit) {
     val updateStatus by vm.updater.status.collectAsStateWithLifecycle()
     val connected by vm.spotify.connected.collectAsStateWithLifecycle()
     var sourcePriority by remember { mutableStateOf(vm.sources.priority) }
@@ -551,11 +555,16 @@ fun EchoApp(vm: EchoViewModel) {
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { SectionTitle("Make Echo yours") }
-        item { dev.echo.app.account.AccountSection(vm) }
+        item { OutlinedButton(onClick = openProfile) { Text("Profile & Google account") } }
         item { OutlinedButton(onClick = openHistory) { Text("Listening history") } }
         item { Text("Echo Music ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium) }
         item { OutlinedButton(onClick = openLicenses) { Text("Licenses & source") } }
         item { OutlinedButton(enabled = updateStatus !is UpdateStatus.Checking && updateStatus !is UpdateStatus.Downloading, onClick = vm::checkUpdates) { Text(if (updateStatus is UpdateStatus.Checking) "Checking for updates…" else "Check for updates") } }
+        if (updateStatus is UpdateStatus.Downloading) item {
+            val downloading = updateStatus as UpdateStatus.Downloading
+            Text("Update download: ${downloading.percent}%")
+            TextButton(onClick = vm::cancelUpdate) { Text("Cancel update download") }
+        }
         item { Text("Spotify playlist files", style = MaterialTheme.typography.titleMedium) }
         item { Text("Import from Library using a public Spotify share link, CSV or Spotify playlist JSON. Links preview the available track count first. Clear recordings can match automatically; ambiguous songs need a choice. Imports don't include Spotify audio or automatic sync.", style = MaterialTheme.typography.bodySmall) }
         if (connected) item { OutlinedButton(onClick = { vm.runAction("Disconnected") { vm.spotify.disconnect() } }) { Text("Disconnect previous Spotify session") } }

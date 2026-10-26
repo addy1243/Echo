@@ -28,7 +28,9 @@ class UpdateDialogTest {
         compose.onNodeWithText("Test release notes").assertIsDisplayed()
         compose.onNodeWithText("Update app").performClick()
         compose.runOnIdle { assertEquals("download", action); status.value = UpdateStatus.Downloading(release, 50) }
-        compose.onNodeWithText("50% · keep Echo open until the download finishes").assertIsDisplayed()
+        compose.onNodeWithText("50% · downloading in the background").assertIsDisplayed()
+        compose.onNodeWithText("Hide").performClick()
+        compose.runOnIdle { assertEquals("dismiss", action) }
         compose.onNodeWithText("Cancel").performClick()
         compose.runOnIdle { assertEquals("cancel", action); status.value = UpdateStatus.Ready(release) }
         compose.onNodeWithText("Install update").performClick()

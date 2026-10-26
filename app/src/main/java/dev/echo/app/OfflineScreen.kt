@@ -42,7 +42,7 @@ import dev.echo.core.Track
     val tracks by vm.tracks.collectAsStateWithLifecycle()
     LazyColumn(Modifier.fillMaxSize().testTag("downloads-screen"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { Text("Downloads", style = MaterialTheme.typography.headlineMedium) }
-        item { Text("Keep Echo open while downloading. Interrupted transfers show Retry. Downloads are private to this device and are removed when Echo is uninstalled.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Manual downloads continue in the background with an Android notification. Interrupted transfers show Retry. Downloads are private to this device and are removed when Echo is uninstalled.", style = MaterialTheme.typography.bodySmall) }
         item { OfflineSettingsSection(vm) }
         if (songs.isEmpty()) item { Text("No saved audio yet. Open a song's options or the player and choose Download.") }
         items(songs, key = { it.trackId }) { song ->
@@ -52,6 +52,12 @@ import dev.echo.core.Track
                     Text(song.title, style = MaterialTheme.typography.titleMedium)
                     Text("${if (song.pinned) "Download" else "Automatic cache"} · ${song.status}" +
                         if (song.status == "saved") " · ${"%.1f".format(song.bytes / (1024.0 * 1024))} MiB" else "", style = MaterialTheme.typography.bodySmall)
+                    if (song.status == "downloading") {
+                        val percent = dev.echo.data.offline.downloadPercent(song.receivedBytes, song.totalBytes)
+                        if (percent == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        else LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth())
+                        Text((percent?.let { "$it% · " } ?: "") + "%.1f MiB received".format(song.receivedBytes / (1024.0 * 1024)), style = MaterialTheme.typography.bodySmall)
+                    }
                     song.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (song.status == "saved" && track != null) TextButton(onClick = { vm.play(listOf(track)) }) { Text("Play") }
@@ -76,6 +82,6 @@ import dev.echo.core.Track
     TextButton(enabled = !saved && !pending && !settings.offlineOnly, onClick = { vm.downloadTrack(track) }) {
         Icon(if (saved) Icons.Default.DownloadDone else Icons.Default.Download, null)
         Spacer(Modifier.width(6.dp))
-        Text(when { saved -> "Downloaded"; pending -> "Downloading…"; song?.status == "failed" -> "Retry download"; song?.status == "saved" -> "Keep download"; else -> "Download" })
+        Text(when { saved -> "Downloaded"; pending -> song?.let { dev.echo.data.offline.downloadPercent(it.receivedBytes, it.totalBytes) }?.let { "Downloading $it%" } ?: if (song?.status == "queued") "Queued" else "Downloading…"; song?.status == "failed" -> "Retry download"; song?.status == "saved" -> "Keep download"; else -> "Download" })
     }
 }

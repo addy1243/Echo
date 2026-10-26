@@ -14,13 +14,19 @@
 - Home now prioritizes discovery song previews and live mix cards, then the user's playlists, liked-song/search shortcuts and recent/library picks. Preserve section-specific keys and keep automatic discovery loading separate from global action busy state so import/playback stay available.
 
 - The user has no Spotify Premium and wants subscription-free Android listening. Current focus: local Spotify playlist-file import (Exportify CSV / Spotify account-data playlist JSON), Echo discovery, session-only smart shuffle and live new-music searches. Do not restart Premium-dependent Spotify onboarding or promise automatic Spotify editorial/personalized playlist sync. Preserve existing encrypted credentials and PKCE code; see docs/INTEGRATIONS.md.
-- Laptop/desktop support is deferred by the user; finish Android Spotify work first.
+- The user resumed laptop scope on 2026-10-27. A separate `desktop` Compose JVM preview prioritizes real Windows playback and desktop navigation; reuse core/provider sources without disturbing Android data. Read docs/DESKTOP.md and docs/DESKTOP_SYNC_DESIGN.md. Full account/history/favorites sync and connected/multi-output audio are requested next, not implemented by the local playback preview.
 - The user returned to YouTube scope on 2026-10-25 and authorized a key-free, Spotube-style approach. NewPipeExtractor song search and native lazy playback are implemented and emulator-tested; preserve stable video IDs, bounded retries and existing library data. See CHANGELOG.md and docs/INTEGRATION_STATUS.md. Spotify onboarding retains its separate account-authorization requirements.
 - Keep progress updates concise; distinguish implementation, executed checks and external blockers.
 
 ## Project references
 
 Four modules: `core`, `data`, `playback`, `app`. Read `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/AGENT_TASKS.md` and `docs/INTEGRATION_STATUS.md` before changing shared contracts. Keep changes small and test non-trivial logic.
+
+## Background downloads, Profile and arranging the queue
+
+- Manual song downloads and app-update downloads use separate non-exported dataSync foreground services. Keep progress/cancel notifications, real byte totals, bounded wake locks and Android timeout handling. No force-stop/reboot/range-resume or background installer promise. Automatic frequent-song caching retains its existing app/playback-process rules.
+- Profile is a fourth bottom tab. Account-specific device counts are registrations verified at the last successful Drive sync, not online presence. Keep sign-out non-destructive and consent above navigation.
+- Queue drag handles reorder the real service traversal, preserve duplicate occurrences/current playback, and offer accessibility Move up/down. Validate captured UI UIDs and current ordered IDs before mutation. Repeat-all physical wrap and shuffle permutations need regression checks.
 
 ## In-app updates
 
@@ -31,7 +37,7 @@ Four modules: `core`, `data`, `playback`, `app`. Read `docs/ARCHITECTURE.md`, `d
 - Assets must be `EchoMusic-<versionCode>.apk`, with a newer Android version code and the installed signing certificate.
 - Preserve HTTPS/repository/host validation, exact size/SHA-256 checks, APK identity/signature checks, private staging, cancellation and rate-limit handling.
 - Android's installation permission and user confirmation remain required. Never silently install, bypass protections, or clear app data to force an update.
-- Android source defaults: 0.1.8/code9 as a local update candidate; accounts/offline/history were 0.1.7/code8; navigation/player/queue/matching were 0.1.6/code7 and public links were 0.1.5/code6. Recheck source defaults and installed version before changing versioning. Never publish signing keys/API secrets or publish a release without user authorization.
+- Android source defaults: 0.1.9/code10 for queue rearrangement, Profile and background manual downloads; 0.1.8/code9 is the prior public release; accounts/offline/history were 0.1.7/code8; navigation/player/queue/matching were 0.1.6/code7 and public links were 0.1.5/code6. Recheck source defaults and installed version before changing versioning. Never publish signing keys/API secrets or publish a release without user authorization.
 - Updater build/lint/JVM and Android checks pass, including the real newer code9 candidate and public GitHub download. Normal Android installation permission and confirmation are still required; actual system-installer completion was not automated.
 
 ## Connected Android device

@@ -63,10 +63,12 @@ class EchoViewModel @Inject constructor(
     val googleAccounts: dev.echo.app.account.GoogleAccounts,
     private val driveSync: dev.echo.app.account.DrivePlaylistSync,
 ) : ViewModel() {
+    internal var requestedDownloads by mutableStateOf(false)
     val offlineSongs = offline.songs
     val sleepTimerRemainingMs = sleepTimer.remainingMs
     fun setSleepTimer(minutes: Int) { sleepTimer.start(minutes) }
     fun cancelSleepTimer() { sleepTimer.cancel() }
+    val syncDeviceReport = driveSync.deviceReport.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
     val offlineSettings = offline.settings
     val tracks = library.tracks.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val playlists = library.playlists.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -107,7 +109,6 @@ class EchoViewModel @Inject constructor(
         override fun onEvents(player: Player, events: Player.Events) { sync(); queueItems = queueSnapshot(player) }
         override fun onPlayerError(error: PlaybackException) { message = "Playback failed: ${error.errorCodeName}. Check the source or retry." }
     }
-    private var updateDownload: Job? = null
     var accountBusy by mutableStateOf(false); private set
     var accountStatus by mutableStateOf<String?>(null); private set
     var googleAccountChoice by mutableStateOf<android.content.Intent?>(null); private set
@@ -152,7 +153,7 @@ class EchoViewModel @Inject constructor(
                     accountStatus = "Approve Google Drive access to sync playlists."
                 } else {
                     googleAccounts.setAutomatic(false)
-                    accountStatus = "Connect Drive in Settings to resume automatic sync."
+                    accountStatus = "Connect Drive in Profile to resume automatic sync."
                 }
             } else {
                 check(googleAccounts.email.value == email) { "Account changed; retry sync" }
@@ -187,7 +188,7 @@ class EchoViewModel @Inject constructor(
             accountBusy = true
             try { block() }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { accountStatus = error.message ?: "Google account operation failed; retry in Settings." }
+            catch (error: Exception) { accountStatus = error.message ?: "Google account operation failed; retry in Profile." }
             finally { accountBusy = false }
         }
     }
@@ -212,7 +213,10 @@ class EchoViewModel @Inject constructor(
     fun scan() = runAction("Local library updated") { library.scanLocal() }
     fun downloadTrack(track: Track) = runAction {
         if (tracks.value.none { it.id == track.id }) library.upsertTracks(listOf(track))
-        offline.download(track)
+        require(track.provider in setOf("youtube", "commons")) { "This song cannot be downloaded" }
+        check(!offlineSettings.value.offlineOnly) { "Turn off Offline mode to download music" }
+        if (offlineSongs.value.any { it.trackId == track.id && it.status == "saved" }) offline.download(track)
+        else dev.echo.app.download.SongDownloadService.enqueue(context, track.id)
     }
     fun cancelDownload(trackId: String) = runAction { offline.cancel(trackId) }
     fun removeDownload(trackId: String) = runAction { offline.remove(trackId) }
@@ -344,6 +348,26 @@ class EchoViewModel @Inject constructor(
     internal fun removeQueue(entry: QueueEntry) {
         if (currentQueueEntry(entry) && entry.index != controller?.currentMediaItemIndex) controller?.removeMediaItem(entry.index)
     }
+    internal fun moveQueue(from: QueueEntry, to: QueueEntry, captured: List<QueueEntry>) = runAction {
+        val player = controller ?: error("Playback service is connecting")
+        require(captured == queueItems && captured.all(::currentQueueEntry) && from != captured.firstOrNull() && to != captured.firstOrNull()) { "Queue changed. Try dragging again." }
+        require(player.mediaItemCount <= 10_000) { "Queue is too large" }
+        val ids = ArrayList(List(player.mediaItemCount) { player.getMediaItemAt(it).mediaId })
+        require(ids.sumOf { it.length.toLong() } <= 100_000) { "Queue is too large to reorder" }
+        val args = android.os.Bundle().apply {
+            putStringArrayList(QueueCommands.TRACK_IDS, ids)
+            putInt(QueueCommands.FROM_INDEX, from.index); putInt(QueueCommands.TO_INDEX, to.index)
+            putInt(QueueCommands.CURRENT_INDEX, player.currentMediaItemIndex)
+        }
+        val future = player.sendCustomCommand(SessionCommand(QueueCommands.REORDER, android.os.Bundle.EMPTY), args)
+        val result = suspendCancellableCoroutine<SessionResult> { continuation ->
+            continuation.invokeOnCancellation { future.cancel(false) }
+            future.addListener({ if (continuation.isActive) {
+                try { continuation.resume(future.get()) } catch (error: Exception) { continuation.resumeWithException(error) }
+            } }, ContextCompat.getMainExecutor(context))
+        }
+        check(result.resultCode == SessionResult.RESULT_SUCCESS) { result.extras.getString("error") ?: "Could not reorder queue" }
+    }
     fun clearUpcoming() {
         val player = controller ?: return
         queueItems.drop(1).map { it.index }.sortedDescending().forEach(player::removeMediaItem)
@@ -354,8 +378,8 @@ class EchoViewModel @Inject constructor(
         library.importPlaylist(java.util.UUID.randomUUID().toString(), "Echo discovery · ${java.time.LocalDate.now()}", discoveryResults)
     }
     fun checkUpdates() = runAction { updater.check(manual = true)?.let { message = it } }
-    fun downloadUpdate(release: UpdateRelease) { if (updateDownload?.isActive != true) updateDownload = viewModelScope.launch { updater.download(release) } }
-    fun cancelUpdate() { updateDownload?.cancel() }
+    fun downloadUpdate(release: UpdateRelease) { try { dev.echo.app.update.UpdateDownloadService.start(context, release) } catch (error: Exception) { message = error.message ?: "Could not start update download" } }
+    fun cancelUpdate() { dev.echo.app.update.UpdateDownloadService.cancel(context) }
     fun playFromSearch(query: String) = runAction {
         val songs = library.tracks.first().filter { it.sourceUri != null && (query.isBlank() || "${it.title} ${it.artist} ${it.album}".contains(query, true)) }
         require(songs.isNotEmpty()) { "No playable music matches this search" }

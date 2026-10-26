@@ -5,6 +5,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class OfflinePolicyTest {
+    @Test fun downloadProgressUsesKnownByteCountsAndStaysIndeterminateWhenUnknown() {
+        assertNull(downloadPercent(100, null))
+        assertNull(downloadPercent(100, -1))
+        assertNull(downloadPercent(100, 0))
+        assertEquals(0, downloadPercent(0, 100))
+        assertEquals(37, downloadPercent(37, 100))
+        assertEquals(100, downloadPercent(100, 100))
+        assertEquals(100, downloadPercent(101, 100))
+    }
     @Test fun fileNamesAreStableAndCannotEscapePrivateDirectory() {
         assertEquals(offlineFileName("youtube:abcdefghijk"), offlineFileName("youtube:abcdefghijk"))
         assertTrue(offlineFileName("../../secrets").matches(Regex("[a-f0-9]{64}\\.audio")))

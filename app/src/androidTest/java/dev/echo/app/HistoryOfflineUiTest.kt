@@ -49,9 +49,11 @@ class HistoryOfflineUiTest {
         }
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             compose.onNodeWithContentDescription("Settings").performClick()
-            scrollSettingsTo("Sign in with Google")
+            compose.onNodeWithTag("tab-profile").performClick()
+            compose.onNodeWithTag("profile-screen").performScrollToNode(hasText("Sign in with Google"))
             compose.onNodeWithText("Sign in with Google").assertIsEnabled()
             compose.onAllNodesWithText("Google sign-in setup is pending.", substring = true).assertCountEquals(0)
+            compose.onNodeWithContentDescription("Settings").performClick()
             scrollSettingsTo("Listening history")
             compose.onNodeWithText("Listening history").performClick()
             waitForFixture()

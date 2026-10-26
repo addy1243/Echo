@@ -45,7 +45,8 @@ class LiveOfflinePlaybackTest {
         val repository = LibraryRepository(context)
         assumeTrue("Do not overwrite an existing saved recording", runBlocking { repository.tracks.first().none { it.id == fixtureId } })
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            scenario.onActivity { activity -> offline = ViewModelProvider(activity)[EchoViewModel::class.java].offline }
+            lateinit var model: EchoViewModel
+            scenario.onActivity { activity -> model = ViewModelProvider(activity)[EchoViewModel::class.java]; offline = model.offline }
             val storage = offline!!
             assumeTrue("Do not overwrite an existing downloaded recording", storage.songs.value.none { it.trackId == fixtureId })
             previous = storage.settings.value
@@ -55,8 +56,15 @@ class LiveOfflinePlaybackTest {
                 sourceUri = "https://www.youtube.com/watch?v=aqz-KE-bpKQ", sourcePage = "https://www.youtube.com/watch?v=aqz-KE-bpKQ")
             runBlocking { repository.upsertTracks(listOf(track)) }
             inserted = true
-            storage.download(track)
+            main { model.downloadTrack(track) }
             downloadStarted = true
+            await("Foreground service must expose transfer progress", 90) {
+                val song = storage.songs.value.find { it.trackId == fixtureId }
+                if (song?.status == "failed") fail(song.message ?: "Live download failed")
+                song?.status == "downloading" && song.receivedBytes > 0
+            }
+            scenario.close()
+            instrumentation.uiAutomation.executeShellCommand("input keyevent 223").close()
             await("Public audio download must complete", 360) {
                 val song = storage.songs.value.find { it.trackId == fixtureId }
                 if (song?.status == "failed") fail(song.message ?: "Live download failed")
@@ -83,6 +91,7 @@ class LiveOfflinePlaybackTest {
     }
 
     @After fun removeOnlyFixtureAndRestoreSettings() {
+        if (downloadStarted) instrumentation.uiAutomation.executeShellCommand("input keyevent 224").close()
         controller?.let { player -> main {
             if (player.isConnected) { player.stop(); player.clearMediaItems() }
             player.release()

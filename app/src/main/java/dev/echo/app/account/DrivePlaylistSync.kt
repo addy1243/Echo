@@ -9,6 +9,8 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
@@ -38,6 +40,15 @@ class DrivePlaylistSync @Inject constructor(
     }
     private val root = File(context.noBackupFilesDir, "playlist-sync")
     private var retryAfter = 0L
+    private val reportRevision = MutableStateFlow(0)
+    val deviceReport = combine(accounts.email, reportRevision) { email, _ ->
+        email?.let {
+            val key = sha256(it)
+            val count = prefs.getInt("device-count:$key", 0)
+            val checked = prefs.getLong("device-checked:$key", 0)
+            if (count in 1..101 && checked > 0) SyncDeviceReport(count, checked) else null
+        }
+    }
     private val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS)
         .followRedirects(false).build()
@@ -51,12 +62,12 @@ class DrivePlaylistSync @Inject constructor(
             val listing = JSONObject(request(token, "https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&pageSize=100&fields=nextPageToken,files(id,name)&q=trashed%3Dfalse"))
             check(!listing.has("nextPageToken")) { "Too many Drive app files to sync safely; use library export while this is reviewed." }
             val files = listing.getJSONArray("files")
+            val registeredDevices = snapshotDevices(List(files.length()) { files.getJSONObject(it).getString("name") })
             var ownId: String? = null
             for (i in 0 until files.length()) {
                 val metadata = files.getJSONObject(i)
                 val name = metadata.getString("name")
-                if (!name.matches(Regex("echo-playlists-[a-f0-9-]{36}\\.json"))) continue
-                val remoteDevice = name.removePrefix("echo-playlists-").removeSuffix(".json")
+                val remoteDevice = snapshotDeviceId(name) ?: continue
                 val id = metadata.getString("id")
                 require(id.matches(Regex("[a-zA-Z0-9_-]+"))) { "Invalid Drive file identity" }
                 if (remoteDevice == deviceId) {
@@ -95,6 +106,11 @@ class DrivePlaylistSync @Inject constructor(
                 } else request(token, "https://www.googleapis.com/upload/drive/v3/files/$ownId?uploadType=media", "PATCH", envelope.toRequestBody(media))
                 atomicWrite(previous, snapshot)
             }
+            checkAccount(expectedAccount)
+            val reportKey = sha256(expectedAccount)
+            check(prefs.edit().putInt("device-count:$reportKey", (registeredDevices + deviceId).size)
+                .putLong("device-checked:$reportKey", System.currentTimeMillis()).commit()) { "Playlists synced but device status could not be saved" }
+            reportRevision.value++
             "Playlists synced with $expectedAccount"
         }
     }

@@ -1,4 +1,12 @@
-# GitHub update release — 0.1.8 / code9
+# GitHub update release — 0.1.9 / code10
+
+Prepared same-key `EchoMusic-10.apk`, version0.1.9/code10, SDK26 minimum:25430385bytes, SHA-256 `fbfbad12de1a5696503bc6a5491fcf181756986977a3e2e3c2997ae109815e29`. Original signing certificate SHA-256 remains `c71752f76fa5e39cc5c653688e7abfdbf108900fd6334202f4e641b7884531ad`.
+
+Background APK/manual-song downloads, real queue drag/drop and Profile are implemented. All89 JVM checks and application lint pass. Dedicated-emulator checks cover real GitHub background completion/cancellation, real screen-off song download/integrity/offline playback, queue gestures/shuffle/repeat/duplicates/stale actions, Profile/history/navigation and updater security. Notification navigation's startup race was fixed and the focused check passes. Matching GPL dependency-source packaging is required. See [current verification](INTEGRATION_STATUS.md).
+
+Google consent/two-device sync, phone/OEM/Doze behavior and system-installer acceptance remain unverified. Force-stop/reboot/range-resume support is not added. Concurrent desktop work is excluded from this Android release.
+
+## Previous published release — 0.1.8 / code9
 
 The owner authorized public GitHub updates and approved GPL-3.0-or-later on 2026-10-26. GitHub write access was verified privately through the configured Git credential helper. Credentials and private signing keys are never printed, committed or uploaded.
 

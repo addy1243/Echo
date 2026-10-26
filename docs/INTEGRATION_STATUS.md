@@ -4,6 +4,16 @@ Initial implementation, 2026-10-25. Final verification results will be recorded 
 
 
 
+## Android 0.1.9 / code10 candidate — 2026-10-27
+
+Implemented upcoming-row long-press drag/drop with accessible Move up/down, actual shuffled/repeat-all playback ordering and stale-action rejection; current playback and duplicate occurrences are preserved. Added Profile with Google/Drive controls, local playlist count and per-account registrations from the last successful sync. Device counts are unknown before successful sync and do not imply online presence.
+
+Manual song and APK downloads now have separate Android dataSync foreground services, progress/cancel notifications and bounded wake locks. Songs expose actual received bytes, known-total percentages and notification navigation to Downloads. Automatic caching retains existing process/consent/network behavior. Background installer launching was removed; installation stays user initiated. Force-stop, reboot, OEM killing and range-resume are not guaranteed.
+
+Executed: all **89 JVM tests** pass and application lint has **zero errors**. On dedicated API36 emulator-5556, real public code9 APK download finishes after Activity closure and screen-off; a separate cancellation check removes partial bytes. A real public Blender Foundation recording downloads after Activity closure/screen-off, passes complete-file integrity validation, then actual Media3 playback advances and seeks with remote opens blocked (**325.664 seconds**). Twelve targeted UI/security/navigation runner checks pass, including real drag gestures in normal/shuffled queues, repeat-all traversal, duplicates, stale drags, Profile, history and update dialogs; the optional externally prepared-APK argument check was skipped in this run.
+
+Logs: `build/0.1.9-final-validation.log`, `build/background-update-final-emulator.log`, `build/background-song-live-emulator.log`, `build/0.1.9-ui-final-emulator.log`. Tests preserve the emulator library outside owned fixtures; no phone install/reset or system installer approval occurred. Live Google consent, two-device sync, real phone/OEM/Doze behavior and metered-network transitions remain unverified. The final Profile/notification check also passes (`build/profile-notification-emulator.log`), including opening Downloads from a new intent after waiting for the navigation graph. Concurrent desktop work is excluded from this Android change.
+
 ## Published GitHub update — v0.1.8 / code9 — 2026-10-26
 
 Published https://github.com/addy1243/Echo/releases/tag/v0.1.8 as public stable/latest at exact release commit2bb31c605a2cf31ec2ea5151ab26ea8a18e20bdb. APK29814483bytes/SHA-256a2daf451c21939144ef05a1a2479fa174444463f3608ccc1eb38f12a0eb33bc9 and full corresponding source94016740bytes/SHA-25607922fb5ffcd2d6fd59e724a61c7d120256095d9ce84d1debd0c1f843383a5c0 were uploaded and GitHub digests verified before publication. The source ZIP contains392 entries and a135-component source URL/hash manifest; root source, GPL grant, build scripts and dependency sources match the tag. No private keys, credentials or app data were included.

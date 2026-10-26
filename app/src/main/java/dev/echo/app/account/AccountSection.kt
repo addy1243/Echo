@@ -14,7 +14,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import dev.echo.app.EchoViewModel
 import kotlinx.coroutines.delay
 
-/** The launcher and foreground scheduler live above navigation so leaving Settings cannot lose consent. */
+/** The launcher and foreground scheduler live above navigation so leaving Profile cannot lose consent. */
 @Composable internal fun AccountSyncHost(vm: EchoViewModel) {
     val chooser = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         vm.completeGoogleSignIn(if (result.resultCode == android.app.Activity.RESULT_OK) result.data else null)

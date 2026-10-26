@@ -27,6 +27,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); acceptCallback(intent) }
     private fun acceptCallback(intent: Intent?) {
+        if (intent?.getBooleanExtra("echoDownloads", false) == true) { model.requestedDownloads = true; intent.removeExtra("echoDownloads") }
         if (intent?.action == "android.media.action.MEDIA_PLAY_FROM_SEARCH") {
             model.playFromSearch(intent.getStringExtra(android.app.SearchManager.QUERY).orEmpty())
         }

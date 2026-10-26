@@ -12,6 +12,10 @@ import dev.echo.data.library.LibraryRepository
 import kotlinx.coroutines.flow.first
 
 object QueueCommands {
+    const val REORDER = "dev.echo.queue.REORDER"
+    const val FROM_INDEX = "fromIndex"
+    const val TO_INDEX = "toIndex"
+    const val CURRENT_INDEX = "currentIndex"
     const val APPEND = "dev.echo.queue.APPEND"
     const val PLAY_SELECTED = "dev.echo.queue.PLAY_SELECTED"
     const val START_SHUFFLED = "dev.echo.queue.START_SHUFFLED"
@@ -22,6 +26,27 @@ object QueueCommands {
 @UnstableApi
 internal suspend fun editQueue(player: ExoPlayer, library: LibraryRepository, action: String, args: Bundle,
     resolve: suspend (Track) -> MediaItem?) {
+    if (action == QueueCommands.REORDER) {
+        val expected = args.getStringArrayList(QueueCommands.TRACK_IDS) ?: error("Missing queue snapshot")
+        val from = args.getInt(QueueCommands.FROM_INDEX, -1)
+        val to = args.getInt(QueueCommands.TO_INDEX, -1)
+        val current = player.currentMediaItemIndex
+        require(expected.size <= 10_000 && expected.sumOf { it.length.toLong() } <= 100_000 &&
+            expected == List(player.mediaItemCount) { player.getMediaItemAt(it).mediaId } &&
+            current == args.getInt(QueueCommands.CURRENT_INDEX, -1)) { "Queue changed. Try dragging again." }
+        val order = if (player.shuffleModeEnabled) fullShuffleOrder(player) else expected.indices.toList()
+        val upcoming = if (player.repeatMode == Player.REPEAT_MODE_ALL) order.drop(order.indexOf(current)) + order.take(order.indexOf(current))
+            else order.drop(order.indexOf(current))
+        require(from in upcoming.drop(1) && to in upcoming.drop(1)) { "Only upcoming songs can be moved" }
+        if (player.shuffleModeEnabled) {
+            player.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(reorderedTraversal(order, from, to).toIntArray(), 0L))
+        } else if (player.repeatMode == Player.REPEAT_MODE_ALL && current > 0) {
+            // Rotate the repeat-all traversal before moving across the physical queue boundary.
+            player.moveMediaItems(0, current, expected.size - current)
+            player.moveMediaItem((from - current + expected.size) % expected.size, (to - current + expected.size) % expected.size)
+        } else player.moveMediaItem(from, to)
+        return
+    }
     require(action in setOf(QueueCommands.APPEND, QueueCommands.PLAY_SELECTED, QueueCommands.START_SHUFFLED)) { "Unknown queue action" }
     val ids = args.getStringArrayList(QueueCommands.TRACK_IDS) ?: error("Missing queue tracks")
     require(ids.isNotEmpty() && ids.size <= 5000 && ids.sumOf { it.length.toLong() } <= 100_000 && ids.all { it.isNotBlank() && it.length <= 512 }) { "Queue request is too large or invalid" }
@@ -89,4 +114,13 @@ internal fun appendedShuffleOrder(order: List<Int>, current: Int, repeatAll: Boo
     require(additions >= 0 && order.toSet() == order.indices.toSet()) { "Invalid queue order" }
     val offset = if (repeatAll) order.indexOf(current).coerceAtLeast(0) else 0
     return order.drop(offset) + order.take(offset) + (order.size until order.size + additions)
+}
+
+internal fun reorderedTraversal(order: List<Int>, from: Int, to: Int): List<Int> {
+    require(order.toSet() == order.indices.toSet() && from in order && to in order) { "Invalid queue order" }
+    val result = order.toMutableList()
+    val destination = result.indexOf(to)
+    result.remove(from)
+    result.add(destination, from)
+    return result
 }

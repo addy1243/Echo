@@ -14,9 +14,11 @@ Transfers are serialized. A temporary `.part` becomes available only after a suc
 
 ## Interruption and retry
 
-**Keep Echo open while downloading.** Transfers run in the app process, not a background download service. Android may stop them when the process ends. Incomplete manifest entries become interrupted Retry entries on restart, partial files are removed, and Retry begins again with a freshly resolved source. There are no automatic transfer retries, range-resume claims, signed-URL persistence or rate-limit loops. Cancel interrupts the active network call; Remove waits for cancellation before deleting files. Failed automatic entries require an explicit retry or removal, preventing repeated unattended source requests.
+Manual song downloads run in a user-started Android dataSync foreground service, with an ongoing progress notification and Cancel downloads action. The Downloads screen shows received bytes and an honest percentage only when the server supplies a total. Notification taps open Downloads; notification visibility requires Android notification permission. A bounded wake lock supports screen-off transfers. Automatic frequent-song caching remains owned by the playback/app process and its existing unmetered/consent rules.
 
-This first implementation deliberately uses existing OkHttp/providers and app-private files. If background completion becomes required, move transfers into a foreground data-sync service or Media3 DownloadService with a durable queue, notification, network constraints and fresh-source handling. Android documents that pattern in [Downloading media](https://developer.android.com/media/media3/exoplayer/downloading-media). Storage behavior follows [app-specific files](https://developer.android.com/training/data-storage/app-specific). No background-survival promise is made here.
+Leaving the activity does not cancel manual downloads. Force-stop, process termination, reboot and Android/OEM limits can interrupt them. Incomplete manifest entries become Retry entries on restart, partial files are removed, and Retry starts with a freshly resolved source. No range resume, unattended retries, signed-URL persistence or rate-limit loops are added. Cancel interrupts the active HTTP call; Remove waits for cancellation before deleting files. Existing OkHttp/provider validation and private atomic storage remain in use.
+
+The services follow Android's [dataSync foreground service](https://developer.android.com/develop/background-work/services/fgs/service-types#data-sync) and [timeout](https://developer.android.com/develop/background-work/services/fgs/timeout) requirements. Storage follows [app-specific files](https://developer.android.com/training/data-storage/app-specific).
 
 ## Source and account boundaries
 

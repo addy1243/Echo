@@ -58,6 +58,40 @@ class SearchQueueBehaviorTest {
                     }
                     compose.waitUntil(20_000) { !model.busy && observe().let { it.playing && it.entries.size == 4 } }
                     assertEquals(listOf(songs[0].id, songs[0].id, songs[1].id, songs[2].id).sorted(), observe().ids().sorted())
+                    for (shuffled in listOf(false, true)) {
+                        scenario.onActivity {
+                            model.controller!!.repeatMode = Player.REPEAT_MODE_ALL
+                            model.play(listOf(songs[0], songs[1], songs[0], songs[2]), 1, shuffled)
+                        }
+                        compose.waitUntil(20_000) { !model.busy && observe().entries.size == 4 && observe().playing }
+                        val beforeDrag = observe()
+                        val captured = beforeDrag.entries
+                        compose.onNodeWithTag("mini-player").performClick()
+                        compose.onNodeWithContentDescription("Open queue").performClick()
+                        val from = compose.onNodeWithTag("queue-drag-${captured[1].index}", useUnmergedTree = true)
+                        val target = compose.onNodeWithTag("queue-drag-${captured[3].index}", useUnmergedTree = true)
+                        val delta = target.fetchSemanticsNode().boundsInRoot.center.y - from.fetchSemanticsNode().boundsInRoot.center.y
+                        from.performTouchInput {
+                            down(center)
+                            advanceEventTime(700)
+                            moveBy(androidx.compose.ui.geometry.Offset(0f, 1f))
+                            moveBy(androidx.compose.ui.geometry.Offset(0f, delta - 1f), delayMillis = 400)
+                            up()
+                        }
+                        val expected = listOf(captured[0], captured[2], captured[3], captured[1]).map { it.item.mediaId }
+                        compose.waitUntil(10_000) { !model.busy && observe().ids() == expected }
+                        assertEquals(beforeDrag.currentId, observe().currentId)
+                        assertTrue(observe().playing)
+                        assertTrue(observe().position >= beforeDrag.position - 250)
+                        // A stale drag cannot mutate a queue which has advanced since capture.
+                        scenario.onActivity { model.moveQueue(captured[1], captured[2], captured) }
+                        compose.waitUntil(5000) { !model.busy }
+                        assertEquals(expected, observe().ids())
+                        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("input keyevent 4").close()
+                        compose.waitUntil(5000) { compose.onAllNodesWithContentDescription("Close player").fetchSemanticsNodes().isNotEmpty() }
+                        compose.onNodeWithContentDescription("Close player").performClick()
+                        compose.waitUntil(10_000) { model.message == null }
+                    }
                     compose.onNodeWithTag("tab-search").performClick()
                     compose.onNodeWithTag("search-source-0").performClick()
                     compose.onNodeWithText("Songs, artists or albums").performTextInput(fixture)

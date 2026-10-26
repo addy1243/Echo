@@ -4,17 +4,19 @@ Native Kotlin Android personal music player. Android 8.0+; Kotlin, Compose Mater
 
 Echo Music's original source is licensed under GPL-3.0-or-later; see [LICENSE](LICENSE), [COPYING](COPYING) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms and matching source. Settings → Licenses & source displays the packaged notices.
 
-## 0.1.7 development features
+## Android features
 
 In a playlist, **Add playlist to queue** offers Playlist order, Shuffle or Smart shuffle and preserves existing playback/upcoming songs. Search result taps play just the selected song, then continue the prior queue. Shuffle starts from a random playable occurrence, with every occurrence reachable in a new repeat-off session. Smart shuffle keeps active playback or chooses a random anchor for a fresh session. The full player also offers a **Sleep timer** (15/30/45/60 minutes) that pauses without clearing the queue and runs while the player screen is closed. See [queue behavior](docs/QUEUE_ACTIONS.md) and [sleep timer](docs/SLEEP_TIMER.md).
 
+Drag an upcoming queue row by its handle to arrange real playback order; the current song stays fixed. Profile also shows local playlist count and account device registrations from the last successful sync, without implying devices are online.
+
 The player and queue can add any saved/recommended recording to an existing or new playlist. Full-player artwork requests a larger recognized Google image variant with original-image fallback; source images still limit detail.
 
-Use a song's **Download** action to pin private offline audio. **Settings → Downloads & cache** lists saved/pending/failed items with retry, cancel and remove, and has separate **Offline mode** and **Cache frequently played songs** switches. The automatic cache is opt-in after three qualified listens on unmetered internet, with a separate 256 MiB budget. Explicit downloads have a 2 GiB budget and are never automatically evicted. Keep Echo open during transfers; interrupted downloads restart through Retry. See [offline design and limits](docs/OFFLINE.md).
+Use a song's **Download** action to pin private offline audio. **Settings → Downloads & cache** lists saved/pending/failed items with retry, cancel and remove, and has separate **Offline mode** and **Cache frequently played songs** switches. The automatic cache is opt-in after three qualified listens on unmetered internet, with a separate 256 MiB budget. Explicit downloads have a 2 GiB budget and are never automatically evicted. Manual downloads continue after leaving Echo, with progress/cancel notifications and visible byte/percentage progress in Downloads. Interrupted transfers restart through Retry. See [offline design and limits](docs/OFFLINE.md).
 
 **Settings → Listening history** shows starts, skips, completions, interruptions and errors, with a confirmed clear action. Up to 5,000 events/90 days inform small preference adjustments within real related-song results; the screen shows the latest 500. Logs remain local. See [history semantics](docs/HISTORY_NOTES.md).
 
-**Settings → Google account & playlist sync** supports optional Google sign-in/out and private Drive playlist synchronization, manually or approximately every minute while Echo is open. Concurrent playlist edits produce conflict copies. Google sign-in uses Android's installed Google account provider rather than bundled proprietary identity SDKs. Actual Google authorization and Drive transfers still need live verification of the owner's Android package/signing registration, consent and Drive API setup. See [account setup, sync behavior and limits](docs/ACCOUNTS.md). Local library/audio stays on the device after sign-out; it is not an account-isolated local library. Audio, likes and listening history do not sync.
+**Profile → Google account & playlist sync** supports optional Google sign-in/out and private Drive playlist synchronization, manually or approximately every minute while Echo is open. Concurrent playlist edits produce conflict copies. Google sign-in uses Android's installed Google account provider rather than bundled proprietary identity SDKs. Actual Google authorization and Drive transfers still need live verification of the owner's Android package/signing registration, consent and Drive API setup. See [account setup, sync behavior and limits](docs/ACCOUNTS.md). Local library/audio stays on the device after sign-out; it is not an account-isolated local library. Audio, likes and listening history do not sync.
 
 ## Build
 

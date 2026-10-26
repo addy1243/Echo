@@ -2,6 +2,13 @@
 
 This file records development changes. A development build or an entry here does not mean an APK was published to GitHub Releases.
 
+## 0.1.9 / versionCode 10 — 2026-10-27
+
+- Drag upcoming queue rows to arrange real playback order, including shuffled and repeat-all queues. Current playback and duplicate occurrences are preserved; stale drags are rejected. Move up/down accessibility actions are available.
+- User-started app updates and manual song downloads continue in Android foreground services with progress/cancellation notifications and bounded screen-off wake locks. Song downloads show actual received bytes and percentages when totals are known. Notification taps open Downloads. Completion offers installation only through user action.
+- Added a Profile bottom tab with Google account/Drive playlist sync controls, local playlist count and account-specific device registrations checked during the last successful sync. Device registrations do not imply online presence.
+- Interrupted downloads retry from the beginning; force-stop/reboot survival, automatic cache background scheduling and remote device management are not added.
+
 ## 0.1.8 / versionCode 9 — published 2026-10-26
 
 - Published [v0.1.8](https://github.com/addy1243/Echo/releases/tag/v0.1.8) with same-key `EchoMusic-9.apk` and exact corresponding source at commit2bb31c6; preserved code8 as the emulator upgrade baseline. The real public download passed checksum, identity and installer-handoff checks without silent installation.

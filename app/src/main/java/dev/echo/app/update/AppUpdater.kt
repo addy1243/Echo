@@ -138,7 +138,7 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
             currentCoroutineContext().ensureActive()
             Files.move(partial.toPath(), apk.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             currentCoroutineContext().ensureActive()
-            mutableStatus.value = UpdateStatus.Ready(release, launchInstaller = true)
+            mutableStatus.value = UpdateStatus.Ready(release)
         } catch (cancelled: CancellationException) { mutableStatus.value = UpdateStatus.Available(release); throw cancelled }
         catch (error: Exception) {
             if (!currentCoroutineContext().isActive) { mutableStatus.value = UpdateStatus.Available(release); throw CancellationException("Update cancelled", error) }

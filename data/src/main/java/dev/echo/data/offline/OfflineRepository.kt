@@ -39,7 +39,7 @@ import org.json.JSONObject
 
 data class OfflineSong(val trackId: String, val title: String, val pinned: Boolean,
     val status: String, val bytes: Long = 0, val savedAt: Long = 0, val message: String? = null,
-    val sha256: String = "")
+    val sha256: String = "", val receivedBytes: Long = 0, val totalBytes: Long? = null)
 data class OfflineSettings(val offlineOnly: Boolean = false, val autoCache: Boolean = false)
 
 /** Complete private files only. Expiring media URLs never enter the durable manifest. */
@@ -216,6 +216,10 @@ class OfflineRepository @Inject constructor(@ApplicationContext private val cont
             check(declared <= MAX_SONG_BYTES) { "Recording exceeds song storage limit" }
             makeRoom(pinned, if (declared > 0) declared else MAX_SONG_BYTES)
             var count = 0L
+            var lastProgress = 0L
+            fun progress() = update(OfflineSong(track.id, track.title, pinned, "downloading",
+                receivedBytes = count, totalBytes = declared.takeIf { it > 0 }), durable = false)
+            progress()
             body.byteStream().use { input ->
                 partial.outputStream().use { output ->
                     val buffer = ByteArray(64 * 1024)
@@ -230,12 +234,15 @@ class OfflineRepository @Inject constructor(@ApplicationContext private val cont
                         count += read
                         check(count <= MAX_SONG_BYTES && directory.usableSpace >= FREE_SPACE_RESERVE + read) { "Storage limit reached" }
                         output.write(buffer, 0, read)
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (now - lastProgress >= 250) { progress(); lastProgress = now }
                     }
                     output.flush()
                     output.fd.sync()
                 }
             }
             validateDownloadSize(count, declared, directory.usableSpace)
+            progress()
             val digest = audioDigest(partial)
             currentCoroutineContext().ensureActive()
             synchronized(lock) {
@@ -260,9 +267,9 @@ class OfflineRepository @Inject constructor(@ApplicationContext private val cont
         check(used + expected <= budget && directory.usableSpace >= expected + FREE_SPACE_RESERVE) { "Storage budget reached; remove some downloads" }
     }
 
-    private fun update(song: OfflineSong) = synchronized(lock) {
-        mutableSongs.value = songs.value.filterNot { it.trackId == song.trackId } + song
-        persist()
+    private fun update(song: OfflineSong, durable: Boolean = true) = synchronized(lock) {
+        mutableSongs.value = if (songs.value.any { it.trackId == song.trackId }) songs.value.map { if (it.trackId == song.trackId) song else it } else songs.value + song
+        if (durable) persist()
     }
 
     private fun persist() {

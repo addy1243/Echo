@@ -376,6 +376,7 @@ class EchoPlaybackService : MediaLibraryService() {
             val builder = MediaSession.ConnectionResult.AcceptedResultBuilder(session)
             if (controller.uid == android.os.Process.myUid() && controller.packageName == packageName) {
                 builder.setAvailableSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
+                    .add(SessionCommand(QueueCommands.REORDER, Bundle.EMPTY))
                     .add(SessionCommand(QueueCommands.APPEND, Bundle.EMPTY))
                     .add(SessionCommand(QueueCommands.START_SHUFFLED, Bundle.EMPTY))
                     .add(SessionCommand(QueueCommands.PLAY_SELECTED, Bundle.EMPTY)).build())

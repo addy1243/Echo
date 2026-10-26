@@ -2,6 +2,8 @@
 
 package dev.echo.app
 
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,6 +19,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -96,6 +103,8 @@ import dev.echo.core.Playlist
 @Composable private fun QueueSheet(vm: EchoViewModel, tracks: List<Track>, onAdd: (Track) -> Unit, close: () -> Unit) {
     val entries = vm.queueItems
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var dragTarget by remember { mutableStateOf<Int?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     LaunchedEffect(entries.firstOrNull()?.uid) { listState.scrollToItem(0) }
     ModalBottomSheet(onDismissRequest = close, sheetState = sheetState, containerColor = Color(0xFF19171F)) {
@@ -109,8 +118,48 @@ import dev.echo.core.Playlist
                 Text("Now playing", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp))
                 QueueRow(entries.first(), vm, true, tracks, onAdd)
                 Text("Up next · ${entries.size - 1}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(vertical = 16.dp))
+                Text("Hold a drag handle to reorder upcoming songs.", style = MaterialTheme.typography.bodySmall)
                 LazyColumn(Modifier.weight(1f), state = listState) {
-                    items(entries.drop(1), key = { it.index }) { entry -> QueueRow(entry, vm, false, tracks, onAdd) }
+                    items(entries.drop(1), key = { it.index }) { entry ->
+                        QueueRow(entry, vm, false, tracks, onAdd, dragTarget == entry.index) {
+                            Icon(Icons.Default.DragHandle, "Reorder ${entry.item.mediaMetadata.title}", Modifier.size(48.dp)
+                                .testTag("queue-drag-${entry.index}")
+                                .semantics {
+                                    customActions = listOfNotNull(
+                                        entries.indexOf(entry).takeIf { it > 1 }?.let { position -> CustomAccessibilityAction("Move up") { vm.moveQueue(entry, entries[position - 1], entries); true } },
+                                        entries.indexOf(entry).takeIf { it < entries.lastIndex }?.let { position -> CustomAccessibilityAction("Move down") { vm.moveQueue(entry, entries[position + 1], entries); true } },
+                                    )
+                                }
+                                .pointerInput(entry.uid) {
+                                    var captured = emptyList<QueueEntry>()
+                                    var y = 0f
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            captured = vm.queueItems
+                                            val row = listState.layoutInfo.visibleItemsInfo.find { it.key == entry.index }
+                                            y = (row?.offset ?: 0) + (row?.size ?: 0) / 2f
+                                            dragTarget = entry.index
+                                        },
+                                        onDrag = { change, amount ->
+                                            change.consume(); y += amount.y
+                                            val layout = listState.layoutInfo
+                                            val target = layout.visibleItemsInfo.minByOrNull { kotlin.math.abs(it.offset + it.size / 2f - y) }
+                                            dragTarget = target?.key as? Int
+                                            if (y > layout.viewportEndOffset - 40 || y < layout.viewportStartOffset + 40) {
+                                                scope.launch { listState.scrollBy(if (amount.y > 0) 32f else -32f) }
+                                                y = y.coerceIn(layout.viewportStartOffset + 1f, (layout.viewportEndOffset - 1).toFloat())
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            val target = captured.find { it.index == dragTarget }
+                                            if (target != null && target.index != entry.index) vm.moveQueue(entry, target, captured)
+                                            dragTarget = null
+                                        },
+                                        onDragCancel = { dragTarget = null },
+                                    )
+                                })
+                        }
+                    }
                     if (entries.size == 1) item { Text("You're at the end of the queue.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
@@ -118,9 +167,10 @@ import dev.echo.core.Playlist
     }
 }
 
-@Composable private fun QueueRow(entry: QueueEntry, vm: EchoViewModel, current: Boolean, tracks: List<Track>, onAdd: (Track) -> Unit) {
-    Surface(onClick = { vm.jumpQueue(entry) }, color = if (current) Color(0xFF332B40) else Color.Transparent, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().testTag(if (current) "queue-current" else "queue-next-${entry.index}")) {
+@Composable private fun QueueRow(entry: QueueEntry, vm: EchoViewModel, current: Boolean, tracks: List<Track>, onAdd: (Track) -> Unit, dropTarget: Boolean = false, dragHandle: (@Composable () -> Unit)? = null) {
+    Surface(onClick = { vm.jumpQueue(entry) }, color = if (current || dropTarget) Color(0xFF332B40) else Color.Transparent, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().testTag(if (current) "queue-current" else "queue-next-${entry.index}")) {
         Row(Modifier.padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            dragHandle?.invoke()
             Artwork(entry.item.mediaMetadata.artworkUri?.toString(), 44)
             Column(Modifier.weight(1f)) {
                 Text(entry.item.mediaMetadata.title?.toString().orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)

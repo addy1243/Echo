@@ -8,6 +8,10 @@ internal const val DOWNLOAD_BUDGET = 2L * 1024 * 1024 * 1024
 internal const val CACHE_BUDGET = 256L * 1024 * 1024
 internal const val FREE_SPACE_RESERVE = 100L * 1024 * 1024
 
+fun downloadPercent(receivedBytes: Long, totalBytes: Long?): Int? = totalBytes?.takeIf { it > 0 }?.let {
+    (receivedBytes.coerceAtLeast(0).toDouble() / it * 100).toInt().coerceIn(0, 100)
+}
+
 internal fun offlineFileName(id: String): String = MessageDigest.getInstance("SHA-256")
     .digest(id.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) } + ".audio"
 

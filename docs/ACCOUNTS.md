@@ -1,6 +1,6 @@
 # Google accounts and playlist sync
 
-Google sign-in is optional. Listening, imports, offline audio and history work without an account. Settings contains Sign in with Google, Sign out, Connect Drive / Sync now, and an automatic sync switch. The device library remains after sign-out; connecting another account explicitly saves that existing library to the selected account. This is account-specific cloud storage, not separate local libraries.
+Google sign-in is optional. Listening, imports, offline audio and history work without an account. The Profile bottom tab contains Sign in with Google, Sign out, Connect Drive / Sync now, and an automatic sync switch. The device library remains after sign-out; connecting another account explicitly saves that existing library to the selected account. This is account-specific cloud storage, not separate local libraries.
 
 ## Platform account authentication
 
@@ -31,3 +31,6 @@ Cloud snapshots include playlist names/IDs and referenced track metadata. Audio,
 Responses/identities/source hosts are validated, bodies bounded, redirects disabled and rate limits respected. More than100 app-data files stops the sync explicitly. A network failure preserves local data; remote devices applied earlier in a multi-device operation can stay applied. Export a separate backup for independent recovery; sync snapshots are not immutable backup history.
 
 References: [Google Android OAuth clients and AccountManager](https://support.google.com/cloud/answer/15549257?hl=en), [Android AccountManager](https://developer.android.com/reference/android/accounts/AccountManager), [Google userinfo](https://developers.google.com/resources/api-libraries/documentation/oauth2/v2/python/latest/oauth2_v2.userinfo.html), [Drive app-data folder](https://developers.google.com/workspace/drive/api/guides/appdata). Executed evidence and remaining limits are in [integration status](INTEGRATION_STATUS.md).
+## Profile device count
+
+Profile shows the local playlist count and the signed-in verified Google email. After a successful sync it shows the number of recognized per-installation playlist snapshots found in that account, including the confirmed current upload, with the last-checked time. Reports are stored per account; before the first successful sync the count is unknown. This is not online presence: registrations may be offline and reinstalls have separate identities. Duplicate snapshot registrations stop sync rather than inflating the count. Device removal and remote sign-out are not implemented.

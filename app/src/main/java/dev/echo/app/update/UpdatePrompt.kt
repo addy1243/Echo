@@ -24,13 +24,12 @@ fun UpdatePrompt(vm: EchoViewModel) {
         }
         Unit
     }
-    LaunchedEffect(status) {
-        if ((status as? UpdateStatus.Ready)?.launchInstaller == true) {
-            vm.updater.consumeInstallerLaunch()
-            install()
-        }
+    var hiddenDownload by remember { mutableStateOf(false) }
+    LaunchedEffect(status is UpdateStatus.Downloading) { if (status !is UpdateStatus.Downloading) hiddenDownload = false }
+    if (status !is UpdateStatus.Downloading || !hiddenDownload) {
+        UpdateDialog(status, vm::downloadUpdate, vm::cancelUpdate,
+            { if (status is UpdateStatus.Downloading) hiddenDownload = true else vm.updater.dismiss() }, install, { vm.checkUpdates() })
     }
-    UpdateDialog(status, vm::downloadUpdate, vm::cancelUpdate, vm.updater::dismiss, install, { vm.checkUpdates() })
 }
 
 @Composable
@@ -47,9 +46,10 @@ internal fun UpdateDialog(
             dismissButton = { TextButton(onClick = dismiss) { Text("Later") } },
         )
         is UpdateStatus.Downloading -> AlertDialog(
-            onDismissRequest = {}, title = { Text("Downloading update") },
-            text = { Column { LinearProgressIndicator(progress = { current.percent / 100f }, modifier = Modifier.fillMaxWidth()); Spacer(Modifier.height(12.dp)); Text("${current.percent}% · keep Echo open until the download finishes") } },
-            confirmButton = { TextButton(onClick = cancel) { Text("Cancel") } },
+            onDismissRequest = dismiss, title = { Text("Downloading update") },
+            text = { Column { LinearProgressIndicator(progress = { current.percent / 100f }, modifier = Modifier.fillMaxWidth()); Spacer(Modifier.height(12.dp)); Text("${current.percent}% · downloading in the background") } },
+            confirmButton = { TextButton(onClick = dismiss) { Text("Hide") } },
+            dismissButton = { TextButton(onClick = cancel) { Text("Cancel") } },
         )
         is UpdateStatus.Ready -> AlertDialog(
             onDismissRequest = dismiss, title = { Text("Update ready · ${current.release.versionName}") },
