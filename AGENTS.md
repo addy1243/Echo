@@ -44,6 +44,8 @@ Four modules: `core`, `data`, `playback`, `app`. Read `docs/ARCHITECTURE.md`, `d
 
 ## Connected Android device
 
+- Latest dedicated emulator state: published0.1.9/code10 installed in place on emulator-5556, package metadata verified and Profile/download notification navigation passed. Code8 was used earlier for real public-code10 update checks; do not assume the emulator is still an older baseline. No physical phone installation/reset occurred in this feature work.
+
 - Latest installation: 0.1.6/code7 was installed in place after the user reconnected and approved Android's USB debugging computer-trust prompt. Package metadata confirms the version. All queue/library fixture tests ran on the emulator; no phone data reset or manual phone playback check was performed.
 
 - On 2026-10-25 the user reconnected the physical Android16 phone and renewed authorization for Echo development/testing. ADB was freshly verified as `device`; the updater was installed in place and focused tests passed.
