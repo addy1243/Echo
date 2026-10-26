@@ -24,7 +24,7 @@ Four modules: `core`, `data`, `playback`, `app`. Read `docs/ARCHITECTURE.md`, `d
 
 ## In-app updates
 
-- Code9 release preparation verified GitHub write access and a same-key newer APK. Publication is held for the owner''s whole-app license decision and unresolved bundled Google auth SDK/NewPipe GPL compatibility and notices; see docs/RELEASE_READINESS.md. No release, tag, source push or whole-app license grant has been made. Do not bypass updater verification or describe this candidate as published.
+- Owner approved GPL-3.0-or-later and public release. v0.1.8/code9 is published with the same-key APK, matching source/dependency bundle and packaged notices; no proprietary Google identity SDK is bundled. Real code8 public download/checksum/signature/staging and installer-handoff passed, and the code8 UI displayed Update ready 0.1.8. Android installer acceptance, phone updates and live Google consent remain unverified. Preserve the validated distribution and update path; see docs/RELEASE_READINESS.md.
 
 - Implemented in `app/src/main/java/dev/echo/app/update/`; release contract and setup are in `docs/UPDATES.md`.
 - Uses public GitHub Releases at `addy1243/Echo`: automatic startup check at most daily and manual check in Settings.
@@ -32,7 +32,7 @@ Four modules: `core`, `data`, `playback`, `app`. Read `docs/ARCHITECTURE.md`, `d
 - Preserve HTTPS/repository/host validation, exact size/SHA-256 checks, APK identity/signature checks, private staging, cancellation and rate-limit handling.
 - Android's installation permission and user confirmation remain required. Never silently install, bypass protections, or clear app data to force an update.
 - Android source defaults: 0.1.8/code9 as a local update candidate; accounts/offline/history were 0.1.7/code8; navigation/player/queue/matching were 0.1.6/code7 and public links were 0.1.5/code6. Recheck source defaults and installed version before changing versioning. Never publish signing keys/API secrets or publish a release without user authorization.
-- Updater build/lint, four new JVM checks and four Android checks passed. Live GitHub APK replacement remains unverified because no newer release is published; recheck that external state.
+- Updater build/lint/JVM and Android checks pass, including the real newer code9 candidate and public GitHub download. Normal Android installation permission and confirmation are still required; actual system-installer completion was not automated.
 
 ## Connected Android device
 
