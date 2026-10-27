@@ -1,16 +1,14 @@
 # Integration status
 
-Initial implementation, 2026-10-25. Final verification results will be recorded after integrated checks.
+Current Android release: **[0.1.9 / code10](releases/0.1.9.md)**, published 2026-10-27. Newest records supersede earlier pending/unpublished states; historical results remain dated.
 
 
 
-## Live Google authorization blocked — 2026-10-27
+## Post-release acceptance: Google sign-in works — 2026-10-27
 
-The owner supplied a phone screenshot showing Google's **Access blocked: Echo** and `403: access_denied` during account/Drive authorization. Request details include the Android OAuth client and identity plus `drive.appdata` scopes. This is a confirmed failed live authorization attempt; prior emulator/build/parser checks remain valid but do not prove real login or Drive access.
+The owner explicitly confirmed successful Android Google sign-in after the earlier `403: access_denied` screenshot. Sign-in is owner-confirmed working. The screenshot is a historical failed attempt; the exact cause and whether a test-user change resolved it were not established. The prior documentation's unresolved sign-in status is superseded by this confirmation.
 
-The first proposed setup check is **Google Auth Platform → Audience → Test users** in the Android client's Cloud project: if the project is External / Testing, add the exact selected Google account, save and retry the normal consent flow. Google's Testing exception for basic identity does not cover the additional Drive scope. The project's current Audience settings, test-user change and successful retry have not been observed, so the test-user explanation remains a hypothesis rather than a confirmed root cause. Account/admin restrictions are other possible causes. See [setup and troubleshooting](ACCOUNTS.md#troubleshooting-error-403-access_denied), [Google Audience rules](https://support.google.com/cloud/answer/15549945?hl=en) and [error-code guidance](https://support.google.com/accounts/answer/16668185?hl=en).
-
-Live Google authorization, playlist upload/download and two-device convergence remain unresolved. No app code, OAuth scopes, client credentials or published release was changed for this documentation update; no account email or screenshot was copied into the repository.
+Separate Drive authorization, real playlist upload/download, account switching and two-device convergence remain unverified. No app code, OAuth scopes, credentials, source tag or published assets changed for this documentation update. See [release notes and acceptance matrix](releases/0.1.9.md) and [account setup](ACCOUNTS.md).
 
 ## Published Android 0.1.9 / code10 — 2026-10-27
 
@@ -24,7 +22,7 @@ Manual song and APK downloads now have separate Android dataSync foreground serv
 
 Executed: all **89 JVM tests** pass and application lint has **zero errors**. On dedicated API36 emulator-5556, real public code9 APK download finishes after Activity closure and screen-off; a separate cancellation check removes partial bytes. A real public Blender Foundation recording downloads after Activity closure/screen-off, passes complete-file integrity validation, then actual Media3 playback advances and seeks with remote opens blocked (**325.664 seconds**). Twelve targeted UI/security/navigation runner checks pass, including real drag gestures in normal/shuffled queues, repeat-all traversal, duplicates, stale drags, Profile, history and update dialogs; the optional externally prepared-APK argument check was skipped in this run.
 
-Logs: `build/0.1.9-final-validation.log`, `build/background-update-final-emulator.log`, `build/background-song-live-emulator.log`, `build/0.1.9-ui-final-emulator.log`. Tests preserve the emulator library outside owned fixtures; no phone install/reset or system installer approval occurred. Live Google consent, two-device sync, real phone/OEM/Doze behavior and metered-network transitions remain unverified. The final Profile/notification check also passes (`build/profile-notification-emulator.log`), including opening Downloads from a new intent after waiting for the navigation graph. Concurrent desktop work is excluded from this Android change.
+Logs: `build/0.1.9-final-validation.log`, `build/background-update-final-emulator.log`, `build/background-song-live-emulator.log`, `build/0.1.9-ui-final-emulator.log`. Tests preserve the emulator library outside owned fixtures; no phone install/reset or system installer approval occurred. At release test time, Google consent, two-device sync, phone/OEM/Doze behavior and metered-network transitions were unverified. Android sign-in was subsequently owner-confirmed above; Drive transfers remain pending. The final Profile/notification check also passes (`build/profile-notification-emulator.log`), including opening Downloads from a new intent after waiting for the navigation graph. Concurrent desktop work is excluded from this Android change.
 
 ## Published GitHub update — v0.1.8 / code9 — 2026-10-26
 

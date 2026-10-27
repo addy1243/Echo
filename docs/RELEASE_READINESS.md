@@ -1,14 +1,16 @@
-# GitHub update release — 0.1.9 / code10
+# Android release status
 
-Published [v0.1.9](https://github.com/addy1243/Echo/releases/tag/v0.1.9) with same-key `EchoMusic-10.apk`, version0.1.9/code10, SDK26 minimum:25430385bytes, SHA-256 `fbfbad12de1a5696503bc6a5491fcf181756986977a3e2e3c2997ae109815e29`. Original signing certificate SHA-256 remains `c71752f76fa5e39cc5c653688e7abfdbf108900fd6334202f4e641b7884531ad`.
+## Published: 0.1.9 / code10
 
-Background APK/manual-song downloads, real queue drag/drop and Profile are implemented. All89 JVM checks and application lint pass. Dedicated-emulator checks cover real GitHub background completion/cancellation, real screen-off song download/integrity/offline playback, queue gestures/shuffle/repeat/duplicates/stale actions, Profile/history/navigation and updater security. Notification navigation's startup race was fixed and the focused check passes. Matching GPL dependency-source packaging is required. See [current verification](INTEGRATION_STATUS.md).
+**[v0.1.9 is public and stable](https://github.com/addy1243/Echo/releases/tag/v0.1.9).** Public latest-release metadata and both uploaded artifact sizes/SHA-256 digests were rechecked during this post-release documentation update. Publication is complete.
 
-Google consent/two-device sync, phone/OEM/Doze behavior and system-installer acceptance remain unverified. Force-stop/reboot/range-resume support is not added. Concurrent desktop work is excluded from this Android release.
+The [complete 0.1.9 release record](releases/0.1.9.md) is the reference for downloads, installation, hashes, immutable source tag/commit, signing identity, feature changes, executed checks and known limits. Matching GPL and dependency sources accompany the APK; later documentation does not replace uploaded artifacts.
 
-The exact corresponding source ZIP is94034140bytes/SHA-256 `e903b5e00e7a3a530578c146b8073ca3459702065ba265e94f9248627fcad173`, containing401 entries and135 runtime component source records. Both uploaded asset sizes/digests were checked before publication. Public unauthenticated latest-release metadata confirmsv0.1.9. Three real code8→public-code10 updater checks passed in19.222 seconds, including background cancellation/completion and verified installer intent without installation. Log: `build/code10-public-update-emulator.log`.
+Release checks passed: 89 JVM tests, application lint with zero errors, real emulator queue/UI regressions, screen-off song download/integrity/offline playback and public code8→code10 background cancellation/download/installer-intent checks. Published code10 was installed in place on the emulator and passed Profile/notification navigation.
 
-## Previous published release — 0.1.8 / code9
+Post-release acceptance: **Android Google sign-in works**, owner-confirmed 2026-10-27. Separate Drive consent, real playlist transfers/two-device sync, phone/OEM/Doze behavior and normal system-installer completion remain unverified. Force-stop/reboot/range-resume support is not included; desktop development is separate.
+
+## Historical release — 0.1.8 / code9
 
 The owner authorized public GitHub updates and approved GPL-3.0-or-later on 2026-10-26. GitHub write access was verified privately through the configured Git credential helper. Credentials and private signing keys are never printed, committed or uploaded.
 
@@ -17,7 +19,7 @@ The owner authorized public GitHub updates and approved GPL-3.0-or-later on 2026
 
 **Live verification passed:** installed code8 downloaded the public code9 APK through the real updater, verified checksum/size/package/SDK/signer, staged it privately and returned the normal permission/installer intent. The installed version stayed8 because the test did not accept system installation. Log: build/release/live-github-update-emulator.log (one passing live scenario,7.36seconds). The final GPL code9 candidate also passed all five updater Android checks against code8 (build/release/gpl-updater-candidate-emulator.log). No phone install/reset or credential/signing-key publication occurred.
 
-## Release artifacts
+### Release artifacts
 
 - APK: build/release/EchoMusic-9.apk, package dev.echo.music, version0.1.8/code9, minimum SDK26.
 - APK SHA-256: a2daf451c21939144ef05a1a2479fa174444463f3608ccc1eb38f12a0eb33bc9.
@@ -25,13 +27,13 @@ The owner authorized public GitHub updates and approved GPL-3.0-or-later on 2026
 - Source: build/release/EchoMusic-9-source.zip was produced from the reviewed release commit by scripts/package_corresponding_source.py. It includes the exact Echo sources/build scripts, pinned NewPipe/desugaring repository sources, runtime dependency source archives and a URL/SHA-256 manifest. No caches, app-data captures or signing keys are included.
 - Preserved baseline: build/release/EchoMusic-8-baseline.apk, used only for isolated emulator upgrade checks.
 
-## Distribution resolution
+### Distribution resolution
 
 The original missing-license/Google-SDK compatibility issue was resolved with the owner's approved root LICENSE/COPYING grant and replacement of the bundled proprietary identity SDKs. Google authentication now delegates to Android AccountManager and the installed Google authenticator, verifies Google userinfo and separately requests Drive access. The Android package/signing OAuth registration remains required; no Web audience or secret is embedded. Live owner sign-in/consent/Drive transfers remain unverified and must not be claimed as validated.
 
 The final runtime inventory contains135 components with their actual artifact hashes and original licenses; no Google identity/credentials runtime SDK remains. The APK packages full GPL/Apache/Rhino/Protobuf/nanojson/desugaring terms plus69 original embedded legal notices. Settings → Licenses & source displays them. Third-party music/artwork is not relicensed by Echo's GPL grant.
 
-## Verification
+### Verification
 
 Build,86 JVM tests, debug lint and an unsigned minified-release/shrinking build passed. The published artifact is the same-key debug APK, not the unsigned release output. All eight platform-auth guard/profile/migration, license display, history, search/queue and sleep UI/service scenarios passed in targeted emulator checks; the notice test uses parent lazy-list scrolling to reach offscreen files. No real owner account selection or consent was automated.
 
@@ -39,7 +41,7 @@ Source input preflight and both script self-checks passed. Source packaging refu
 
 Logs: build/release/platform-auth-build.log, build/release/gpl-platform-final-build.log, build/release/gpl-final-validation.log, build/release/gpl-feature-emulator.log (seven pass; notice scrolling assertion superseded by build/release/notices-ui-emulator.log), and build/release/updater-emulator.log. Source and notice generation are documented in THIRD_PARTY_NOTICES.md.
 
-## Publication and live verification
+### Publication and live verification
 
 Create the stable/latest v0.1.8 release at the exact reviewed commit, upload EchoMusic-9.apk and matching EchoMusic-9-source.zip, and verify GitHub's public SHA-256/size metadata before making the release available. No token or signing key may be attached. The updater ignores drafts/prereleases/equal or older versions and verifies download bytes, package, SDK and signer before installer handoff.
 

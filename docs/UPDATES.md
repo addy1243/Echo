@@ -8,6 +8,8 @@ When a newer release is found, Echo offers **Update app** / **Later**, displays 
 
 Version0.1.9/code10 adds background update downloads. An installed older build must complete its existing update procedure once to obtain this behavior.
 
+See the [0.1.9 release record](releases/0.1.9.md) for downloads, hashes, installation and verification limits. Later documentation does not alter the published source tag or assets.
+
 ## Publishing a future update
 
 1. Increase the Android integer `versionCode` above the installed version. Current source defaults are code **10**, version **0.1.9**. `versionName` is the label; update ordering uses `versionCode`. Check the built APK's output metadata too: an older output directory may still contain an APK built with earlier version defaults.

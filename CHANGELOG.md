@@ -4,6 +4,11 @@ This file records development changes. A development build or an entry here does
 
 ## 0.1.9 / versionCode 10 — published 2026-10-27
 
+[Published release](https://github.com/addy1243/Echo/releases/tag/v0.1.9) · [Complete release record](docs/releases/0.1.9.md). Exact APK source: `2c32cb911541dd384f5abff11ff952cdc4a6dc8b`; later documentation does not replace published assets.
+
+- Validation: 89 JVM tests and application lint passed; real emulator checks cover queue gestures, background downloads, offline playback and public code10 updates. The published APK was installed in place on the dedicated emulator.
+- Post-release acceptance: the owner confirmed Android Google sign-in works on 2026-10-27. Drive playlist transfers and two-device sync remain unverified.
+
 - Drag upcoming queue rows to arrange real playback order, including shuffled and repeat-all queues. Current playback and duplicate occurrences are preserved; stale drags are rejected. Move up/down accessibility actions are available.
 - User-started app updates and manual song downloads continue in Android foreground services with progress/cancellation notifications and bounded screen-off wake locks. Song downloads show actual received bytes and percentages when totals are known. Notification taps open Downloads. Completion offers installation only through user action.
 - Added a Profile bottom tab with Google account/Drive playlist sync controls, local playlist count and account-specific device registrations checked during the last successful sync. Device registrations do not imply online presence.

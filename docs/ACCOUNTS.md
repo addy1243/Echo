@@ -18,25 +18,17 @@ Older SDK-based sessions require an explicit new account choice after upgrading 
 4. The Web client created earlier is retained as an owner reference in gradle.properties, but the platform flow does not use a Web audience, secret, browser redirect, Desktop client or loopback workaround. No additional redirect URL is required for this AccountManager integration.
 5. On an Android device with Google's account provider, explicitly select your account and approve identity/Drive access. Verify real authentication, revoked consent, switching accounts and two-device transfers before claiming live account sync is validated.
 
-The platform flow is documented by Google and Android, and deterministic profile/selection/migration checks are included. It still needs a fresh real-account grant on the owner's setup. A successful build or visible sign-in button does not prove Google's authenticator accepts the registered client. A device without the Google account provider can use Echo locally and export/import library backups instead.
+The platform flow is documented by Google and Android, with deterministic profile/selection/migration checks. The owner has confirmed real Android sign-in succeeds; separate Drive access and transfers still require live acceptance. A successful build or visible button alone does not establish authorization. Devices without Google's account provider can use Echo locally and export/import library backups.
+
+## Current verification status
+
+The owner confirmed on **2026-10-27** that Android Google sign-in works. The earlier `403: access_denied` screenshot records a prior failed attempt, not a current sign-in blocker. The exact cause and whether the suggested test-user change resolved it were not confirmed. Separate Drive consent, real playlist upload/download, account switching and two-device convergence remain unverified. See the [0.1.9 release record](releases/0.1.9.md).
 
 ## Troubleshooting: Error 403 `access_denied`
 
-On 2026-10-27 the owner reported Google's **Access blocked: Echo** screen with `403: access_denied`. The request details showed the registered Android client and `drive.appdata` alongside identity scopes. This establishes a failed live Google authorization attempt; it does not establish the cause or a successful Drive connection. Echo's client-side checks and emulator tests do not replace this live verification.
+For a future occurrence, inspect **Google Auth Platform → Audience** in the Android client's Cloud project. If it is External / Testing, add the selected account under **Test users → Add users**, save and retry normal consent from Profile. A missing test user is one possible cause; account-type and administrator restrictions can also cause this error. Check the full error message and existing Android package/signing registration before changing clients.
 
-A likely cause is an External project in Testing whose selected account is missing from the test-user list. Check this first:
-
-1. Open [Google Cloud Console](https://console.cloud.google.com/) and select the project containing the Android OAuth client shown in the error. Use the Android client's project, rather than assuming a separately created Web client belongs to the same project.
-2. Open **Google Auth Platform → Audience** and inspect the publishing status. If it is **Testing**, find **Test users → Add users**.
-3. Add the exact Google account selected in Echo and save. Repeat for each account used during testing.
-4. Close the Google error screen. Return to **Profile → Connect Drive / Sync now** and retry; if Echo is signed out, start with **Sign in with Google**. Approve the normal Google consent prompts.
-5. Confirm that authorization actually finishes, then verify a real playlist save/sync before marking the integration working. A saved console setting or an enabled button is not proof of authorization.
-
-Google exempts requests limited to basic identity scopes from the Testing allowlist requirement. Echo's separate Drive request includes `drive.appdata`, so that exception does not apply to this request. Testing grants for scopes beyond basic identity expire after seven days; a later consent prompt can therefore be expected. Keep Testing for the current setup check; switching to Production is not required to test an explicitly listed account. See [Google's Audience rules](https://support.google.com/cloud/answer/15549945?hl=en).
-
-If the account is already listed, inspect the full **Access blocked** message outside the request-details popup and confirm the selected Cloud project. Google also lists account-type and administrator restrictions as possible causes of this error; the screenshot alone cannot distinguish them. Recheck the Android package/signing SHA-1 against the installed APK using the owner setup above. Do not recreate the Web client or add browser redirect URLs as a speculative fix for the Android AccountManager flow. See [Google's error-code guidance](https://support.google.com/accounts/answer/16668185?hl=en).
-
-The test-user change and a successful retry have not yet been confirmed. Live account authorization and two-device Drive sync remain unresolved. No APK rebuild or app-data reset is needed merely to update the Cloud test-user list.
+Google exempts basic identity-only requests from Testing allowlist restrictions; the additional `drive.appdata` request does not qualify. Testing grants for scopes beyond basic identity expire after seven days. A Cloud test-user change alone requires no APK rebuild or app-data reset. References: [Audience rules](https://support.google.com/cloud/answer/15549945?hl=en), [error-code guidance](https://support.google.com/accounts/answer/16668185?hl=en).
 
 ## Sync behavior and data
 
