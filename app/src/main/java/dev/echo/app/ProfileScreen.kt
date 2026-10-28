@@ -16,7 +16,7 @@ import java.util.Date
 internal fun ProfileScreen(vm: EchoViewModel) {
     val email by vm.googleAccounts.email.collectAsStateWithLifecycle()
     val playlists by vm.playlists.collectAsStateWithLifecycle()
-    val report by vm.syncDeviceReport.collectAsStateWithLifecycle()
+    val lastSynced by vm.firebaseLastSynced.collectAsStateWithLifecycle()
     LazyColumn(Modifier.fillMaxSize().testTag("profile-screen"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Your profile", style = MaterialTheme.typography.headlineMedium) }
         item { AccountSection(vm) }
@@ -24,22 +24,20 @@ internal fun ProfileScreen(vm: EchoViewModel) {
             HorizontalDivider()
             Text("Your playlists", style = MaterialTheme.typography.titleLarge)
             Text("${playlists.size} playlists on this device")
-            Text(if (email == null) "Sign in and connect Drive to save playlists to your Google account."
-                else "Connect Drive / Sync now saves and merges your playlists with $email. Your local library remains on this device after signing out.", style = MaterialTheme.typography.bodySmall)
+            Text(if (email == null) "Sign in and connect Firebase to sync your library."
+                else "Connect Firebase / Sync now shares playlists, favorites and listening history with $email. Your local library remains after signing out.", style = MaterialTheme.typography.bodySmall)
         }
         item {
             HorizontalDivider()
-            Text("Devices with synced playlists", style = MaterialTheme.typography.titleLarge)
+            Text("Account sync", style = MaterialTheme.typography.titleLarge)
             when {
-                email == null -> Text("Sign in to view account device registrations.")
-                report == null -> Text("Device count is available after a successful Drive sync.")
+                email == null -> Text("Sign in to sync your library.")
+                lastSynced == null -> Text("No successful Firebase sync on this device yet.")
                 else -> {
-                    val verified = report!!
-                    Text("${verified.registeredDevices} synced ${if (verified.registeredDevices == 1) "device" else "devices"}", style = MaterialTheme.typography.titleMedium)
-                    Text("Last checked ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(verified.checkedAt))}", style = MaterialTheme.typography.bodySmall)
+                    Text("Last synced ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(lastSynced!!))}", style = MaterialTheme.typography.bodySmall)
                 }
             }
-            Text("Counts Echo installations with saved playlist snapshots in this account, including this installation after sync. Devices may be offline, and reinstalling Echo creates a separate registration. The count updates after a successful sync.", style = MaterialTheme.typography.bodySmall)
+            Text("Live device status and remote playback controls are separate features and aren't available yet. A saved library does not mean another device is online.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

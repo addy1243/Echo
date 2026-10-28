@@ -35,6 +35,7 @@ class GoogleAccounts @Inject constructor(@ApplicationContext private val context
     // SDK-based sessions need an explicit account choice to grant platform account visibility.
     private val _email = MutableStateFlow(prefs.getString("email", null).takeIf { prefs.contains("account_name") })
     val email = _email.asStateFlow()
+    val subject: String? get() = prefs.getString("subject", null)
     private val _automatic = MutableStateFlow(_email.value != null && prefs.getBoolean(syncKey(), false))
     val automatic = _automatic.asStateFlow()
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
@@ -49,7 +50,7 @@ class GoogleAccounts @Inject constructor(@ApplicationContext private val context
         authorization.accessToken?.let { accessToken ->
             val profile = profile(accessToken)
             check(prefs.edit().putString("email", profile.email).putString("subject", profile.subject)
-                .putString("account_name", account.name).putBoolean("sync:${profile.email}", false).commit()) { "Could not save the Google account" }
+                .putString("account_name", account.name).putBoolean("firebase-sync:${profile.email}", false).commit()) { "Could not save the Google account" }
             _email.value = profile.email
             _automatic.value = false
         }
@@ -73,6 +74,17 @@ class GoogleAccounts @Inject constructor(@ApplicationContext private val context
         check(_email.value != null) { "Sign in with Google first" }
         val account = Account(requireNotNull(prefs.getString("account_name", null)), "com.google")
         val authorization = token(account, "$EMAIL_SCOPE https://www.googleapis.com/auth/drive.appdata")
+        authorization.accessToken?.let {
+            val profile = profile(it)
+            check(profile.subject == prefs.getString("subject", null) && profile.email == _email.value) { "Google account changed. Sign out and choose the account again." }
+        }
+        return authorization
+    }
+
+    suspend fun authorizeIdentity(): GoogleAuthorization {
+        check(_email.value != null) { "Sign in with Google first" }
+        val account = Account(requireNotNull(prefs.getString("account_name", null)), "com.google")
+        val authorization = token(account, EMAIL_SCOPE)
         authorization.accessToken?.let {
             val profile = profile(it)
             check(profile.subject == prefs.getString("subject", null) && profile.email == _email.value) { "Google account changed. Sign out and choose the account again." }
@@ -109,7 +121,7 @@ class GoogleAccounts @Inject constructor(@ApplicationContext private val context
         }
     }
 
-    private fun syncKey() = "sync:${_email.value.orEmpty()}"
+    private fun syncKey() = "firebase-sync:${_email.value.orEmpty()}"
     private companion object { const val EMAIL_SCOPE = "https://www.googleapis.com/auth/userinfo.email" }
 }
 

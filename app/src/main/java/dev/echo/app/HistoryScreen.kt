@@ -59,7 +59,7 @@ internal fun HistoryScreen(vm: EchoViewModel) {
     if (confirmClear) AlertDialog(
         onDismissRequest = { confirmClear = false },
         title = { Text("Clear listening history?") },
-        text = { Text("This removes listening events and resets learned preferences on this device. Your playlists and likes are kept.") },
+        text = { Text("This removes listening events and resets learned preferences. If you use Firebase sync, clearing is shared with your account at the next sync. Your playlists and likes are kept.") },
         confirmButton = { TextButton(onClick = { confirmClear = false; vm.runAction("Listening history cleared") { vm.library.clearListeningHistory() } }) { Text("Clear") } },
         dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel") } },
     )

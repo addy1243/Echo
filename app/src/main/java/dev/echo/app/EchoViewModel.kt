@@ -61,14 +61,15 @@ class EchoViewModel @Inject constructor(
     val sleepTimer: dev.echo.playback.SleepTimerController,
     val offline: dev.echo.data.offline.OfflineRepository,
     val googleAccounts: dev.echo.app.account.GoogleAccounts,
-    private val driveSync: dev.echo.app.account.DrivePlaylistSync,
+    private val firebaseSync: dev.echo.app.account.FirebaseAccountSync,
 ) : ViewModel() {
     internal var requestedDownloads by mutableStateOf(false)
     val offlineSongs = offline.songs
     val sleepTimerRemainingMs = sleepTimer.remainingMs
     fun setSleepTimer(minutes: Int) { sleepTimer.start(minutes) }
     fun cancelSleepTimer() { sleepTimer.cancel() }
-    val syncDeviceReport = driveSync.deviceReport.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    val firebaseLastSynced = firebaseSync.lastSynced.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    val firebaseConfigured: Boolean get() = dev.echo.data.firebase.EchoFirebaseProject.configured
     val offlineSettings = offline.settings
     val tracks = library.tracks.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val playlists = library.playlists.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -128,10 +129,11 @@ class EchoViewModel @Inject constructor(
             driveAccount = null
             driveResolution = authorization.resolution
             accountStatus = "Approve Google account verification to sign in."
-        } else accountStatus = "Signed in. Connect Drive to save and sync playlists."
+        } else accountStatus = "Signed in. Enable Firebase sync to share playlists, favorites and history."
     }
     fun signOutGoogle() = accountAction {
         pendingGoogleAccount = null; driveAccount = null; driveResolution = null; googleAccountChoice = null
+        firebaseSync.signOut(googleAccounts.email.value)
         googleAccounts.signOut()
         accountStatus = "Signed out. This device's library and downloads were kept."
     }
@@ -143,21 +145,21 @@ class EchoViewModel @Inject constructor(
         if (accountBusy || pendingGoogleAccount != null || driveAccount != null || googleAccountChoice != null || driveResolution != null ||
             (!manual && !googleAccounts.automatic.value)) return
         accountAction {
-            check(!offline.settings.value.offlineOnly) { "Turn off Offline mode to sync playlists" }
+            check(!offline.settings.value.offlineOnly) { "Turn off Offline mode to sync your library" }
             val email = googleAccounts.email.value ?: error("Sign in first")
-            val authorization = googleAccounts.authorize()
+            val authorization = googleAccounts.authorizeIdentity()
             if (authorization.resolution != null) {
                 if (manual) {
                     driveAccount = email
                     driveResolution = authorization.resolution
-                    accountStatus = "Approve Google Drive access to sync playlists."
+                    accountStatus = "Approve Google account access to connect Firebase."
                 } else {
                     googleAccounts.setAutomatic(false)
-                    accountStatus = "Connect Drive in Profile to resume automatic sync."
+                    accountStatus = "Connect Firebase in Profile to resume automatic sync."
                 }
             } else {
                 check(googleAccounts.email.value == email) { "Account changed; retry sync" }
-                accountStatus = driveSync.synchronize(requireNotNull(authorization.accessToken), email)
+                accountStatus = firebaseSync.synchronize(requireNotNull(authorization.accessToken), email)
                 loadedPlaylistId?.let(::loadPlaylist)
             }
         }
@@ -169,16 +171,16 @@ class EchoViewModel @Inject constructor(
             check(approved) { "Google sign-in cancelled. Local data was kept." }
             val authorization = googleAccounts.signIn(signIn)
             check(authorization.resolution == null && authorization.accessToken != null) { "Google authorization was not granted. Check the Android OAuth registration and try again." }
-            accountStatus = "Signed in. Connect Drive to save and sync playlists."
+            accountStatus = "Signed in. Enable Firebase sync to share playlists, favorites and history."
             return@accountAction
         }
-        val expected = driveAccount.also { driveAccount = null } ?: error("Drive request expired; try again")
-        check(approved) { "Drive connection cancelled. Local playlists were kept." }
-        check(!offline.settings.value.offlineOnly) { "Turn off Offline mode to sync playlists" }
-        val result = googleAccounts.authorize()
-        check(result.resolution == null && result.accessToken != null) { "Drive permission was not granted. Check Android OAuth registration and try again." }
+        val expected = driveAccount.also { driveAccount = null } ?: error("Account request expired; try again")
+        check(approved) { "Firebase connection cancelled. Local data was kept." }
+        check(!offline.settings.value.offlineOnly) { "Turn off Offline mode to sync your library" }
+        val result = googleAccounts.authorizeIdentity()
+        check(result.resolution == null && result.accessToken != null) { "Google account permission was not granted. Check Android OAuth registration and try again." }
         check(googleAccounts.email.value == expected) { "Account changed; retry sync" }
-        accountStatus = driveSync.synchronize(requireNotNull(result.accessToken), expected)
+        accountStatus = firebaseSync.synchronize(requireNotNull(result.accessToken), expected)
         loadedPlaylistId?.let(::loadPlaylist)
     }
     fun cancelAccountOperation() { accountJob?.cancel(); accountStatus = "Account operation cancelled." }

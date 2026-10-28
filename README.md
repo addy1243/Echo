@@ -2,6 +2,8 @@
 
 Native Kotlin Android personal music player. Android 8.0+; Kotlin, Compose Material 3, Room, Hilt, Media3 and DataStore. Open this folder in Android Studio.
 
+A **Windows desktop development preview** lives in `desktop`: desktop navigation, YouTube/local playback, Smart shuffle, Spotify imports/recording matching, discovery, playlists, favorites, history, private offline downloads and daily/manual Windows update checks. It requires installed 64-bit VLC 3 and uses Android's Echo icon. Normal Android-emulator sign-in/sync and canonical desktop/Firebase library equality passed; automatic library sync is enabled while both apps are open. No physical phone was updated. See [desktop status](docs/DESKTOP.md), [Firebase setup](docs/FIREBASE.md), [Windows updates](docs/DESKTOP_UPDATES.md) and [connected audio design](docs/DESKTOP_SYNC_DESIGN.md). Connected playback remains pending.
+
 Echo Music's original source is licensed under GPL-3.0-or-later; see [LICENSE](LICENSE), [COPYING](COPYING) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms and matching source. Settings → Licenses & source displays the packaged notices.
 
 ## Latest Android release: 0.1.9
@@ -11,6 +13,8 @@ Echo Music's original source is licensed under GPL-3.0-or-later; see [LICENSE](L
 Published 27 October 2026, versionCode10, Android8.0+. Adds queue drag/drop, background manual song/app-update downloads with visible progress, and Profile. Google sign-in is owner-confirmed working; Drive transfers and two-device sync remain unverified. The APK uses the original signing identity and includes a matching GPL source bundle.
 
 ## Android features
+
+The working tree migrates account sync to Firebase after separate consent, adding favorites/history and account-wide clear/delete semantics. The published 0.1.9 APK still uses the Drive behavior documented below; rebuilding source does not update an installed phone. See [current account migration](docs/FIREBASE.md).
 
 In a playlist, **Add playlist to queue** offers Playlist order, Shuffle or Smart shuffle and preserves existing playback/upcoming songs. Search result taps play just the selected song, then continue the prior queue. Shuffle starts from a random playable occurrence, with every occurrence reachable in a new repeat-off session. Smart shuffle keeps active playback or chooses a random anchor for a fresh session. The full player also offers a **Sleep timer** (15/30/45/60 minutes) that pauses without clearing the queue and runs while the player screen is closed. See [queue behavior](docs/QUEUE_ACTIONS.md) and [sleep timer](docs/SLEEP_TIMER.md).
 

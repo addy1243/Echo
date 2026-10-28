@@ -1,4 +1,9 @@
-# Android release status
+# Release status
+
+## Prepared: Android 0.2.0/code11 and Windows 0.2.0
+
+The owner authorized the combined GitHub release. Final application tests/builds, same-key Android upgrade-candidate checks and native Windows MSI identity checks pass. Matching desktop/Java/native sources and legal notices are being sealed into the corresponding-source archive. Publication and public download checks remain pending. See [the 0.2.0 record](releases/0.2.0.md). The older published release records below remain unchanged.
+
 
 ## Published: 0.1.9 / code10
 

@@ -1,5 +1,8 @@
 # GitHub updates
 
+Android source defaults are now **0.2.0/code11**, prepared alongside Windows0.2.0 for the owner-authorized `v0.2.0` release. Publication is pending; see [the combined release record](releases/0.2.0.md) and [Windows update contract](DESKTOP_UPDATES.md). Earlier records below describe already-published Android releases.
+
+
 Published stable release: [Echo Music 0.1.9 / code10](https://github.com/addy1243/Echo/releases/tag/v0.1.9), with same-key `EchoMusic-10.apk` and exact corresponding source at commit `2c32cb911541dd384f5abff11ff952cdc4a6dc8b`. The real updater on the code8 emulator passed public code10 background completion, cancellation, checksum/identity verification and normal installer handoff without accepting installation. See [CHANGELOG.md](../CHANGELOG.md) and [integration evidence](INTEGRATION_STATUS.md).
 
 Echo checks the latest published stable release from `addy1243/Echo` once per 24 hours at startup. Settings → Check for updates checks immediately. No notification is shown when there is no newer compatible asset. Drafts and prereleases are ignored. A public repository is required; no GitHub token or client secret is included in the APK.
@@ -12,7 +15,7 @@ See the [0.1.9 release record](releases/0.1.9.md) for downloads, hashes, install
 
 ## Publishing a future update
 
-1. Increase the Android integer `versionCode` above the installed version. Current source defaults are code **10**, version **0.1.9**. `versionName` is the label; update ordering uses `versionCode`. Check the built APK's output metadata too: an older output directory may still contain an APK built with earlier version defaults.
+1. Increase the Android integer `versionCode` above the installed version. Current source defaults are code **11**, version **0.2.0**. `versionName` is the label; update ordering uses `versionCode`. Check the built APK's output metadata too: an older output directory may still contain an APK built with earlier version defaults.
 2. Build/sign the APK with the **same signing certificate** as the installed app. Keep your key safe and outside Git. A fresh CI-generated debug key will not update an existing installation. The current preview APK is debug-signed; a release signed with a different key cannot replace it in place. Export the library before any intentional signing-key migration; this updater does not uninstall or erase your library.
 3. Rename the APK to **`EchoMusic-<versionCode>.apk`**, for example `EchoMusic-10.apk` for an update to code 9.
 4. Upload it as a release asset under [addy1243/Echo Releases](https://github.com/addy1243/Echo/releases), add notes, and publish as the latest stable release. Source ZIP/TAR files are not APK updates. GitHub's asset metadata must include its SHA-256 digest; if an older asset lacks that digest, upload it again.

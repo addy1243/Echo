@@ -12,7 +12,9 @@
 | Sol | Playlist-file import, recording selection, discovery, smart shuffle and new-music searches | Existing Room/YouTube/Media3 paths | Implemented; 39 app/data JVM, 3 data emulator, 2 UI and 1 live discovery checks pass |
 | Sol | Public Spotify share-link preview/import | Canonical public pages; explicit partial/unknown count preview | Implemented; 41 JVM, 3 parser/live data and 3 UI/live checks pass; code6 installed in place |
 | Sol | Compact tabs, Home routing fix, immersive player, playback-ordered queue, recording-based smart shuffle and auto matching | Existing controller/provider/Room paths | Implemented; 45 JVM, 10 distinct app and 5 data scenarios pass; code7 installed in place |
-| Deferred | Laptop application | User's later-priority instruction | Pending |
+| Orchestrator + desktop agents | Windows playback, desktop navigation, imports/matching, offline downloads, discovery and Android-matching icon | Shared core/provider sources; external VLC3 | Implemented in preview; native playback and 88 desktop JVM checks passed before final release fixes; detailed limits in DESKTOP.md |
+| Orchestrator + account/sync agents | Coordinated Android/desktop Firebase library sync and single-project OAuth | Owner configuration/consent in echo-85da4 | Normal emulator sign-in and Android/desktop/cloud canonical equality passed; automatic sync enabled while open; physical phone untouched |
+| Orchestrator + updater/release agents | Android0.2.0/code11 + Windows0.2.0 combined release, MSI updater, dependency notices and exact source | Existing signing key, verified MSI identity, GPL runtime/source, final candidate checks | Owner authorized GitHub publication; preparation pending. Existing preview update/native checks passed; no installer accepted |
 | YouTube orchestration + provider/playback/UI agents | Key-free search, lazy native streaming, regressions and maintenance docs | NewPipeExtractor + existing Media3/Room | Implemented; live emulator checks passed |
 | External verification | Spotify authorization, Commons streaming, real car host | Account registration/provider availability/DHU | Pending external checks |
 

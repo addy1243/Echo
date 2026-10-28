@@ -8,4 +8,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "EchoMusic"
-include(":core", ":data", ":playback", ":app")
+include(":core", ":data", ":playback", ":app", ":desktop")

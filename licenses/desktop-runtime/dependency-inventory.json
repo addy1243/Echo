@@ -1,0 +1,810 @@
+{
+  "format": "echo-runtime-licenses",
+  "version": 1,
+  "components": [
+    {
+      "coordinate": "androidx.annotation:annotation-jvm:1.9.1",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "annotation-jvm-1.9.1.jar",
+      "sha256": "1e343917ebf27ba96fe4dc52b1cad7fd32b738fbc6355bb6cd5b3b305d7212d0",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://cs.android.com/androidx/platform/frameworks/support",
+      "embeddedNoticeEntries": [
+        "META-INF/androidx/annotation/annotation/LICENSE.txt"
+      ]
+    },
+    {
+      "coordinate": "androidx.arch.core:core-common:2.2.0",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "core-common-2.2.0.jar",
+      "sha256": "65308a06b1c00ee186cb9e19321383f043b993813f1522c47f4a3e3303bdba41",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://cs.android.com/androidx/platform/frameworks/support",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "androidx.collection:collection-jvm:1.5.0",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "collection-jvm-1.5.0.jar",
+      "sha256": "70b35924e4babcdffa37d0e575ee039c56a2d97123342624c48b603233704341",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://cs.android.com/androidx/platform/frameworks/support",
+      "embeddedNoticeEntries": [
+        "META-INF/androidx/collection/collection/LICENSE.txt"
+      ]
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-common-jvm:2.8.5",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "lifecycle-common-jvm-2.8.5.jar",
+      "sha256": "61c873a7327c946ec033c310bb98f3f92eeabcede0e1a5200ab8a1896483c7bf",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://cs.android.com/androidx/platform/frameworks/support",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-runtime-desktop:2.8.5",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "lifecycle-runtime-desktop-2.8.5.jar",
+      "sha256": "10bfe53bb2752f967751a5102cdb785eeea54e1d4df6bde88fb0f50b0a49156c",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://cs.android.com/androidx/platform/frameworks/support",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "androidx.lifecycle:lifecycle-viewmodel-desktop:2.8.5",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "lifecycle-viewmodel-desktop-2.8.5.jar",
+      "sha256": "21ec0e77dc02ed0d6bfe6f3cba7f43e25400446d89ded8568ee165437e0c1922",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://cs.android.com/androidx/platform/frameworks/support",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "com.github.TeamNewPipe:nanojson:e9d656ddb49a412a5a0a5d5ef20ca7ef09549996",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "nanojson-e9d656ddb49a412a5a0a5d5ef20ca7ef09549996.jar",
+      "sha256": "d495881a322b3c72e5d43284afd7d7021520028ca8b7c6ba861e3fd8d90614d5",
+      "licenses": [
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/TeamNewPipe/nanojson/tree/e9d656ddb49a412a5a0a5d5ef20ca7ef09549996",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "com.github.teamnewpipe:NewPipeExtractor:v0.26.5",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "NewPipeExtractor-v0.26.5.jar",
+      "sha256": "923bf0a60938d570ad176ed7b08fa9fec7d0772d7a386ca89a2dd3b9212979c7",
+      "licenses": [
+        {
+          "name": "GNU General Public License v3.0 or later",
+          "url": "https://www.gnu.org/licenses/gpl-3.0.txt"
+        }
+      ],
+      "source": "https://github.com/TeamNewPipe/NewPipeExtractor",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "com.google.code.findbugs:jsr305:3.0.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "jsr305-3.0.2.jar",
+      "sha256": "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://code.google.com/p/jsr-305/",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "com.google.protobuf:protobuf-javalite:4.35.1",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "protobuf-javalite-4.35.1.jar",
+      "sha256": "45d3769189888e491ab7d58125f2014c2a86fb8104c7aa3878c723943fce7a14",
+      "licenses": [
+        {
+          "name": "BSD-3-Clause",
+          "url": "https://github.com/protocolbuffers/protobuf/blob/v35.1/LICENSE"
+        }
+      ],
+      "source": "https://github.com/protocolbuffers/protobuf/tree/v35.1",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "com.squareup.okhttp3:okhttp:4.12.0",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "okhttp-4.12.0.jar",
+      "sha256": "b1050081b14bb7a3a7e55a4d3ef01b5dcfabc453b4573a4fc019767191d5f4e0",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/square/okhttp",
+      "embeddedNoticeEntries": [
+        "okhttp3/internal/publicsuffix/NOTICE"
+      ]
+    },
+    {
+      "coordinate": "com.squareup.okio:okio-jvm:3.6.0",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "okio-jvm-3.6.0.jar",
+      "sha256": "67543f0736fc422ae927ed0e504b98bc5e269fda0d3500579337cb713da28412",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/square/okio/",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "javax.inject:javax.inject:1",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "javax.inject-1.jar",
+      "sha256": "91c77044a50c481636c32d916fd89c9118a72195390452c81065080f957de7ff",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "http://code.google.com/p/atinject/source/checkout",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "net.java.dev.jna:jna-jpms:5.16.0",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "jna-jpms-5.16.0.jar",
+      "sha256": "f4b68ffc6958c3ce3463fb908621595623db85c494bc44c7fb6f5e77f9a41804",
+      "licenses": [
+        {
+          "name": "LGPL-2.1-or-later",
+          "url": "https://www.gnu.org/licenses/old-licenses/lgpl-2.1"
+        },
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/java-native-access/jna",
+      "embeddedNoticeEntries": [
+        "META-INF/LICENSE"
+      ]
+    },
+    {
+      "coordinate": "net.java.dev.jna:jna-platform-jpms:5.16.0",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "jna-platform-jpms-5.16.0.jar",
+      "sha256": "49ad273625a7ce5dc106259cdb88fdb186f319b54d2cacf37f4fe0896a7a6c19",
+      "licenses": [
+        {
+          "name": "LGPL-2.1-or-later",
+          "url": "https://www.gnu.org/licenses/old-licenses/lgpl-2.1"
+        },
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/java-native-access/jna",
+      "embeddedNoticeEntries": [
+        "META-INF/LICENSE"
+      ]
+    },
+    {
+      "coordinate": "org.jetbrains:annotations:23.0.0",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "annotations-23.0.0.jar",
+      "sha256": "7b0f19724082cbfcbc66e5abea2b9bc92cf08a1ea11e191933ed43801eb3cd05",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/java-annotations",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose-desktop:2.8.4",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "lifecycle-runtime-compose-desktop-2.8.4.jar",
+      "sha256": "c1e51a246e69e237e87d289be08bebd8d406ffe9ff60a125e8f2072db6119966",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.animation:animation-core-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "animation-core-desktop-1.8.2.jar",
+      "sha256": "710eeb91fd8552e10b67ecae12b1dc31ab317eb6e5bceb04d4c21e3f34252407",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.animation:animation-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "animation-desktop-1.8.2.jar",
+      "sha256": "80af3d6bf305f0b6c0cfbe8175ae7ec46bf7b3027a9bac1616e05b0e21422432",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.desktop:desktop-jvm:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "desktop-jvm-1.8.2.jar",
+      "sha256": "93cd32edc75d2f7d905fdc7cfd8d448b9a4bbb1884ed1832f886dc9e03f53482",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.foundation:foundation-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "foundation-desktop-1.8.2.jar",
+      "sha256": "0715dc7efb3ea6d5174a849214a8212aaac4989c3e31be83da82d32712a54f9e",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.foundation:foundation-layout-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "foundation-layout-desktop-1.8.2.jar",
+      "sha256": "979636876cabd6bbcd7fbb76f0311e80b1b319b420e057e468722180e9ca0079",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.material:material-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "material-desktop-1.8.2.jar",
+      "sha256": "d5be76c9bb18a0d132e1a07ff2d1f5eab663a3a1945d3687c6e9e050f791eda1",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.material:material-ripple-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "material-ripple-desktop-1.8.2.jar",
+      "sha256": "8d49477de3571a3066abc48cfe8a1b1289bfe667c4224d10c695e07b5b2f9875",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.material3:material3-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "material3-desktop-1.8.2.jar",
+      "sha256": "3e0168b5af7bacdbacc41e9d36ff4f6d39a8b989fd63b68e3b305fb6a4d2ab58",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.runtime:runtime-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "runtime-desktop-1.8.2.jar",
+      "sha256": "97fde7440d73405335528f53acd4a0dc60eecfdbb21e67dbc166d5fbcbc2e3f6",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.runtime:runtime-saveable-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "runtime-saveable-desktop-1.8.2.jar",
+      "sha256": "ab2236f7b612a176fe3209c3d97fbaeb3831112c0f41ddc659fcb77762faee18",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.ui:ui-backhandler-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "ui-backhandler-desktop-1.8.2.jar",
+      "sha256": "a45b9fd3a97c60a36dac7d218f290d127f9e557e4d519ef6134d7c23b96e5991",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.ui:ui-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "ui-desktop-1.8.2.jar",
+      "sha256": "1a4a6eb7b1e9ea7c58a2c755a583516a28d2bd6073a42e575fe856d0214b6328",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.ui:ui-geometry-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "ui-geometry-desktop-1.8.2.jar",
+      "sha256": "5aaf8b78bed6e56b74ee893172cce2e316813b61d8a22cddc0587a527c5caa27",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.ui:ui-graphics-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "ui-graphics-desktop-1.8.2.jar",
+      "sha256": "3fc481656c6c9685cf593a9be822c5759b7008acc7395875caf6e2ee5a4e376c",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.ui:ui-text-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "ui-text-desktop-1.8.2.jar",
+      "sha256": "79fcaf9737dca385e46bc6f09d078f2e6305524891fee539c31c66d3c18353e7",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.ui:ui-tooling-preview-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "ui-tooling-preview-desktop-1.8.2.jar",
+      "sha256": "7a8862ad911984ff751d0499c3223e6a0c71a821bcb75a99f66964eedaa67d78",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.ui:ui-unit-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "ui-unit-desktop-1.8.2.jar",
+      "sha256": "296d23deaa78b508cf95d14cf5bda58a4f3ad5b42d85fcc8becf6e12ffbd037e",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.ui:ui-util-desktop:1.8.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "ui-util-desktop-1.8.2.jar",
+      "sha256": "e3b1c439b4ea80285be90eaed8e7056437f671cfafe4b18a3a9cb5387c80be4a",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.1.21",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "kotlin-stdlib-2.1.21.jar",
+      "sha256": "263bdc679e1f62012db7b091796279b6d71cf36f4797a98ff1ace05835f201c8",
+      "licenses": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/kotlin",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.1.21",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "kotlin-stdlib-jdk7-2.1.21.jar",
+      "sha256": "966846172e1052cb5b34d7b34647a64799b33f6da816509f7825c56f55895234",
+      "licenses": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/kotlin",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.1.21",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "kotlin-stdlib-jdk8-2.1.21.jar",
+      "sha256": "87b4f956de27401446227e474ac7a31acff0d0a8087160c54288c1e6f46a67e6",
+      "licenses": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/kotlin",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:atomicfu-jvm:0.23.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "atomicfu-jvm-0.23.2.jar",
+      "sha256": "101ff43ff563fca167af5ade98c3b69bf569010eab745013b84d8955034d3b3c",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/Kotlin/kotlinx.atomicfu",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "kotlinx-coroutines-core-jvm-1.10.2.jar",
+      "sha256": "5ca175b38df331fd64155b35cd8cae1251fa9ee369709b36d42e0a288ccce3fd",
+      "licenses": [
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/Kotlin/kotlinx.coroutines",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-datetime-jvm:0.6.0",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "kotlinx-datetime-jvm-0.6.0.jar",
+      "sha256": "517a71e2ef300af8b375c5d6ed49941c7297c8deece6bdb2bb1a28a7f4bc4b58",
+      "licenses": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/Kotlin/kotlinx-datetime",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.skiko:skiko-awt:0.9.4.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "skiko-awt-0.9.4.2.jar",
+      "sha256": "7d0c61ad7429d2f9c16da18cb408b93c83a23bd884e7b25d20225c123b14590b",
+      "licenses": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://www.github.com/JetBrains/skiko",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.skiko:skiko-awt-runtime-windows-x64:0.9.4.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "skiko-awt-runtime-windows-x64-0.9.4.2.jar",
+      "sha256": "fc6b476a4f46659f95390f4c65ad547ecafb6c10c177e0a45d5f6d1db12203ec",
+      "licenses": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://www.github.com/JetBrains/skiko",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.json:json:20240303",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "json-20240303.jar",
+      "sha256": "3cf6cd6892e32e2b4c1c39e0f52f5248a2f5b37646fdfbb79a66b46b618414ed",
+      "licenses": [
+        {
+          "name": "Public Domain",
+          "url": "https://github.com/stleary/JSON-java/blob/master/LICENSE"
+        }
+      ],
+      "source": "https://github.com/douglascrockford/JSON-java.git",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jsoup:jsoup:1.22.2",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "jsoup-1.22.2.jar",
+      "sha256": "596785996d3c6df16f544c232d10a9a1d88783b2a4740cf5251cb616f2be704d",
+      "licenses": [
+        {
+          "name": "The MIT License",
+          "url": "https://jsoup.org/license"
+        }
+      ],
+      "source": "https://github.com/jhy/jsoup",
+      "embeddedNoticeEntries": [
+        "META-INF/jsoup/LICENSE"
+      ]
+    },
+    {
+      "coordinate": "org.mozilla:rhino:1.8.1",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "rhino-1.8.1.jar",
+      "sha256": "98a06d42bdd69da15bf9c2a7812b4cfe648ca9e64fe8baaeb502a32b0ed2c8ac",
+      "licenses": [
+        {
+          "name": "Mozilla Public License, Version 2.0",
+          "url": "http://www.mozilla.org/MPL/2.0/index.txt"
+        }
+      ],
+      "source": "git@github.com:mozilla/rhino.git",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.mozilla:rhino-engine:1.8.1",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "rhino-engine-1.8.1.jar",
+      "sha256": "ff38ad60aa32a23942f60242a433a2583a5407841745510754a43e0e61dd95cf",
+      "licenses": [
+        {
+          "name": "Mozilla Public License, Version 2.0",
+          "url": "http://www.mozilla.org/MPL/2.0/index.txt"
+        }
+      ],
+      "source": "git@github.com:mozilla/rhino.git",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "uk.co.caprica:vlcj:4.12.1",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "vlcj-4.12.1.jar",
+      "sha256": "02335d28587f48b38b3a514f188469eaa019dd5bbe900b5b6828a3751f28a6dc",
+      "licenses": [
+        {
+          "name": "GPL v3",
+          "url": "http://www.gnu.org/licenses/gpl-3.0.html"
+        }
+      ],
+      "source": "git@github.com:caprica/vlcj.git",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "uk.co.caprica:vlcj-natives:4.12.0",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "vlcj-natives-4.12.0.jar",
+      "sha256": "a40d0e22a86555de3d00da9fe3c440b23246644d9e2b0f30e3e8c7c96284b93d",
+      "licenses": [
+        {
+          "name": "GPL v3",
+          "url": "http://www.gnu.org/licenses/gpl-3.0.html"
+        }
+      ],
+      "source": "git@github.com:caprica/vlcj-natives.git",
+      "embeddedNoticeEntries": []
+    }
+  ]
+}

@@ -27,6 +27,7 @@ dependencies {
     implementation(libs.retrofit)
     implementation(libs.okhttp)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
     testImplementation(libs.coroutines.test)
     androidTestImplementation(libs.androidx.test)
     androidTestImplementation(libs.androidx.runner)

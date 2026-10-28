@@ -1,0 +1,23 @@
+import groovy.json.JsonOutput
+
+// Inventory the resolved Windows runtime, including its native Skiko/JNA artifacts.
+gradle.projectsEvaluated {
+    def desktop = gradle.rootProject.project(':desktop')
+    desktop.tasks.register('writeDesktopRuntimeLicenseInputs') {
+        doLast {
+            def rows = []
+            desktop.configurations.getByName('runtimeClasspath').incoming.artifactView {
+                componentFilter { id -> id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier }
+            }.artifacts.artifacts.each { artifact ->
+                def id = artifact.id.componentIdentifier
+                rows << [configuration: 'desktopRuntimeClasspath', group: id.group, module: id.module,
+                         version: id.version, file: artifact.file.absolutePath,
+                         extension: artifact.file.name.tokenize('.').last()]
+            }
+            def output = new File(gradle.rootProject.layout.buildDirectory.get().asFile, 'desktop-runtime-license-inputs.json')
+            output.parentFile.mkdirs()
+            output.text = JsonOutput.prettyPrint(JsonOutput.toJson(rows))
+            println "Desktop runtime license inputs: ${output}"
+        }
+    }
+}

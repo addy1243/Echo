@@ -53,24 +53,25 @@ import kotlinx.coroutines.delay
     val automatic by vm.googleAccounts.automatic.collectAsStateWithLifecycle()
     var confirmSync by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Google account & playlist sync", style = MaterialTheme.typography.titleLarge)
+        Text("Google account & library sync", style = MaterialTheme.typography.titleLarge)
         Text(email ?: "Using this device without an account")
         if (email == null) {
             Button(enabled = !vm.accountBusy, onClick = vm::signInGoogle) { Text("Sign in with Google") }
             Text("Uses the Google account provider installed on this device.", style = MaterialTheme.typography.bodySmall)
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(enabled = !vm.accountBusy, onClick = { confirmSync = true }) { Text("Connect Drive / Sync now") }
+                OutlinedButton(enabled = !vm.accountBusy && vm.firebaseConfigured, onClick = { confirmSync = true }) { Text("Connect Firebase / Sync now") }
                 TextButton(enabled = !vm.accountBusy, onClick = vm::signOutGoogle) { Text("Sign out") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Automatic playlist sync", modifier = Modifier.weight(1f))
-                Switch(checked = automatic, enabled = !vm.accountBusy, onCheckedChange = {
+                Text("Automatic library sync", modifier = Modifier.weight(1f))
+                Switch(checked = automatic, enabled = !vm.accountBusy && vm.firebaseConfigured, onCheckedChange = {
                     if (it) confirmSync = true else vm.setAutomaticSync(false)
                 })
             }
         }
-        Text("Your local library stays on this device when you sign out. Connecting an account saves this device's playlists privately to its Drive and merges playlists from your other Echo devices. Conflicting edits become separate copies. Songs, likes, listening logs, downloads and local file paths aren't uploaded.", style = MaterialTheme.typography.bodySmall)
+        Text("Firebase sync shares playlists, favorites and listening history with your other Echo devices. Your local library stays when you sign out. Conflicting playlist edits become separate copies. Audio, downloads, credentials and local file paths aren't uploaded. Existing Drive snapshots remain untouched.", style = MaterialTheme.typography.bodySmall)
+        if (!vm.firebaseConfigured) Text("Firebase project setup is pending. Listening and local library controls remain available.", style = MaterialTheme.typography.bodySmall)
         Text("Automatic sync runs about once a minute while Echo is open. No Google account is needed for listening.", style = MaterialTheme.typography.bodySmall)
         if (vm.accountBusy) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -78,8 +79,8 @@ import kotlinx.coroutines.delay
         }
         vm.accountStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     }
-    if (confirmSync) AlertDialog(onDismissRequest = { confirmSync = false }, title = { Text("Sync playlists with $email?") },
-        text = { Text("This saves the playlists currently on this device to this account. Other devices' changes will merge here, including deletions of unchanged playlists. Export a library backup first if you want an independent copy.") },
+    if (confirmSync) AlertDialog(onDismissRequest = { confirmSync = false }, title = { Text("Sync library with $email?") },
+        text = { Text("This uploads this device's playlists, favorites and up to 90 days of listening history to your Firebase account. Changes from other devices merge here, including unlikes, playlist deletions and history clearing. The local library is shared on this device, so check the account before uploading. Export a library backup first if you want an independent copy.") },
         confirmButton = { TextButton(onClick = { confirmSync = false; vm.setAutomaticSync(true) }) { Text("Enable automatic sync") } },
         dismissButton = { Row {
             TextButton(onClick = { confirmSync = false; vm.syncGoogle(manual = true) }) { Text("Sync once") }

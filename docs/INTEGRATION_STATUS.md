@@ -2,6 +2,16 @@
 
 Current Android release: **[0.1.9 / code10](releases/0.1.9.md)**, published 2026-10-27. Newest records supersede earlier pending/unpublished states; historical results remain dated.
 
+## Unpublished Firebase and desktop parity — 2026-10-27
+
+Final acceptance supersedes earlier pending states: after the owner replaced Android's OAuth registration in echo-85da4, normal emulator Google/Firebase sign-in succeeded. The successful sync marker and automatic-sync flag were verified; its sanitized baseline matches desktop and Firestore canonically. Live isolated Android/desktop edits, duplicates and deletion convergence also passed. No physical phone was accessed. Windows updates have 88 passing desktop tests, a successful real GitHub feed check and native MSI identity verification. No public Windows release or installer acceptance is claimed.
+
+Both clients now contain coordinated Firebase playlists/favorites/history sync, using owner-supplied project echo-85da4. Desktop OAuth/Firebase identity exchange succeeded; the Firestore library read returned HTTP403 and CLI rules deployment failed with administrative HTTP401, so live library transfer remains unverified. No local library was uploaded by these checks. See [Firebase setup/evidence](FIREBASE.md).
+
+The owner subsequently published the rules through Firebase Console. The read-only retry succeeded and confirmed that the account has no cloud library document yet. This resolves the prior read denial; write permission and real two-device transfers remain unverified (`build/firebase-rules-published-readiness.log`).
+
+Desktop Spotify preview/file imports, recording matching, discovery, manual downloads/offline mode, Play next and shuffled append are integrated. All 77 desktop JVM tests pass; native VLC transport/queue/timer and verified offline file playback/seek/network gate checks pass. Android build/lint and 59 data JVM tests pass. Thirteen isolated Room checks and the Profile UI check pass on dedicated emulator-5556; no physical phone was accessed or installed. Windows app image rebuilt; no release was published. Remaining parity is recorded in [DESKTOP_PARITY.md](DESKTOP_PARITY.md).
+
 
 
 ## Post-release acceptance: Google sign-in works — 2026-10-27

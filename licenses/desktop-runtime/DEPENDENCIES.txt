@@ -1,0 +1,251 @@
+Echo Music runtime dependency notices
+Third-party components retain their original licenses and copyrights.
+Exact artifact hashes and variant membership: dependency-inventory.json.
+Original notices embedded in upstream binaries: ARTIFACT_NOTICES.txt.
+
+androidx.annotation:annotation-jvm:1.9.1
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.arch.core:core-common:2.2.0
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.collection:collection-jvm:1.5.0
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-common-jvm:2.8.5
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-runtime-desktop:2.8.5
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+androidx.lifecycle:lifecycle-viewmodel-desktop:2.8.5
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://cs.android.com/androidx/platform/frameworks/support
+
+com.github.TeamNewPipe:nanojson:e9d656ddb49a412a5a0a5d5ef20ca7ef09549996
+Variants: desktopRuntimeClasspath
+License: Apache-2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/TeamNewPipe/nanojson/tree/e9d656ddb49a412a5a0a5d5ef20ca7ef09549996
+
+com.github.teamnewpipe:NewPipeExtractor:v0.26.5
+Variants: desktopRuntimeClasspath
+License: GNU General Public License v3.0 or later - https://www.gnu.org/licenses/gpl-3.0.txt
+Upstream source: https://github.com/TeamNewPipe/NewPipeExtractor
+
+com.google.code.findbugs:jsr305:3.0.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://code.google.com/p/jsr-305/
+
+com.google.protobuf:protobuf-javalite:4.35.1
+Variants: desktopRuntimeClasspath
+License: BSD-3-Clause - https://github.com/protocolbuffers/protobuf/blob/v35.1/LICENSE
+Upstream source: https://github.com/protocolbuffers/protobuf/tree/v35.1
+
+com.squareup.okhttp3:okhttp:4.12.0
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/square/okhttp
+
+com.squareup.okio:okio-jvm:3.6.0
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/square/okio/
+
+javax.inject:javax.inject:1
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: http://code.google.com/p/atinject/source/checkout
+
+net.java.dev.jna:jna-jpms:5.16.0
+Variants: desktopRuntimeClasspath
+License: LGPL-2.1-or-later - https://www.gnu.org/licenses/old-licenses/lgpl-2.1
+License: Apache-2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/java-native-access/jna
+
+net.java.dev.jna:jna-platform-jpms:5.16.0
+Variants: desktopRuntimeClasspath
+License: LGPL-2.1-or-later - https://www.gnu.org/licenses/old-licenses/lgpl-2.1
+License: Apache-2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/java-native-access/jna
+
+org.jetbrains:annotations:23.0.0
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/java-annotations
+
+org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose-desktop:2.8.4
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.animation:animation-core-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.animation:animation-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.desktop:desktop-jvm:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.foundation:foundation-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.foundation:foundation-layout-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.material:material-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.material:material-ripple-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.material3:material3-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.runtime:runtime-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.runtime:runtime-saveable-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.ui:ui-backhandler-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.ui:ui-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.ui:ui-geometry-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.ui:ui-graphics-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.ui:ui-text-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.ui:ui-tooling-preview-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.ui:ui-unit-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.ui:ui-util-desktop:1.8.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.kotlin:kotlin-stdlib:2.1.21
+Variants: desktopRuntimeClasspath
+License: The Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/kotlin
+
+org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.1.21
+Variants: desktopRuntimeClasspath
+License: The Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/kotlin
+
+org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.1.21
+Variants: desktopRuntimeClasspath
+License: The Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/kotlin
+
+org.jetbrains.kotlinx:atomicfu-jvm:0.23.2
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/Kotlin/kotlinx.atomicfu
+
+org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2
+Variants: desktopRuntimeClasspath
+License: Apache-2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/Kotlin/kotlinx.coroutines
+
+org.jetbrains.kotlinx:kotlinx-datetime-jvm:0.6.0
+Variants: desktopRuntimeClasspath
+License: The Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/Kotlin/kotlinx-datetime
+
+org.jetbrains.skiko:skiko-awt:0.9.4.2
+Variants: desktopRuntimeClasspath
+License: The Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://www.github.com/JetBrains/skiko
+
+org.jetbrains.skiko:skiko-awt-runtime-windows-x64:0.9.4.2
+Variants: desktopRuntimeClasspath
+License: The Apache License, Version 2.0 - http://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://www.github.com/JetBrains/skiko
+
+org.json:json:20240303
+Variants: desktopRuntimeClasspath
+License: Public Domain - https://github.com/stleary/JSON-java/blob/master/LICENSE
+Upstream source: https://github.com/douglascrockford/JSON-java.git
+
+org.jsoup:jsoup:1.22.2
+Variants: desktopRuntimeClasspath
+License: The MIT License - https://jsoup.org/license
+Upstream source: https://github.com/jhy/jsoup
+
+org.mozilla:rhino:1.8.1
+Variants: desktopRuntimeClasspath
+License: Mozilla Public License, Version 2.0 - http://www.mozilla.org/MPL/2.0/index.txt
+Upstream source: git@github.com:mozilla/rhino.git
+
+org.mozilla:rhino-engine:1.8.1
+Variants: desktopRuntimeClasspath
+License: Mozilla Public License, Version 2.0 - http://www.mozilla.org/MPL/2.0/index.txt
+Upstream source: git@github.com:mozilla/rhino.git
+
+uk.co.caprica:vlcj:4.12.1
+Variants: desktopRuntimeClasspath
+License: GPL v3 - http://www.gnu.org/licenses/gpl-3.0.html
+Upstream source: git@github.com:caprica/vlcj.git
+
+uk.co.caprica:vlcj-natives:4.12.0
+Variants: desktopRuntimeClasspath
+License: GPL v3 - http://www.gnu.org/licenses/gpl-3.0.html
+Upstream source: git@github.com:caprica/vlcj-natives.git

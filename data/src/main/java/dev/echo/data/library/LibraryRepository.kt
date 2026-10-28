@@ -12,6 +12,14 @@ import androidx.room.withTransaction
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.echo.core.Playlist
 import dev.echo.core.Track
+import dev.echo.data.firebase.FirebaseHistoryEpoch
+import dev.echo.data.firebase.FirebaseHistoryEvent
+import dev.echo.data.firebase.FirebasePlaylist
+import dev.echo.data.firebase.LibrarySyncState
+import dev.echo.data.firebase.cloudTrackId
+import dev.echo.data.firebase.decodeLibrarySyncState
+import dev.echo.data.firebase.encodeLibrarySyncState
+import dev.echo.data.firebase.sanitizeLibrarySyncState
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,6 +27,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import org.json.JSONArray
 
 @Singleton
 class LibraryRepository internal constructor(private val context: Context, private val database: LibraryDatabase) {
@@ -58,7 +68,12 @@ class LibraryRepository internal constructor(private val context: Context, priva
         dao.renamePlaylist(id, checkedName(name))
     }
 
-    suspend fun deletePlaylist(id: String) = dao.deletePlaylist(id)
+    suspend fun deletePlaylist(id: String) = database.withTransaction {
+        val metadata = firebaseMetadata()
+        metadata.put("deletedPlaylists", JSONArray(metadata.firebaseIds("deletedPlaylists") + id))
+        saveFirebaseMetadata(metadata)
+        dao.deletePlaylist(id)
+    }
 
     suspend fun playlistTracks(id: String): List<Track> = dao.playlistTracks(id).map { it.model() }
 
@@ -83,7 +98,12 @@ class LibraryRepository internal constructor(private val context: Context, priva
     }
 
     suspend fun setFavorite(trackId: String, liked: Boolean) = database.withTransaction {
-        require(dao.hasTrack(trackId)) { "Track does not exist" }
+        val track = requireNotNull(dao.track(trackId)) { "Track does not exist" }.model()
+        val metadata = firebaseMetadata()
+        val id = cloudTrackId(track, metadata.getString("device"))
+        val unliked = metadata.firebaseIds("unlikedTracks")
+        metadata.put("unlikedTracks", JSONArray(if (liked) unliked - id else unliked + id))
+        saveFirebaseMetadata(metadata)
         if (liked) dao.favorite(FavoriteEntity(trackId)) else dao.unfavorite(trackId)
     }
 
@@ -93,11 +113,132 @@ class LibraryRepository internal constructor(private val context: Context, priva
         require(dao.hasTrack(trackId)) { "Track does not exist" }
         require(listenedMs >= 0 && durationMs >= 0) { "Listening times cannot be negative" }
         val now = System.currentTimeMillis()
-        dao.record(HistoryEntity(trackId = trackId, playedAt = now, event = event.name, listenedMs = listenedMs, durationMs = durationMs))
+        val id = dao.record(HistoryEntity(trackId = trackId, playedAt = now, event = event.name, listenedMs = listenedMs, durationMs = durationMs))
+        dao.upsertMetadata(CachedMetadataEntity("firebase-sync", "history-id:$id", "${firebaseDeviceId()}:$id", now))
         dao.trimHistory(now - 90L * 24 * 60 * 60 * 1000)
+        dao.pruneFirebaseHistoryMappings()
     }
 
-    suspend fun clearListeningHistory() = dao.clearHistory()
+    suspend fun clearListeningHistory() = database.withTransaction {
+        val metadata = firebaseMetadata()
+        val counter = metadata.getLong("historyCounter")
+        check(counter < Long.MAX_VALUE) { "History clear revision is exhausted" }
+        metadata.put("historyCounter", counter + 1).put("historyDevice", metadata.getString("device"))
+        saveFirebaseMetadata(metadata)
+        dao.clearHistory()
+        dao.clearFirebaseHistoryMappings()
+    }
+
+    suspend fun firebaseDeviceId(): String = database.withTransaction { firebaseMetadata().getString("device") }
+
+    suspend fun exportFirebaseState(deviceId: String): LibrarySyncState = database.withTransaction {
+        val metadata = firebaseMetadata()
+        require(metadata.getString("device") == deviceId) { "Sync installation identity changed" }
+        val tracks = dao.allTracks().map { it.model() }
+        val mappings = dao.firebaseHistoryMappings().associate { it.cacheKey to it.payload }
+        val now = System.currentTimeMillis()
+        val history = dao.allHistory().filter { it.playedAt >= now - 90L * 24 * 60 * 60 * 1000 }.map { row ->
+            val key = "history-id:${row.id}"
+            val cloudId = mappings[key] ?: "$deviceId:${row.id}".also {
+                dao.upsertMetadata(CachedMetadataEntity("firebase-sync", key, it, now))
+            }
+            FirebaseHistoryEvent(cloudId, row.trackId, row.event, row.playedAt, row.listenedMs, row.durationMs)
+        }
+        sanitizeLibrarySyncState(LibrarySyncState(
+            tracks = tracks,
+            playlists = dao.allPlaylists().map { FirebasePlaylist(it.id, it.name, dao.playlistIds(it.id), it.spotifyId) },
+            favorites = dao.allFavorites().toSet(), history = history,
+            deletedPlaylists = metadata.firebaseIds("deletedPlaylists"), unlikedTracks = metadata.firebaseIds("unlikedTracks"),
+            historyEpoch = FirebaseHistoryEpoch(metadata.getLong("historyCounter"), metadata.getString("historyDevice")),
+        ), deviceId)
+    }
+
+    suspend fun applyFirebaseState(expected: LibrarySyncState, merged: LibrarySyncState, deviceId: String,
+        bootstrapAccount: Boolean = false) = database.withTransaction {
+        val current = exportFirebaseState(deviceId)
+        check(encodeLibrarySyncState(current) == encodeLibrarySyncState(expected)) { "Library changed during sync. Retry to preserve your edits." }
+        val safe = decodeLibrarySyncState(encodeLibrarySyncState(merged))
+        require(bootstrapAccount || safe.historyEpoch >= current.historyEpoch) { "History clear revision cannot move backwards" }
+        val existingTracks = dao.allTracks().map { it.model() }
+        val own = existingTracks.associateBy { cloudTrackId(it, deviceId) }
+        val existingIds = existingTracks.map { it.id }.toSet()
+        require(safe.tracks.none { it.id in existingIds && it.id !in own }) {
+            "Cloud track conflicts with a device-local identity; local files were preserved"
+        }
+        val restoredIds = safe.tracks.associate { incoming ->
+            incoming.id to (own[incoming.id]?.id ?: incoming.id)
+        }
+        require(restoredIds.values.toSet().size == restoredIds.size) { "Conflicting restored track identities" }
+        upsertTracks(safe.tracks.map { incoming ->
+            val existing = own[incoming.id]?.takeIf { it.provider == "local" }
+            if (existing != null) incoming.copy(id = existing.id, sourceUri = existing.sourceUri,
+                artworkUri = existing.artworkUri ?: incoming.artworkUri)
+            else incoming.copy(sourceUri = if (incoming.provider == "local") null else incoming.sourceUri)
+        })
+        val playlistIds = safe.playlists.map { it.id }.toSet()
+        dao.allPlaylists().filter { it.id !in playlistIds }.forEach { dao.deletePlaylist(it.id) }
+        safe.playlists.forEach { playlist ->
+            dao.upsertPlaylist(PlaylistEntity(playlist.id, playlist.name, playlist.spotifyId))
+            replaceEntries(playlist.id, playlist.trackIds.map(restoredIds::getValue))
+            playlist.spotifyId?.let { dao.upsertImport(ImportedPlaylistEntity(playlist.id, "spotify", it, System.currentTimeMillis())) }
+                ?: dao.clearImport(playlist.id)
+        }
+        dao.clearFavorites()
+        safe.favorites.forEach { dao.favorite(FavoriteEntity(restoredIds.getValue(it))) }
+
+        val oldEvents = current.history.associateBy { it.id }
+        val keepIds = safe.history.map { it.id }.toSet()
+        val rowMappings = dao.firebaseHistoryMappings().associate { it.cacheKey to it.payload }
+        val kept = mutableSetOf<String>()
+        if (safe.historyEpoch != current.historyEpoch) {
+            dao.clearHistory()
+            dao.clearFirebaseHistoryMappings()
+        } else dao.allHistory().forEach { row ->
+            val cloudId = rowMappings["history-id:${row.id}"] ?: "$deviceId:${row.id}"
+            if (cloudId !in keepIds) {
+                dao.deleteHistory(row.id); dao.deleteFirebaseMetadata("history-id:${row.id}")
+            } else kept += cloudId
+        }
+        safe.history.forEach { event ->
+            if (event.id in kept) check(oldEvents[event.id] == event) { "Conflicting listening event identity" }
+            else {
+                val rowId = dao.record(HistoryEntity(trackId = restoredIds.getValue(event.trackId), playedAt = event.occurredAt,
+                    event = event.event, listenedMs = event.listenedMs, durationMs = event.durationMs))
+                dao.upsertMetadata(CachedMetadataEntity("firebase-sync", "history-id:$rowId", event.id, System.currentTimeMillis()))
+            }
+        }
+        val metadata = firebaseMetadata().put("historyCounter", safe.historyEpoch.counter).put("historyDevice", safe.historyEpoch.deviceId)
+            .put("deletedPlaylists", JSONArray(safe.deletedPlaylists)).put("unlikedTracks", JSONArray(safe.unlikedTracks))
+        saveFirebaseMetadata(metadata)
+        dao.trimHistory(System.currentTimeMillis() - 90L * 24 * 60 * 60 * 1000)
+        dao.pruneFirebaseHistoryMappings()
+    }
+
+    private suspend fun firebaseMetadata(): JSONObject {
+        val existing = dao.metadata("firebase-sync", "meta")
+        if (existing != null) return JSONObject(existing.payload).also {
+            require(it.getInt("version") == 1 && UUID.fromString(it.getString("device")).toString() == it.getString("device") &&
+                it.getLong("historyCounter") >= 0) { "Invalid local sync metadata; local data was preserved" }
+        }
+        return JSONObject().put("version", 1).put("device", UUID.randomUUID().toString())
+            .put("historyCounter", 0L).put("historyDevice", "")
+            .put("deletedPlaylists", JSONArray()).put("unlikedTracks", JSONArray()).also { saveFirebaseMetadata(it) }
+    }
+
+    private suspend fun saveFirebaseMetadata(value: JSONObject) = dao.upsertMetadata(
+        CachedMetadataEntity("firebase-sync", "meta", value.toString(), System.currentTimeMillis()))
+
+    private fun JSONObject.firebaseIds(key: String): Set<String> = optJSONArray(key)?.let { rows ->
+        (0 until rows.length()).map { rows.getString(it) }.toSet()
+    }.orEmpty()
+
+    private suspend fun restoreFirebasePlaylist(id: String) {
+        val metadata = firebaseMetadata()
+        if (id in metadata.firebaseIds("deletedPlaylists")) {
+            metadata.put("deletedPlaylists", JSONArray(metadata.firebaseIds("deletedPlaylists") - id))
+            saveFirebaseMetadata(metadata)
+        }
+    }
 
     suspend fun matchLocalTrack(importedTrackId: String, localTrackId: String) = database.withTransaction {
         val imported = requireNotNull(dao.track(importedTrackId)) { "Imported track does not exist" }
@@ -135,7 +276,7 @@ class LibraryRepository internal constructor(private val context: Context, priva
         require(matches.keys.all { it in expectedIds } && matches.values.all { it.provider in setOf("local", "youtube") && it.sourceUri != null }) { "Invalid recording match" }
         upsertTracks(matches.values.toList())
         val liked = dao.allFavorites().toSet()
-        matches.forEach { (importedId, recording) -> if (importedId in liked) dao.favorite(FavoriteEntity(recording.id)) }
+        matches.forEach { (importedId, recording) -> if (importedId in liked) setFavorite(recording.id, true) }
         replaceEntries(id, expectedIds.map { matches[it]?.id ?: it })
     }
 
@@ -158,11 +299,12 @@ class LibraryRepository internal constructor(private val context: Context, priva
             backup.playlists.forEach { entry ->
                 val playlist = entry.playlist
                 dao.upsertPlaylist(PlaylistEntity(playlist.id, playlist.name, playlist.spotifyId))
+                restoreFirebasePlaylist(playlist.id)
                 replaceEntries(playlist.id, entry.trackIds)
                 val spotifyId = playlist.spotifyId
                 if (spotifyId != null) dao.upsertImport(ImportedPlaylistEntity(playlist.id, "spotify", spotifyId, System.currentTimeMillis())) else dao.clearImport(playlist.id)
             }
-            backup.favorites.forEach { dao.favorite(FavoriteEntity(it)) }
+            backup.favorites.forEach { setFavorite(it, true) }
             backup.matches.forEach { matchLocalTrack(it.importedTrackId, it.localTrackId) }
         }
     }
@@ -192,6 +334,7 @@ class LibraryRepository internal constructor(private val context: Context, priva
         val playlist = PlaylistEntity(id, checkedName(name), spotifyId)
         upsertTracks(tracks)
         dao.upsertPlaylist(playlist)
+        restoreFirebasePlaylist(id)
         replaceEntries(id, tracks.map { it.id })
         if (spotifyId != null) dao.upsertImport(ImportedPlaylistEntity(id, "spotify", spotifyId, System.currentTimeMillis())) else dao.clearImport(id)
     }

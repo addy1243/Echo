@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owner(uid) {
+      return request.auth != null && request.auth.uid == uid
+        && request.auth.token.email_verified == true;
+    }
+
+    function validLibrary(uid) {
+      let data = request.resource.data;
+      return data.keys().hasAll(['uid', 'format', 'version', 'encoding', 'payload'])
+        && data.keys().hasOnly(['uid', 'format', 'version', 'encoding', 'payload'])
+        && data.uid == uid
+        && data.format == 'echo-library-state'
+        && data.version == 1
+        && data.encoding == 'gzip-base64'
+        && data.payload is string
+        && data.payload.size() > 0
+        && data.payload.size() <= 716800;
+    }
+
+    match /users/{uid}/sync/library-v1 {
+      allow get: if owner(uid);
+      allow create, update: if owner(uid) && validLibrary(uid);
+      allow list, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

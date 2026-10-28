@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import tarfile
+import tempfile
 import zipfile
 
 from generate_notices import local_path
@@ -30,29 +31,70 @@ REPOSITORY_SOURCES = {
 def runtime_classes(data, extension):
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         if extension == ".jar":
-            return any(name.endswith(".class") for name in archive.namelist())
+            return any(name.endswith((".class", ".dll", ".so", ".dylib", ".jnilib", ".exe")) for name in archive.namelist())
         return any(runtime_classes(archive.read(name), ".jar") for name in archive.namelist()
                    if name == "classes.jar" or name.startswith("libs/") and name.endswith(".jar"))
+
+
+def native_runtime(data):
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return any(name.endswith((".dll", ".so", ".dylib", ".jnilib", ".exe")) for name in archive.namelist())
 
 
 def git(*args):
     return subprocess.check_output(["git", *args])
 
 
-def package(ref, runtime_inputs, source_inputs, output):
+def checked_archive(path, expected_hash, required_suffixes=()):
+    content = path.read_bytes()
+    if path.name.endswith(".tar.gz"):
+        with tarfile.open(fileobj=io.BytesIO(content), mode="r:gz") as check:
+            names = [entry.name for entry in check.getmembers() if entry.isfile()]
+            if not names:
+                raise ValueError(f"Empty source archive: {path.name}")
+    else:
+        with zipfile.ZipFile(io.BytesIO(content)) as check:
+            names = [entry.filename for entry in check.infolist() if not entry.is_dir()]
+            if check.testzip() is not None or not names:
+                raise ValueError(f"Corrupt or empty source archive: {path.name}")
+    if required_suffixes and not any(name.endswith(required_suffixes) for name in names):
+        raise ValueError(f"Source archive is a placeholder or lacks required source code: {path.name}")
+    digest = hashlib.sha256(content).hexdigest()
+    if expected_hash != digest:
+        raise ValueError(f"Source archive changed: {path.name}")
+    return digest
+
+
+def source_name(value):
+    if not value or Path(value).name != value or "/" in value or "\\" in value:
+        raise ValueError("Source archive must use a plain filename")
+    return value
+
+
+def package(ref, runtime_inputs, source_inputs, output, desktop_runtime_inputs=None):
     if git("status", "--porcelain").strip():
         raise ValueError("Commit the reviewed source and notices before packaging a release")
     commit = git("rev-parse", "--verify", ref + "^{commit}").decode().strip()
-    inventory_path = "licenses/runtime/dependency-inventory.json"
-    inventory = git("show", commit + ":" + inventory_path)
-    if json.loads(inventory) != json.loads(Path(inventory_path).read_bytes()):
-        raise ValueError("The source ref and inspected runtime inventory do not match")
-    components = json.loads(inventory)["components"]
-    artifacts = {":".join(item[key] for key in ("group", "module", "version")): local_path(item["file"])
-                 for item in json.loads(runtime_inputs.read_text(encoding="utf-8-sig"))}
+    inventories = [("licenses/runtime/dependency-inventory.json", runtime_inputs)]
+    if desktop_runtime_inputs is not None:
+        inventories.append(("licenses/desktop-runtime/dependency-inventory.json", desktop_runtime_inputs))
+    components, artifacts, inventory_hashes = {}, {}, {}
+    for inventory_path, inputs in inventories:
+        inventory = git("show", commit + ":" + inventory_path)
+        if json.loads(inventory) != json.loads(Path(inventory_path).read_bytes()):
+            raise ValueError("The source ref and inspected runtime inventory do not match")
+        inventory_hashes[inventory_path] = hashlib.sha256(inventory).hexdigest()
+        rows = {":".join(item[key] for key in ("group", "module", "version")): local_path(item["file"])
+                for item in json.loads(inputs.read_text(encoding="utf-8-sig"))}
+        for component in json.loads(inventory)["components"]:
+            coordinate = component["coordinate"]
+            if coordinate in components and components[coordinate]["sha256"] != component["sha256"]:
+                raise ValueError(f"Conflicting runtime artifacts for {coordinate}")
+            components[coordinate] = component
+            artifacts[coordinate] = rows[coordinate]
     sources = {item["coordinate"]: item for item in json.loads((source_inputs / "downloaded-sources.json").read_text())}
     selected = []
-    for component in components:
+    for component in components.values():
         coordinate = component["coordinate"]
         artifact = artifacts[coordinate]
         data = artifact.read_bytes()
@@ -65,32 +107,54 @@ def package(ref, runtime_inputs, source_inputs, output):
             source = sources.get(coordinate, {})
         if "file" not in source:
             if runtime_classes(data, artifact.suffix):
-                raise ValueError(f"Corresponding source missing for runtime classes: {coordinate}")
+                raise ValueError(f"Corresponding source missing for runtime code: {coordinate}")
             selected.append({"coordinate": coordinate, "note": "No runtime classes: empty placeholder or build-only metadata/analyzer"})
             continue
-        archive = source_inputs / source["file"]
-        content = archive.read_bytes()
-        if archive.name.endswith(".tar.gz"):
-            with tarfile.open(fileobj=io.BytesIO(content), mode="r:gz") as check:
-                if not check.getmembers():
-                    raise ValueError(f"Empty source archive: {archive.name}")
-        else:
-            with zipfile.ZipFile(io.BytesIO(content)) as check:
-                if check.testzip() is not None:
-                    raise ValueError(f"Corrupt source archive: {archive.name}")
-        digest = hashlib.sha256(content).hexdigest()
-        if source.get("sha256", digest) != digest:
-            raise ValueError(f"Source archive changed: {archive.name}")
+        archive = source_inputs / source_name(source["file"])
+        required = (".c", ".h", ".cpp", ".cc", ".m", ".mm", ".S") if artifact.suffix == ".jar" and native_runtime(data) else (
+            ".java", ".kt", ".scala", ".c", ".h", ".cpp", ".cc", ".m", ".mm", ".S") if runtime_classes(data, artifact.suffix) else ()
+        digest = checked_archive(archive, source.get("sha256") or hashlib.sha256(archive.read_bytes()).hexdigest(), required)
         selected.append({"coordinate": coordinate, "file": archive.name, "url": source["url"], "sha256": digest})
+    if desktop_runtime_inputs is not None:
+        java_path = "licenses/desktop-runtime/bundled-java.json"
+        java_bytes = git("show", commit + ":" + java_path)
+        if json.loads(java_bytes) != json.loads(Path(java_path).read_bytes()):
+            raise ValueError("The source ref and bundled Java runtime metadata do not match")
+        java = json.loads(java_bytes)
+        if java.get("format") != "echo-bundled-java" or java.get("version") != 1:
+            raise ValueError("Unsupported bundled Java runtime metadata")
+        source = java["source"]
+        archive = source_inputs / source_name(source["file"])
+        if not source["url"].startswith("https://"):
+            raise ValueError("Bundled Java source needs an HTTPS origin")
+        checked_archive(archive, source["sha256"])
+        selected.append({key: source[key] for key in ("coordinate", "file", "url", "sha256")})
+        inventory_hashes[java_path] = hashlib.sha256(java_bytes).hexdigest()
+        extra_path = "licenses/desktop-runtime/extra-source-inputs.json"
+        extra_bytes = git("show", commit + ":" + extra_path)
+        if json.loads(extra_bytes) != json.loads(Path(extra_path).read_bytes()):
+            raise ValueError("The source ref and additional native source metadata do not match")
+        for source in json.loads(extra_bytes):
+            archive = source_inputs / source_name(source["file"])
+            if not source["url"].startswith("https://"):
+                raise ValueError("Additional native source needs an HTTPS origin")
+            checked_archive(archive, source["sha256"])
+            selected.append({key: source[key] for key in ("coordinate", "file", "url", "sha256")})
+        inventory_hashes[extra_path] = hashlib.sha256(extra_bytes).hexdigest()
     source_zip = git("archive", "--format=zip", "--prefix=EchoMusic-source/", commit)
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = output.with_suffix(output.suffix + ".part")
     staging.write_bytes(source_zip)
     with zipfile.ZipFile(staging, "a", compression=zipfile.ZIP_DEFLATED) as archive:
+        included = set()
         for source in selected:
             if "file" in source:
+                if source["file"] in included:
+                    continue
                 archive.write(source_inputs / source["file"], "EchoMusic-source/third-party-sources/" + source["file"])
-        manifest = {"echoCommit": commit, "runtimeInventorySha256": hashlib.sha256(inventory).hexdigest(), "sources": selected}
+                included.add(source["file"])
+        manifest = {"echoCommit": commit, "runtimeInventorySha256": inventory_hashes["licenses/runtime/dependency-inventory.json"],
+                    "inventories": inventory_hashes, "sources": selected}
         archive.writestr("EchoMusic-source/third-party-sources/SOURCE_MANIFEST.json", json.dumps(manifest, indent=2) + "\n")
         archive.writestr("EchoMusic-source/third-party-sources/README.txt",
             "These are unmodified dependency source archives matching the inspected Echo build.\n"
@@ -117,6 +181,30 @@ def self_test():
             archive.writestr("classes.jar", data.getvalue())
             archive.writestr("lint.jar", b"build-only analyzer ignored")
         assert runtime_classes(aar.getvalue(), ".aar") == expected
+    native = io.BytesIO()
+    with zipfile.ZipFile(native, "w") as archive:
+        archive.writestr("org/example/runtime.dll", "native code")
+    assert runtime_classes(native.getvalue(), ".jar")
+    assert native_runtime(native.getvalue())
+    with tempfile.TemporaryDirectory() as directory:
+        placeholder = Path(directory) / "placeholder-sources.jar"
+        with zipfile.ZipFile(placeholder, "w") as archive:
+            archive.writestr("META-INF/MANIFEST.MF", "placeholder")
+        digest = hashlib.sha256(placeholder.read_bytes()).hexdigest()
+        assert checked_archive(placeholder, digest) == digest
+        try:
+            checked_archive(placeholder, digest, (".java", ".cpp"))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Accepted placeholder source for runtime code")
+    for name in ("../source.zip", "nested/source.zip", "nested\\source.zip", ""):
+        try:
+            source_name(name)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Accepted an unsafe source archive name")
     print("Source packager self-check passed.")
 
 
@@ -125,6 +213,7 @@ if __name__ == "__main__":
     parser.add_argument("--ref")
     parser.add_argument("--runtime-inputs", type=Path, default=Path("build/runtime-license-inputs.json"))
     parser.add_argument("--source-inputs", type=Path, default=Path("build/release-source-inputs"))
+    parser.add_argument("--desktop-runtime-inputs", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
@@ -133,4 +222,4 @@ if __name__ == "__main__":
     else:
         if not args.ref or not args.output:
             parser.error("--ref and --output are required")
-        package(args.ref, args.runtime_inputs, args.source_inputs, args.output)
+        package(args.ref, args.runtime_inputs, args.source_inputs, args.output, args.desktop_runtime_inputs)

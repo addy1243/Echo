@@ -1,6 +1,7 @@
 package dev.echo.data.library
 
 import androidx.room.Room
+import androidx.room.withTransaction
 import androidx.room.testing.MigrationTestHelper
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.echo.core.Track
@@ -13,6 +14,37 @@ import org.junit.Test
 
 class ListeningHistoryMigrationTest {
     @get:Rule val migration = MigrationTestHelper(InstrumentationRegistry.getInstrumentation(), LibraryDatabase::class.java)
+
+    @Test fun importingOlderHistoryDoesNotEvictNewerLocallyRecordedListens() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.inMemoryDatabaseBuilder(context, LibraryDatabase::class.java).build()
+        try {
+            val repository = LibraryRepository(context, database)
+            repository.upsertTracks(listOf(Track("song", "Song", "Artist")))
+            val now = System.currentTimeMillis()
+            val dao = database.libraryDao()
+            var local = 0L
+            var oldestRemote = 0L
+            database.withTransaction {
+                local = dao.record(HistoryEntity(trackId = "song", playedAt = now - 1000))
+                repeat(5000) { index ->
+                    val row = dao.record(HistoryEntity(trackId = "song", playedAt = now - 100_000 + index))
+                    if (index == 0) oldestRemote = row
+                }
+            }
+            val beforeTrim = dao.allHistory()
+            assertEquals(5000, beforeTrim.size)
+            assertTrue(beforeTrim.any { it.id == local })
+            assertTrue(beforeTrim.none { it.id == oldestRemote })
+            repository.recordListeningEvent("song", ListeningEventType.COMPLETED, 30_000, 30_000)
+            val retained = dao.allHistory()
+            assertEquals(5000, retained.size)
+            assertTrue(retained.any { it.id == local })
+            assertEquals("COMPLETED", retained.first().event)
+            assertTrue(retained.none { it.id == oldestRemote })
+            assertEquals(retained.sortedWith(compareByDescending<HistoryEntity> { it.playedAt }.thenByDescending { it.id }), retained)
+        } finally { database.close() }
+    }
 
     @Test fun migrationPreservesExistingLibraryPlaylistsLikesAndHistory() {
         val name = "history-migration-test"

@@ -90,7 +90,7 @@ internal interface LibraryDao {
     @Query("SELECT * FROM playable_tracks ORDER BY title COLLATE NOCASE, id") fun tracks(): Flow<List<PlayableTrackView>>
     @Query("SELECT * FROM playlists ORDER BY name COLLATE NOCASE, id") fun playlists(): Flow<List<PlaylistEntity>>
     @Query("SELECT trackId FROM favorites") fun favorites(): Flow<List<String>>
-    @Query("SELECT playable_tracks.* FROM playable_tracks INNER JOIN playback_history ON playable_tracks.id = playback_history.trackId WHERE playback_history.event = 'PLAYED' GROUP BY playable_tracks.id ORDER BY MAX(playback_history.id) DESC LIMIT 100") fun recent(): Flow<List<PlayableTrackView>>
+    @Query("SELECT playable_tracks.* FROM playable_tracks INNER JOIN playback_history ON playable_tracks.id = playback_history.trackId WHERE playback_history.event = 'PLAYED' GROUP BY playable_tracks.id ORDER BY MAX(playback_history.playedAt) DESC, MAX(playback_history.id) DESC LIMIT 100") fun recent(): Flow<List<PlayableTrackView>>
     @Query("SELECT playable_tracks.* FROM playable_tracks INNER JOIN playlist_tracks ON playable_tracks.id = playlist_tracks.trackId WHERE playlistId = :id ORDER BY position") suspend fun playlistTracks(id: String): List<PlayableTrackView>
     @Query("SELECT * FROM tracks WHERE id = :id") suspend fun track(id: String): TrackEntity?
     @Query("SELECT * FROM tracks ORDER BY id") suspend fun allTracks(): List<TrackEntity>
@@ -115,9 +115,18 @@ internal interface LibraryDao {
     @Insert suspend fun insertEntries(entries: List<PlaylistTrackEntity>)
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun favorite(favorite: FavoriteEntity)
     @Query("DELETE FROM favorites WHERE trackId = :id") suspend fun unfavorite(id: String)
-    @Insert suspend fun record(history: HistoryEntity)
-    @Transaction @Query("SELECT * FROM playback_history ORDER BY id DESC LIMIT 5000") fun listeningHistory(): Flow<List<ListeningHistoryRow>>
-    @Query("DELETE FROM playback_history WHERE playedAt < :oldest OR id NOT IN (SELECT id FROM playback_history ORDER BY id DESC LIMIT 5000)") suspend fun trimHistory(oldest: Long)
+    @Insert suspend fun record(history: HistoryEntity): Long
+    @Query("SELECT * FROM playback_history ORDER BY playedAt DESC, id DESC LIMIT 5000") suspend fun allHistory(): List<HistoryEntity>
+    @Query("DELETE FROM playback_history WHERE id = :id") suspend fun deleteHistory(id: Long)
+    @Query("DELETE FROM favorites") suspend fun clearFavorites()
+    @Query("SELECT * FROM cached_metadata WHERE provider = :provider AND cacheKey = :key") suspend fun metadata(provider: String, key: String): CachedMetadataEntity?
+    @Query("SELECT * FROM cached_metadata WHERE provider = 'firebase-sync' AND cacheKey LIKE 'history-id:%'") suspend fun firebaseHistoryMappings(): List<CachedMetadataEntity>
+    @Upsert suspend fun upsertMetadata(metadata: CachedMetadataEntity)
+    @Query("DELETE FROM cached_metadata WHERE provider = 'firebase-sync' AND cacheKey = :key") suspend fun deleteFirebaseMetadata(key: String)
+    @Query("DELETE FROM cached_metadata WHERE provider = 'firebase-sync' AND cacheKey LIKE 'history-id:%'") suspend fun clearFirebaseHistoryMappings()
+    @Query("DELETE FROM cached_metadata WHERE provider = 'firebase-sync' AND cacheKey LIKE 'history-id:%' AND cacheKey NOT IN (SELECT 'history-id:' || id FROM playback_history)") suspend fun pruneFirebaseHistoryMappings()
+    @Transaction @Query("SELECT * FROM playback_history ORDER BY playedAt DESC, id DESC LIMIT 5000") fun listeningHistory(): Flow<List<ListeningHistoryRow>>
+    @Query("DELETE FROM playback_history WHERE playedAt < :oldest OR id NOT IN (SELECT id FROM playback_history ORDER BY playedAt DESC, id DESC LIMIT 5000)") suspend fun trimHistory(oldest: Long)
     @Query("DELETE FROM playback_history") suspend fun clearHistory()
 }
 

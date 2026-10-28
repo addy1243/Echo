@@ -1,0 +1,79 @@
+[
+  {
+    "coordinate": "org.jetbrains.skia:skia:m132-a00c390e98-1",
+    "file": "skia-a00c390e98-source.zip",
+    "url": "https://codeload.github.com/JetBrains/skia/zip/a00c390e98",
+    "sha256": "663b826650c507d1948dc63bc2396a48884e0d573f846c2cc40740b4c7359b8f",
+    "bytes": 74404841
+  },
+  {
+    "coordinate": "org.jetbrains.skia.thirdparty:d3d12allocator:169895d529dfce00390a20e69c2f516066fe7a3b",
+    "file": "skia-d3d12allocator-169895d529df-source.tar.gz",
+    "url": "https://skia.googlesource.com/external/github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator.git/+archive/169895d529dfce00390a20e69c2f516066fe7a3b.tar.gz",
+    "sha256": "5275c54ae42f5c641702de4ea7b13b963603dfb334d49b74d122f478ea520a54",
+    "bytes": 732063
+  },
+  {
+    "coordinate": "org.jetbrains.skia.thirdparty:expat:624da0f593bb8d7e146b9f42b06d8e6c80d032a3",
+    "file": "skia-expat-624da0f593bb-source.tar.gz",
+    "url": "https://chromium.googlesource.com/external/github.com/libexpat/libexpat.git/+archive/624da0f593bb8d7e146b9f42b06d8e6c80d032a3.tar.gz",
+    "sha256": "0eeb8c1322bdd118b2678b052c1835b671aee8ef634dda6c659d9f91a6aebbad",
+    "bytes": 8406925
+  },
+  {
+    "coordinate": "org.jetbrains.skia.thirdparty:harfbuzz:a070f9ebbe88dc71b248af9731dd49ec93f4e6e6",
+    "file": "skia-harfbuzz-a070f9ebbe88-source.tar.gz",
+    "url": "https://chromium.googlesource.com/external/github.com/harfbuzz/harfbuzz.git/+archive/a070f9ebbe88dc71b248af9731dd49ec93f4e6e6.tar.gz",
+    "sha256": "32886b8774222f428ec15ab0574bf85d1ed7131f7668cca213605e152750643b",
+    "bytes": 36943206
+  },
+  {
+    "coordinate": "org.jetbrains.skia.thirdparty:icu:364118a1d9da24bb5b770ac3d762ac144d6da5a4",
+    "file": "skia-icu-364118a1d9da-source.tar.gz",
+    "url": "https://chromium.googlesource.com/chromium/deps/icu.git/+archive/364118a1d9da24bb5b770ac3d762ac144d6da5a4.tar.gz",
+    "sha256": "6c8ac2b46f039ef834a95d66e4b46f5920315543beef76233af0a2ad4317eafd",
+    "bytes": 51752937
+  },
+  {
+    "coordinate": "org.jetbrains.skia.thirdparty:libjpeg-turbo:ccfbe1c82a3b6dbe8647ceb36a3f9ee711fba3cf",
+    "file": "skia-libjpeg-turbo-ccfbe1c82a3b-source.tar.gz",
+    "url": "https://chromium.googlesource.com/chromium/deps/libjpeg_turbo.git/+archive/ccfbe1c82a3b6dbe8647ceb36a3f9ee711fba3cf.tar.gz",
+    "sha256": "e2b26d7954e5893ab78b5af91433dc6f67c66f6bbb6a8844878d9b307793526c",
+    "bytes": 2328951
+  },
+  {
+    "coordinate": "org.jetbrains.skia.thirdparty:libpng:ed217e3e601d8e462f7fd1e04bed43ac42212429",
+    "file": "skia-libpng-ed217e3e601d-source.tar.gz",
+    "url": "https://skia.googlesource.com/third_party/libpng.git/+archive/ed217e3e601d8e462f7fd1e04bed43ac42212429.tar.gz",
+    "sha256": "008f0565808c8f38b191f1be4a96b2ac6cff137dc9dd01ba38a52b7d639c0a8c",
+    "bytes": 1574253
+  },
+  {
+    "coordinate": "org.jetbrains.skia.thirdparty:libwebp:845d5476a866141ba35ac133f856fa62f0b7445f",
+    "file": "skia-libwebp-845d5476a866-source.tar.gz",
+    "url": "https://chromium.googlesource.com/webm/libwebp.git/+archive/845d5476a866141ba35ac133f856fa62f0b7445f.tar.gz",
+    "sha256": "a5e66611fe7cccd47a61eb862791b670e756a49542ddc473bd67a4ca0edb17cb",
+    "bytes": 3813262
+  },
+  {
+    "coordinate": "org.jetbrains.skia.thirdparty:spirv-cross:b8fcf307f1f347089e3c46eb4451d27f32ebc8d3",
+    "file": "skia-spirv-cross-b8fcf307f1f3-source.tar.gz",
+    "url": "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Cross/+archive/b8fcf307f1f347089e3c46eb4451d27f32ebc8d3.tar.gz",
+    "sha256": "2d3b5ee69a9b43bed847b6e8b64eb7153b2ee03fd8e62e76e4631eb7798b5b38",
+    "bytes": 1923082
+  },
+  {
+    "coordinate": "org.jetbrains.skia.thirdparty:wuffs:e3f919ccfe3ef542cfc983a82146070258fb57f8",
+    "file": "skia-wuffs-e3f919ccfe3e-source.tar.gz",
+    "url": "https://skia.googlesource.com/external/github.com/google/wuffs-mirror-release-c.git/+archive/e3f919ccfe3ef542cfc983a82146070258fb57f8.tar.gz",
+    "sha256": "8f301b951ec535c56abec7919faf2648f9b17facc60f2fdb2f4c1896f695aac7",
+    "bytes": 327719
+  },
+  {
+    "coordinate": "org.jetbrains.skia.thirdparty:zlib:646b7f569718921d7d4b5b8e22572ff6c76f2596",
+    "file": "skia-zlib-646b7f569718-source.tar.gz",
+    "url": "https://chromium.googlesource.com/chromium/src/third_party/zlib/+archive/646b7f569718921d7d4b5b8e22572ff6c76f2596.tar.gz",
+    "sha256": "1271768f40126ae3f89025a0d3ecde19c8ae08f2feb555418363dd7d4cfb5dde",
+    "bytes": 587303
+  }
+]

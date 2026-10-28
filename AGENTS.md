@@ -1,5 +1,13 @@
 # Echo Music working guidance
 
+## 0.2.0 release candidate (2026-10-28)
+
+- The owner explicitly authorized a combined GitHub release for Android0.2.0/code11 and Windows0.2.0. Source defaults match those versions. Earlier0.1.9/code10 references below document the prior published release; do not replace its tag/assets.
+- Primary account sync is Firebase in echo-85da4, with single-project Android/Desktop OAuth. Normal emulator account login and canonical Android/desktop/cloud equality passed, including automatic foreground sync. Physical phone access remains disallowed for this work (emulator only).
+- Windows has daily/manual update checks, verified MSI download and explicit interactive installation, and shares Android's icon. Public packages use GPL Temurin21 with matching complete runtime/native dependency source. The MSI is unsigned; actual Windows installer acceptance remains unverified.
+- Release verification/current publication state is recorded in docs/releases/0.2.0.md. Preserve library data, credentials, native source notices and the original Android signing identity.
+
+
 ## Current focus
 
 - Queue append/search-selected/new-shuffle operations now use app-UID-only service commands with bounded stable IDs, stale selected-occurrence checks and explicit shuffle traversal. Preserve existing upcoming order, duplicates, repeat-all wrap and current playback. Fresh shuffle starts randomly with all occurrences reachable; completed/idle Smart shuffle sessions must not retain a stale anchor. Read docs/QUEUE_ACTIONS.md. Sleep timers belong to the service, use a monotonic deadline, pause without clearing and cancel on service destruction; read docs/SLEEP_TIMER.md.

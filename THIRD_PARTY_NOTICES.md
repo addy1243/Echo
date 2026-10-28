@@ -4,6 +4,18 @@ Echo Music's original source is available under **GPL-3.0-or-later**, as authori
 
 The `licenses/` directory is bundled into the APK as assets. It contains full license texts and original notices. The generated `licenses/runtime/dependency-inventory.json` lists the exact resolved Maven coordinates, versions, artifact SHA-256 values and debug/release/desugaring configuration membership. `DEPENDENCIES.txt` provides a readable list; `ARTIFACT_NOTICES.txt` retains legal notices found in the actual upstream JARs/AARs, including nested `classes.jar` files. Those notices are copied without replacing their copyright holders or terms.
 
+## Windows distribution
+
+The desktop application also bundles the `licenses/` directory as resources. Its separate [desktop runtime inventory](licenses/desktop-runtime/dependency-inventory.json) records the exact 49 resolved desktop Maven components and hashes; [readable dependencies](licenses/desktop-runtime/DEPENDENCIES.txt) and [original embedded notices](licenses/desktop-runtime/ARTIFACT_NOTICES.txt) accompany it. Android-only dependencies are not presented as the Windows runtime graph.
+
+Desktop-specific components include Compose Multiplatform/Skiko (Apache-2.0, with native Skia's own terms), JNA (upstream LGPL-2.1-or-later/Apache-2.0 choices), and vlcj/vlcj-natives (GPL v3). The original [Skiko license](licenses/Skiko-LICENSE.txt) and [NOTICE](licenses/Skiko-NOTICE.txt) are retained. The pinned Skiko repository source replaces its native artifact's empty Maven source placeholder in the corresponding-source bundle. Native runtime jars require actual native source rather than a metadata-only source jar.
+
+The [Skia license](licenses/Skia-LICENSE.txt), [original SDK legal files](licenses/Skia-SDK-NOTICES.txt), and [native dependency notices](licenses/Skia-DEPENDENCY-NOTICES.txt) accompany the Windows renderer. Its full pinned Skia source and the ten external native dependencies used by the Windows build are recorded in [extra source inputs](licenses/desktop-runtime/extra-source-inputs.json). JNA's [original license choice](licenses/JNA-LICENSE.txt), [LGPL text](licenses/JNA-LGPL-2.1.txt), and [libffi copyright/license](licenses/JNA-libffi-LICENSE.txt) are retained; Echo uses JNA's Apache-2.0 option. The corresponding-source bundle includes the full JNA and vlcj repository archives with their native sources/build files, rather than only Maven Java-source classifiers.
+
+VLC itself is **not bundled**; installed 64-bit VLC 3 remains a separate runtime prerequisite. The Windows application image additionally contains the selected Java runtime's `legal/` notices. Its vendor, version and matching full source archive are pinned in `licenses/desktop-runtime/bundled-java.json`; that source archive accompanies the combined source bundle. Echo's GPL grant covers Echo's original code, not a blanket relicensing of all third-party files.
+
+For a combined Android/Windows release, first generate the desktop inventory with `-I scripts/desktop-license-inputs.init.gradle :desktop:writeDesktopRuntimeLicenseInputs`, then run `generate_notices.py --inputs build/desktop-runtime-license-inputs.json --output licenses/desktop-runtime`. Pass `--desktop-runtime-inputs build/desktop-runtime-license-inputs.json` to `package_corresponding_source.py` after committing the reviewed notices. It validates both committed inventories, every artifact/source hash, required native source, and the committed bundled-Java source metadata. Android-only packaging keeps its existing command and behavior.
+
 Important bundled components include:
 
 | Component | Original license | Source and notices |

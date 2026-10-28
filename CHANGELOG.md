@@ -1,6 +1,14 @@
 # Release history
 
-This file records development changes. A development build or an entry here does not mean an APK was published to GitHub Releases.
+## 0.2.0 — Android code11 and Windows 0.2.0 — prepared 2026-10-28
+
+Owner-authorized combined release; publication and public-download verification are pending. See [the complete release record](docs/releases/0.2.0.md).
+
+- Firebase playlists/favorites/saved-track/history sync on Android and desktop, with explicit consent, automatic foreground sync, conflict preservation, ordered duplicates, unlike/delete markers and history-clear revisions. Normal Android-emulator sign-in and canonical Android/desktop/cloud equality passed; no phone was accessed.
+- Desktop sidebar navigation and native YouTube/local playback, Smart shuffle, queue/repeat/sleep controls, Spotify link/file preview/import, guarded recording matching, discovery/save mixes and private offline downloads.
+- Windows daily/manual update discovery, verified cancellable MSI downloads and explicit interactive installation; Android-only releases do not hide Windows updates. Program files are separate from library data. Windows uses Android's icon.
+- Fixed metadata convergence, stale conflict-copy resurrection and chronological retention/clearing of imported history. All 197 JVM tests, Android build/lint/shrinking, 16 Room checks and seven candidate/platform checks pass.
+- Windows bundles GPL Temurin Java 21 with matching complete source and native dependency notices. VLC remains an external prerequisite; Windows MSI is unsigned. Actual Windows installation/upgrade and connected audio remain unverified/unimplemented respectively.
 
 ## 0.1.9 / versionCode 10 — published 2026-10-27
 
