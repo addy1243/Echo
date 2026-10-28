@@ -13,6 +13,11 @@ from generate_notices import local_path
 
 
 REPOSITORY_SOURCES = {
+    # AndroidX 1.1.7 shades protobuf-javalite 4.28.2; its Maven sources classifier is empty.
+    "androidx.datastore:datastore-preferences-external-protobuf:1.1.7": (
+        "protobuf-v28.2-source.zip",
+        "https://codeload.github.com/protocolbuffers/protobuf/zip/refs/tags/v28.2",
+        "0b7ef3506fc40ad840add138d37d443c4a9f5b0b307c25d516dbbef4dc0bc5ca"),
     "com.github.teamnewpipe:NewPipeExtractor:v0.26.5": (
         "NewPipeExtractor-v0.26.5-source.zip",
         "https://codeload.github.com/TeamNewPipe/NewPipeExtractor/zip/refs/tags/v0.26.5",
@@ -26,6 +31,19 @@ REPOSITORY_SOURCES = {
         "https://r8.googlesource.com/r8/+archive/c331a820ddae7dea41f41a04375b784486d0f705.tar.gz",
         "ae4a15707690552756886dcf1f9a4def079fdb09359897055c0b5dc8b2457a32"),
 }
+
+# Exact release snapshot linked by Android's official DataStore 1.1.7 release notes.
+DATASTORE_REPACKAGING_SOURCES = [
+    ("androidx-datastore-external-protobuf-420da5f-source.tar.gz",
+     "https://android.googlesource.com/platform/frameworks/support/+archive/420da5f291449f11801e378c6789a328a06ec6cb/datastore/datastore-preferences-external-protobuf.tar.gz",
+     "5c96e80bcb2c110d302b83d2293c974e68d46c73c97ddce97bea5a85b6a16519"),
+    ("androidx-repackaging-buildsrc-420da5f-source.tar.gz",
+     "https://android.googlesource.com/platform/frameworks/support/+archive/420da5f291449f11801e378c6789a328a06ec6cb/buildSrc/private/src/main/kotlin/androidx/build.tar.gz",
+     "8e9c90072a15444bef4d597651698a87abea6436ec915438e8e0a8326f1392df"),
+    ("androidx-repackaging-gradle-420da5f-source.tar.gz",
+     "https://android.googlesource.com/platform/frameworks/support/+archive/420da5f291449f11801e378c6789a328a06ec6cb/gradle.tar.gz",
+     "680bffdb0c62ea7cb29af2f5b7f94416f16e36bae5451fdb4662a5f0bcead681"),
+]
 
 
 def runtime_classes(data, extension):
@@ -115,6 +133,10 @@ def package(ref, runtime_inputs, source_inputs, output, desktop_runtime_inputs=N
             ".java", ".kt", ".scala", ".c", ".h", ".cpp", ".cc", ".m", ".mm", ".S") if runtime_classes(data, artifact.suffix) else ()
         digest = checked_archive(archive, source.get("sha256") or hashlib.sha256(archive.read_bytes()).hexdigest(), required)
         selected.append({"coordinate": coordinate, "file": archive.name, "url": source["url"], "sha256": digest})
+        if coordinate == "androidx.datastore:datastore-preferences-external-protobuf:1.1.7":
+            for filename, url, expected_hash in DATASTORE_REPACKAGING_SOURCES:
+                checked_archive(source_inputs / filename, expected_hash)
+                selected.append({"coordinate": coordinate + ":build-recipe", "file": filename, "url": url, "sha256": expected_hash})
     if desktop_runtime_inputs is not None:
         java_path = "licenses/desktop-runtime/bundled-java.json"
         java_bytes = git("show", commit + ":" + java_path)
