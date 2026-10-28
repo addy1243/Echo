@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.compose)
@@ -53,7 +55,7 @@ compose.desktop {
                 perUserInstall = true
                 dirChooser = false
             }
-            modules("jdk.httpserver")
+            modules("jdk.httpserver", "java.instrument", "java.net.http", "java.scripting", "jdk.dynalink", "jdk.unsupported")
         }
     }
 }
@@ -66,6 +68,17 @@ tasks.register<JavaExec>("playbackCheck") {
     mainClass.set("dev.echo.desktop.PlaybackCheckKt")
     jvmArgs("--add-modules=jdk.httpserver")
     if (providers.gradleProperty("echoLiveYouTube").orNull == "true") args("--youtube")
+    if (providers.gradleProperty("echoPackagedRuntimeCheck").orNull == "true") {
+        providers.gradleProperty("desktopJavaHome").orNull?.let { executable = "$it/bin/java.exe" }
+        doFirst {
+            val release = Properties().apply {
+                layout.buildDirectory.file("compose/binaries/main/app/EchoMusic/runtime/release").get().asFile.inputStream().use(::load)
+            }
+            val modules = release.getProperty("MODULES").trim('"').split(' ')
+            require(modules.all { it.matches(Regex("[A-Za-z][A-Za-z0-9_.]*")) })
+            jvmArgs("--limit-modules=${modules.joinToString(",")}")
+        }
+    }
 }
 
 tasks.register<JavaExec>("firebaseReadinessCheck") {
