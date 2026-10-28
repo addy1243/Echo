@@ -32,27 +32,37 @@ fun DesktopDiscoverScreen(
     var result by remember { mutableStateOf<DesktopDiscoveryResult?>(null) }
     var loading by remember { mutableStateOf(false) }
     var job by remember { mutableStateOf<Job?>(null) }
+    var requestId by remember { mutableStateOf(0L) }
     var tab by remember { mutableStateOf(0) }
     val artists = remember(library) { desktopDiscoveryArtists(library) }
     fun refresh() {
-        if (!onlineAllowed || loading) return
+        if (!onlineAllowed) return
+        val id = ++requestId
+        job?.cancel()
+        result = null
         loading = true
         job = scope.launch {
-            try { result = loadDesktopDiscovery(library, provider::search) }
+            try {
+                val loaded = loadDesktopDiscovery(library, provider::search)
+                if (requestId == id) result = loaded
+            }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { onError("Discoveries couldn't load. Try refreshing or searching another artist.") }
-            finally { loading = false }
+            catch (_: Exception) { if (requestId == id) onError("Discoveries couldn't load. Try refreshing or searching another artist.") }
+            finally { if (requestId == id) loading = false }
         }
     }
     LaunchedEffect(onlineAllowed, artists) {
-        if (!onlineAllowed) job?.cancel()
-        else if (result == null && artists.isNotEmpty()) refresh()
+        if (!onlineAllowed) {
+            requestId++
+            job?.cancel()
+            loading = false
+        } else refresh()
     }
-    DisposableEffect(Unit) { onDispose { job?.cancel() } }
+    DisposableEffect(Unit) { onDispose { requestId++; job?.cancel() } }
     Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Discover", fontSize = 30.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            if (loading) TextButton(onClick = { job?.cancel() }) { Text("Cancel") }
+            if (loading) TextButton(onClick = { requestId++; job?.cancel(); loading = false }) { Text("Cancel") }
             Button(onClick = { refresh() }, enabled = onlineAllowed && !loading) { Text("Refresh") }
         }
         Text(if (artists.isEmpty()) "Like or save songs to find more from your artists. Refresh can search this month's new music."

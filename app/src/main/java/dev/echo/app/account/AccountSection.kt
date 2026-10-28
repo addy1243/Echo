@@ -46,6 +46,13 @@ import kotlinx.coroutines.delay
             }
         }
     }
+    val email by vm.googleAccounts.email.collectAsStateWithLifecycle()
+    val connectedPlaybackEnabled by vm.connectedPlaybackEnabled.collectAsStateWithLifecycle()
+    LaunchedEffect(lifecycle, vm, email, connectedPlaybackEnabled) {
+        if (email != null && connectedPlaybackEnabled) {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { vm.runConnectedPlayback() }
+        } else vm.stopConnectedPlayback()
+    }
 }
 
 @Composable internal fun AccountSection(vm: EchoViewModel) {

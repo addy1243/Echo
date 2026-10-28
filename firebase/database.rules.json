@@ -1,0 +1,75 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "users": {
+      "$uid": {
+        "playback": {
+          ".read": "auth != null && auth.uid === $uid && auth.token.email_verified === true",
+          "devices": {
+            ".indexOn": ["updatedAt"],
+            "$device": {
+              ".write": "auth != null && auth.uid === $uid && auth.token.email_verified === true && $device.matches(/^[A-Za-z0-9_-]{1,128}$/)",
+              ".validate": "newData.hasChildren(['label','sessionId','updatedAt','controlEnabled','player'])",
+              "label": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80" },
+              "sessionId": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/)" },
+              "updatedAt": { ".validate": "newData.isNumber() && newData.val() >= now - 10000 && newData.val() <= now + 10000" },
+              "controlEnabled": { ".validate": "newData.isBoolean()" },
+              "player": {
+                ".validate": "newData.hasChildren(['isPlaying','positionMs','durationMs','trackRevision','queueRevision'])",
+                "trackId": { ".validate": "newData.isString() && newData.val().length <= 256 && newData.val().matches(/^[A-Za-z0-9_:-]+$/)" },
+                "title": { ".validate": "newData.isString() && newData.val().length <= 500" },
+                "artist": { ".validate": "newData.isString() && newData.val().length <= 300" },
+                "isPlaying": { ".validate": "newData.isBoolean()" },
+                "positionMs": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 604800000" },
+                "durationMs": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 604800000" },
+                "trackRevision": { ".validate": "newData.isString() && newData.val().length <= 256 && newData.val().matches(/^[A-Za-z0-9_:-]+$/)" },
+                "queueRevision": { ".validate": "newData.isString() && newData.val().length <= 256 && newData.val().matches(/^[A-Za-z0-9_:-]+$/)" },
+                "$other": { ".validate": false }
+              },
+              "ack": {
+                ".validate": "newData.hasChildren(['commandId','status','processedAt'])",
+                "commandId": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/)" },
+                "status": { ".validate": "newData.val() === 'processing' || newData.val() === 'applied' || newData.val() === 'rejected'" },
+                "processedAt": { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= now + 10000" },
+                "reason": { ".validate": "newData.isString() && newData.val().length <= 64" },
+                "$other": { ".validate": false }
+              },
+              "$other": { ".validate": false }
+            }
+          },
+          "commands": {
+            "$target": {
+              ".indexOn": ["createdAt"],
+              "$command": {
+                ".write": "auth != null && auth.uid === $uid && auth.token.email_verified === true && $target.matches(/^[A-Za-z0-9_-]{1,128}$/) && $command.matches(/^[A-Za-z0-9_-]{1,128}$/)",
+                ".validate": "newData.hasChildren(['id','action','targetSessionId','expectedTrackRevision','expectedQueueRevision','positionMs','issuedAt','expiresAt','sourceDeviceId','sourceSessionId','createdAt']) && (data.exists() || (newData.child('issuedAt').val() >= now - 30000 && newData.child('expiresAt').val() > now && newData.child('expiresAt').val() <= now + 30000))",
+                "id": { ".validate": "newData.val() === $command" },
+                "action": { ".validate": "newData.val() === 'PLAY' || newData.val() === 'PAUSE' || newData.val() === 'NEXT' || newData.val() === 'PREVIOUS' || newData.val() === 'SEEK'" },
+                "targetSessionId": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/)" },
+                "expectedTrackRevision": { ".validate": "newData.isString() && newData.val().length <= 256 && newData.val().matches(/^[A-Za-z0-9_:-]+$/)" },
+                "expectedQueueRevision": { ".validate": "newData.isString() && newData.val().length <= 256 && newData.val().matches(/^[A-Za-z0-9_:-]+$/)" },
+                "positionMs": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 604800000" },
+                "issuedAt": { ".validate": "newData.isNumber() && newData.val() > 0" },
+                "expiresAt": { ".validate": "newData.isNumber() && newData.val() > newData.parent().child('issuedAt').val() && newData.val() <= newData.parent().child('issuedAt').val() + 20000" },
+                "sourceDeviceId": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/)" },
+                "sourceSessionId": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9_-]{1,128}$/)" },
+                "createdAt": { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= now + 10000" },
+                "ack": {
+                  ".validate": "newData.hasChildren(['commandId','status','processedAt'])",
+                  "commandId": { ".validate": "newData.val() === $command" },
+                  "status": { ".validate": "newData.val() === 'processing' || newData.val() === 'applied' || newData.val() === 'rejected'" },
+                  "processedAt": { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= now + 10000" },
+                  "reason": { ".validate": "newData.isString() && newData.val().length <= 64" },
+                  "$other": { ".validate": false }
+                },
+                "$other": { ".validate": false }
+              }
+            }
+          },
+          "$other": { ".validate": false }
+        }
+      }
+    }
+  }
+}

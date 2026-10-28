@@ -1,81 +1,62 @@
 # Desktop account sync and connected audio
 
-Current status: library/account sync is implemented and verified in published 0.2.0; see [Firebase evidence](FIREBASE.md) and [release acceptance](releases/0.2.0.md). The connected playback/output/relay portions below remain a design, not implemented features.
+Current status: Android/Desktop library and account sync through Firestore is implemented and verified in published 0.2.0; see [Firebase evidence](FIREBASE.md) and [release acceptance](releases/0.2.0.md). The 0.2.1 candidate implements opt-in RTDB current-song visibility and remote controls while Echo is open; owner-only rules are published and live acknowledged emulator/native-Windows controls pass. Synchronized playback, output groups and audio relay remain future work. See [implementation, setup and verification](CONNECTED_PLAYBACK.md).
 
-Status: design and implementation boundaries, 2026-10-26. This document does not claim any live account transfer, remote control, synchronized playback or audio relay has been implemented or tested. The first desktop milestone is local desktop listening with a desktop layout. The owner requested all modes below; they are separate capabilities, not alternative interpretations of one feature.
+Status: design and implementation boundaries, 2026-10-28. Desktop listening and library sync are shipped. The 0.2.1 connected-control candidate is separate from synchronized playback or audio relay, and is not yet a published release.
 
 ## What the existing app actually provides
 
 - `core/Models.kt` is portable Kotlin/JVM. Stable provider track IDs and canonical source pages can cross platforms; expiring media URLs must continue to resolve locally.
-- `app/account/DrivePlaylistSync.kt` uploads one private playlist snapshot per device. Its envelope is `echo-device-playlists`, version 1. The existing foreground automatic task polls approximately once per minute. A stored device count is registered snapshots, not evidence that a device is currently online or playing.
-- `CloudPlaylistSnapshot.kt` deliberately removes favorites, history, local matches and file paths. Simply adding a desktop Drive client will not sync likes or history.
-- `PlaylistSyncMerge.kt` already preserves duplicate occurrences and makes deterministic conflict copies. Missing IDs mean deletion only against a known complete baseline; a previously unseen stale device can currently restore deleted playlists.
-- History uses device-local auto-increment `Long` IDs. A start and its terminal event are separate records. Actual listening duration excludes pause/buffering and is measured with a monotonic clock. Current retention is 90 days/5,000 events, with 500 displayed. Clearing history also clears local preference evidence. See [history semantics](HISTORY_NOTES.md).
-- Android sign-in delegates to AccountManager. Desktop needs a separate registered installed-app OAuth flow. Android local libraries remain device-wide on sign-out; sync must not silently change that behavior. See [account contract](ACCOUNTS.md).
+- `core/Models.kt` provides portable `Track` metadata and stable provider IDs. Android playback is owned by `EchoPlaybackService` and exposed locally through `MediaController`; desktop playback is exposed through `DesktopPlaybackState` and `DesktopPlayback` controls.
+- Firestore is the current optional account-sync backend in project `echo-85da4`. It syncs the bounded owner library document, not live playback state. Existing Drive snapshots are legacy data; do not make them the prerequisite or transport for connected playback.
+- Android local libraries remain device-wide on sign-out. Firebase identity, consent, token storage and account-switch handling must continue to follow [the account contract](ACCOUNTS.md).
 
-No Android data or live cloud state is changed by this design.
+This document describes the boundaries; current implementation and executed checks are recorded in [connected playback](CONNECTED_PLAYBACK.md).
 
 ## Delivery order
 
 | Stage | User-visible result | Completion evidence |
 |---|---|---|
-| 1. Desktop listening | Real desktop search, local/provider playback, persistent library and a desktop player layout | Actual audio progression/seek/pause/next, error handling, restart persistence and packaged launch |
-| 2. Complete library sync | Same playlists, likes and optionally history on both clients | Two-client live sign-in/consent; offline edits, unlikes, deletions, history clear and account switching converge without loss |
-| 3. Devices and remote control | Phone and laptop show each other's live song; either can control the selected player; both can play independent songs | Stale/offline indication, command acknowledgments, reconnect, foreground/background and cross-account denial checks |
+| 1. Desktop listening | Real desktop search, local/provider playback, persistent library and a desktop player layout | Actual audio progression/seek/pause/next, error handling, restart persistence and packaged launch; shipped in 0.2.0 |
+| 2. Complete library sync | Same playlists, likes, saved metadata and history on both clients | Firestore sync and normal emulator/desktop equality verified in 0.2.0; see [Firebase evidence](FIREBASE.md) |
+| 3. Devices and remote control | Phone and laptop show each other's live song; either can control the selected player; both can play independent songs | RTDB presence lease, command acknowledgments, reconnect, foreground/background and cross-account denial checks |
 | 4. Laptop output groups | One song through all selected laptop outputs; optional independent song/queue per output | Two real outputs, device removal/reconnect, volume and measured drift/latency |
 | 5. Cross-device listening group | Same recording plays on selected devices with measured synchronization | Real phone/laptop timing and drift measurements over wired/Bluetooth/network combinations |
 | 6. Audio relay and mix | Audio from phone and laptop can reach one chosen receiving output and be mixed | Echo-only relay, authorization, delay, dropout, feedback-loop and audio-level checks |
 
 Stages 3 and 4 can proceed independently after the playback engine exposes the necessary controls. Do not make a polished desktop mockup appear connected before the corresponding transport is working.
 
-## Stage 2: the smallest durable account-sync extension
+## Stage 2: library/account sync — shipped
 
-Reuse Drive for library metadata initially; it already has account consent and transport validation. Do not put frequent playback position updates or audio into Drive files. A dedicated real-time service can be introduced for connected playback without first replacing the working library storage.
-
-### Desktop account boundary
-
-Register a Desktop OAuth client under the same Google Cloud application/project as the Android client. Use the system browser, PKCE, unpredictable state and a short-lived loopback callback bound to the loopback interface. Verify returned identity and account binding. Keep refresh credentials in Windows credential protection, never plaintext library JSON, logs or source. Request Drive app-data access separately from ordinary listening and explain the uploaded categories. The same account email alone is not sufficient authorization evidence.
-
-Google's installed-app flow is documented in [Desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app). Drive app-data is application-scoped; verify that the registered desktop and Android clients actually see the same account's app-data during live acceptance rather than assuming a copied client ID makes them compatible. See [Drive app-data](https://developers.google.com/workspace/drive/api/guides/appdata).
-
-### Versioned format and safe rollout
-
-Add a new full-library sync envelope/file namespace, rather than changing the meaning of the existing version-1 playlist file. Ship support on Android and desktop together before enabling full sync. V1 clients must not be allowed to silently overwrite the new account state: explain the minimum compatible version and require an explicit migration/import path for legacy snapshots. Export a local metadata backup before the first migration; keep it independent of the rolling sync snapshots.
-
-The full state needs:
-
-- Account binding, stable installation ID, format version, device revision and acknowledged merge baselines.
-- Playlist metadata, ordered occurrences and tracks, with existing conflict-copy behavior.
-- Explicit playlist deletion records retained until all participating devices have acknowledged them; retire long-offline devices explicitly before compacting tombstones. Missing records in a partial/failed fetch are never deletion evidence.
-- Likes **and unlikes** with mutation identity and causal revision. A union of liked IDs cannot implement unlike. Concurrent contradictory edits need a documented deterministic rule; use causal order and a stable tie-break for concurrent changes, not wall-clock timestamps alone. Carry track metadata for liked songs not referenced by a playlist.
-- History with stable cross-device identity. For existing rows, a persisted installation identity plus row ID can supply a deterministic migration key; reinstall identities must not be reused. New events also need a stable listening-occurrence ID so starts and terminal events stay related. Re-reading snapshots must not create another play or increase listened time.
-- An account-history clear operation/epoch acknowledged by every client. Old snapshots must not restore cleared events. Old-epoch events are rejected; an offline client needs to observe the new epoch before its subsequent history can join the account history. Local-only clear and account-wide clear must be distinct actions.
-
-Do not sync derived preference totals: recompute from de-duplicated events, preserving actual listening-time semantics. A synchronized group should mark the common group occurrence so account recommendations can avoid counting the same group listen once per speaker; retain device playback diagnostics separately. Independent songs remain independent listening events.
-
-History upload is a new privacy behavior. Add a clear opt-in and retention explanation; do not silently upload old local history merely because playlist sync was previously enabled. The owner's request authorizes implementing the feature; the migration still needs a comprehensible in-app choice for each existing installation. Disconnecting sync retains local playlists/files and stops further upload. Account switching must not automatically upload the previous account's cloud-derived history to the next account.
-
-Keep current URL/identity/body-size validation, cancellation, rate-limit handling and guarded transactional apply. Never sync audio, signed stream URLs, OAuth credentials, private filesystem paths or another device's numeric MediaStore IDs. Remote-local tracks remain metadata until explicitly matched to a source on the receiving device.
-
-Tests must cover duplicate sync delivery, retries after partial failure, migration preservation, simultaneous playlist edits, stale-device deletes, like/unlike conflicts, liked-only tracks, duplicate history starts/terminals, history clearing against an offline device, invalid identities, interrupted apply and account switching. Two-device live acceptance remains separate from fixture tests.
+Firestore in `echo-85da4` is the account library source of truth for the implemented playlist, favorite, saved-track and history sync. Preserve its owner-only rules, explicit consent, bounded payload, merge semantics and local-data protections. Connected playback is a separate RTDB feature; it must not add frequent position writes to the Firestore library document or send audio through either database.
 
 ## Stage 3: current devices and independent playback
 
-Drive snapshots are unsuitable as a live presence/command channel. Google Drive push notifications require a public HTTPS receiving server and report resource changes, not a low-latency player session. See [Drive notification requirements](https://developers.google.com/workspace/drive/api/guides/push). Rapid polling adds quota/latency without solving clock coordination.
+Use RTDB in the existing Firebase project `echo-85da4` for account-scoped live state and commands; do not add another playback server for the first milestone. RTDB's authenticated client listeners provide the update channel. The clients already hold Firebase sessions and platform playback APIs, so the shared Kotlin REST/OkHttp path can be extended without changing Firestore library sync.
 
-Use an authenticated WebSocket service for account-scoped device sessions. [WebSocket](https://www.rfc-editor.org/rfc/rfc6455) supplies two-way transport; Echo must supply authentication, per-account authorization, expiry and command semantics. A local-network prototype can prove timing, but it does not satisfy account-wide use over different networks.
+### RTDB data and command contract
 
-Minimum protocol:
+Under `/users/{uid}` keep device state separate from the library document:
 
-- Stable device ID and replaceable connection/session ID, capability list, human-friendly name and heartbeat lease. Show last seen; an expired lease is offline, not paused.
-- One or more player/session IDs per device. Current track ID, occurrence ID, play/pause/buffer/error state, bounded position, rate, queue revision and state sequence. Exchange canonical metadata, not raw private paths or resolved URLs.
-- Commands target a specific player and include a unique command ID, expected session/revision and expiry. Acknowledge applied/rejected/unsupported; retries are idempotent. Reject stale commands after reconnect and never treat an optimistic UI update as confirmed playback.
-- Remote control is an explicit setting per receiving device. Show the controller/device being targeted. Sign-out, revoke-device and account changes immediately stop access and remove live credentials. Authenticate the backend independently; do not treat arbitrary Google Drive access tokens as backend identity tokens.
-- Separate songs are normal independent players under the same account. Starting music on the laptop does not automatically pause the phone unless the user selects transfer/join. Transfer prepares the target and waits for readiness before pausing the source, preserving the source on failure.
+- `/devices/{deviceId}` contains a replaceable session ID, bounded device label/capabilities, active player state, sequence/revision, stable track ID, safe display metadata, playback state, position, playback rate and server-updated heartbeat. Do not send local paths, temporary/resolved media URLs, request headers, audio, or credentials.
+- `/commands/{targetDeviceId}/{commandId}` contains a bounded command (`play`, `pause`, `seek`, `next`, `previous` or track selection), target session, expected state revision and expiry. The target rejects expired/stale/unsupported commands, applies valid commands through its existing player API, then records an applied/rejected acknowledgment. Command IDs make retries idempotent.
+- Write state on meaningful player transitions and seeks, with a low-rate heartbeat while active; estimate displayed remote position from the last position, rate and timestamp instead of writing every playback tick. Expired heartbeat means **offline**, not paused. Keep the service usable when RTDB is unavailable.
+
+Rules deny access by default and allow only verified Firebase UID access to that UID's narrowly validated subtree. Never use public test-mode rules. This protects data across accounts. A device ID is client supplied, however, so same-account clients are not distinguishable by these rules; per-device authorization or enforceable remote-control opt-in needs trusted device registration/backend-issued claims. Until then, remote control is a same-account capability and the receiving app must visibly let its owner disable it.
+
+The current clients use REST, not the Firebase Realtime Database SDK. REST supports authenticated Server-Sent Event streams, but not the SDK's `/.info/connected` and server-side `onDisconnect` presence lifecycle. REST-only presence therefore uses a server-timestamp heartbeat lease; after crashes/disconnects clients show offline once the lease expires, while stale records may remain stored until the device reconnects or a cleanup path runs. RTDB REST streaming authenticates with the Firebase ID token in an `auth` query parameter, so never log the tokenized URL. If reliable immediate disconnect cleanup is required, add the RTDB SDK presence primitives and validate Android/Desktop dependency compatibility before implementation. See [RTDB REST streaming](https://firebase.google.com/docs/reference/rest/database/), [REST authentication](https://firebase.google.com/docs/database/rest/auth), and [RTDB presence](https://firebase.google.com/docs/database/android/offline-capabilities).
+
+### Console setup before live implementation
+
+In Firebase Console, select `echo-85da4`, create a Realtime Database instance in **production/locked mode**, and choose its region. Supply the exact Console-provided `databaseURL`/instance hostname to the implementation before enabling any live feature. Then prepare and emulator-test a separate RTDB rules file: deny by default, owner-only paths, strict key and payload validation, no root listing. Do not deploy permissive rules to make the client work. Console instance creation, rules deployment and live client acceptance are not done by this design document.
+
+Connect only while the Android playback service is active or the desktop app can maintain its session. Do not start an indefinite Android service solely to advertise idle presence. Treat phone and laptop as independent players; remote control does not pause the source or transfer audio unless the user explicitly chooses a transfer/join flow and the target confirms readiness.
+
+This protocol shares track identity/metadata and control intent, **not audio**. For `youtube:<videoId>`, each target resolves the stable recording locally using its own provider; other stable IDs likewise require a playable local/remote source on that device. Metadata alone cannot guarantee the same recording. Same-song group playback additionally needs prebuffering, ready acknowledgments, scheduled start on an estimated common clock, drift correction and hardware measurements. Actual audio relay/mixing is a later separate feature.
 
 Attach Android presence to the existing playback service while music is active. An idle closed app is not guaranteed to stay reachable; label unsupported/background states honestly. Do not launch indefinite background services merely to simulate being online. Android foreground-service types and start restrictions still apply: [service documentation](https://developer.android.com/develop/background-work/services/fgs/service-types).
 
-Owner provisioning needed: a selected service host, HTTPS/WSS domain, verified identity/auth configuration, account access rules, device revocation, storage/retention policy, deployment credentials and cost limits. There is currently no connected-playback server implementation or provisioned service in this repository. These are future implementation requirements, not capabilities that can be enabled by a desktop settings toggle. Keep desktop playback usable while this is unconfigured.
+Before release, verify rule enforcement with the RTDB emulator, then live presence, cross-account denial, command expiry/acknowledgment, reconnect, service foreground/background and opt-out behavior on emulator plus desktop. RTDB transport, separate owner-only rules and platform adapters now exist in the 0.2.1 candidate. A settings toggle alone does not prove a live connection; state/acknowledgments and lease expiry determine availability. Keep local playback usable while setup is pending.
 
 ## Stages 4 and 5: same song on multiple outputs/devices
 
@@ -94,7 +75,3 @@ This is actual audio transport and mixing, beyond remote control. The first scop
 Evaluate a mature real-time media implementation rather than inventing a codec/transport. [WebRTC](https://www.w3.org/TR/webrtc/) defines real-time media communication, but Android/JVM library selection, licensing, packaging, signaling and TURN operations still need an implementation spike. A receiver needs independent jitter buffers, decoded PCM mixing, per-source gain, clipping prevention and loop detection. Relaying the mixed output back to its own input must be prohibited. Signed provider URLs are not a substitute for relaying audio; forwarding them also breaks the existing private-source boundary.
 
 For the same recording available on both clients, local synchronized rendering is cheaper than sending audio. Relay is needed for genuinely remote/device-local audio or a combined mix. Only audio Echo can legitimately decode may enter this path; provider restrictions remain in force. Verify start/stop/revoke, latency, dropouts, sleep/reconnect, incompatible formats and two different songs reaching one output before calling it complete.
-
-## Next concrete work after desktop playback
-
-First prove desktop Google sign-in and a **manual playlist-only** transfer with the existing Android version, using a registered Desktop client and the same Cloud project. This validates the real account/app-data boundary without exposing history or changing the Android database. Then implement full-library v2 plus Android migration/tests as a coordinated change. In parallel, make a short local multi-output engine spike to confirm the selected playback engine can route to two actual Windows endpoints; keep its results separate from account sync and cross-device timing claims.

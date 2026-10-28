@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.echo.app.account.AccountSection
+import dev.echo.app.account.ConnectedPlaybackSection
 import java.text.DateFormat
 import java.util.Date
 
@@ -20,6 +21,7 @@ internal fun ProfileScreen(vm: EchoViewModel) {
     LazyColumn(Modifier.fillMaxSize().testTag("profile-screen"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Your profile", style = MaterialTheme.typography.headlineMedium) }
         item { AccountSection(vm) }
+        item { ConnectedPlaybackSection(vm) }
         item {
             HorizontalDivider()
             Text("Your playlists", style = MaterialTheme.typography.titleLarge)
@@ -37,7 +39,7 @@ internal fun ProfileScreen(vm: EchoViewModel) {
                     Text("Last synced ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(lastSynced!!))}", style = MaterialTheme.typography.bodySmall)
                 }
             }
-            Text("Live device status and remote playback controls are separate features and aren't available yet. A saved library does not mean another device is online.", style = MaterialTheme.typography.bodySmall)
+            Text("A saved library does not mean another device is online. Connected playback runs only while Echo is open on an opted-in device.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

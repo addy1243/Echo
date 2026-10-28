@@ -1,8 +1,10 @@
 # Echo Music
 
+The unpublished 0.2.1 candidate adds opt-in [connected playback](docs/CONNECTED_PLAYBACK.md): see the other device's current song and control play/pause, previous/next and seeking. Live emulator/native-Windows control acceptance passed; published 0.2.0 does not contain these controls.
+
 Native Kotlin Android personal music player. Android 8.0+; Kotlin, Compose Material 3, Room, Hilt, Media3 and DataStore. Open this folder in Android Studio.
 
-A **Windows desktop development preview** lives in `desktop`: desktop navigation, YouTube/local playback, Smart shuffle, Spotify imports/recording matching, discovery, playlists, favorites, history, private offline downloads and daily/manual Windows update checks. It requires installed 64-bit VLC 3 and uses Android's Echo icon. Normal Android-emulator sign-in/sync and canonical desktop/Firebase library equality passed; automatic library sync is enabled while both apps are open. No physical phone was updated. See [desktop status](docs/DESKTOP.md), [Firebase setup](docs/FIREBASE.md), [Windows updates](docs/DESKTOP_UPDATES.md) and [connected audio design](docs/DESKTOP_SYNC_DESIGN.md). Connected playback remains pending.
+A **Windows desktop development preview** lives in `desktop`: desktop navigation, YouTube/local playback, Smart shuffle, Spotify imports/recording matching, discovery, playlists, favorites, history, private offline downloads and daily/manual Windows update checks. It requires installed 64-bit VLC 3 and uses Android's Echo icon. Normal Android-emulator sign-in/sync and canonical desktop/Firebase library equality passed; automatic library sync is enabled while both apps are open. No physical phone was updated. See [desktop status](docs/DESKTOP.md), [Firebase setup](docs/FIREBASE.md), [Windows updates](docs/DESKTOP_UPDATES.md) and [connected audio design](docs/DESKTOP_SYNC_DESIGN.md). The 0.2.1 connected-control candidate is verified; synchronized listening, output groups and audio relay remain future work.
 
 Echo Music's original source is licensed under GPL-3.0-or-later; see [LICENSE](LICENSE), [COPYING](COPYING) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms and matching source. Settings → Licenses & source displays the packaged notices.
 

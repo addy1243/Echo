@@ -3,6 +3,7 @@ package dev.echo.app
 import android.content.ComponentName
 import android.content.Context
 import android.net.Uri
+import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -32,14 +33,24 @@ import dev.echo.data.provider.YouTubeProvider
 import dev.echo.playback.EchoPlaybackService
 import dev.echo.app.update.AppUpdater
 import dev.echo.app.update.UpdateRelease
+import dev.echo.data.firebase.ConnectedDevice
+import dev.echo.data.firebase.ConnectedPlaybackAction
+import dev.echo.data.firebase.ConnectedPlaybackClient
+import dev.echo.data.firebase.ConnectedPlaybackCommand
+import dev.echo.data.firebase.ConnectedPlaybackState
+import dev.echo.data.firebase.ConnectedPlayerSnapshot
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -107,7 +118,10 @@ class EchoViewModel @Inject constructor(
             override fun onError(controller: MediaController, sessionError: SessionError) { message = sessionError.message }
         }).buildAsync()
     private val listener = object : Player.Listener {
-        override fun onEvents(player: Player, events: Player.Events) { sync(); queueItems = queueSnapshot(player) }
+        override fun onEvents(player: Player, events: Player.Events) {
+            if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) connectedPlaybackGeneration++
+            sync(); queueItems = queueSnapshot(player)
+        }
         override fun onPlayerError(error: PlaybackException) { message = "Playback failed: ${error.errorCodeName}. Check the source or retry." }
     }
     var accountBusy by mutableStateOf(false); private set
@@ -118,6 +132,13 @@ class EchoViewModel @Inject constructor(
     private var pendingGoogleAccount: android.accounts.Account? = null
     private var driveAccount: String? = null
     private var accountJob: Job? = null
+    private val connectedPlaybackPrefs = context.getSharedPreferences("connected-playback", Context.MODE_PRIVATE)
+    val connectedPlaybackEnabled = MutableStateFlow(connectedPlaybackPrefs.getBoolean("enabled", false))
+    val connectedPlaybackState = MutableStateFlow(ConnectedPlaybackState())
+    internal val connectedPlaybackDeviceIdForUi = connectedPlaybackPrefs.getString("device-id", null)
+        ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,64}")) }
+        ?: java.util.UUID.randomUUID().toString().also { connectedPlaybackPrefs.edit().putString("device-id", it).apply() }
+    private var connectedPlaybackClient: ConnectedPlaybackClient? = null
 
     fun signInGoogle() { if (!accountBusy) googleAccountChoice = googleAccounts.chooseAccountIntent() }
     fun accountChoiceLaunched() { googleAccountChoice = null }
@@ -133,6 +154,7 @@ class EchoViewModel @Inject constructor(
     }
     fun signOutGoogle() = accountAction {
         pendingGoogleAccount = null; driveAccount = null; driveResolution = null; googleAccountChoice = null
+        setConnectedPlaybackEnabled(false)
         firebaseSync.signOut(googleAccounts.email.value)
         googleAccounts.signOut()
         accountStatus = "Signed out. This device's library and downloads were kept."
@@ -164,6 +186,110 @@ class EchoViewModel @Inject constructor(
             }
         }
     }
+    fun setConnectedPlaybackEnabled(enabled: Boolean) {
+        if (enabled && (googleAccounts.email.value == null || !firebaseConfigured)) return
+        connectedPlaybackPrefs.edit().putBoolean("enabled", enabled).apply()
+        connectedPlaybackEnabled.value = enabled
+        if (!enabled) stopConnectedPlayback()
+    }
+
+    suspend fun runConnectedPlayback() {
+        val email = googleAccounts.email.value?.takeIf { connectedPlaybackEnabled.value } ?: return
+        val player = ConnectedPlaybackClient(
+            databaseUrl = dev.echo.data.firebase.EchoFirebaseProject.realtimeDatabaseUrl,
+            deviceId = connectedPlaybackDeviceIdForUi,
+            label = "Android · ${android.os.Build.MODEL.orEmpty().take(32)}",
+            sessionProvider = { firebaseSync.existingSession(email) },
+            snapshot = { withContext(Dispatchers.Main.immediate) { connectedPlayerSnapshot() } },
+            executeCommand = { withContext(Dispatchers.Main.immediate) {
+                check(connectedPlaybackEnabled.value && googleAccounts.email.value == email) { "Connected playback was disabled or the account changed" }
+                executeConnectedCommand(it)
+            } },
+        )
+        connectedPlaybackClient = player
+        val collector = viewModelScope.launch { player.state.collect { connectedPlaybackState.value = it } }
+        var failure: String? = null
+        try { player.run() }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) {
+            failure = error.message ?: "Connect Firebase before enabling playback."
+            connectedPlaybackState.value = ConnectedPlaybackState(message = failure)
+        }
+        finally {
+            val finalMessage = failure ?: player.state.value.message ?: "Connected playback stopped."
+            player.close()
+            collector.cancel()
+            if (connectedPlaybackClient === player) {
+                connectedPlaybackClient = null
+                connectedPlaybackState.value = ConnectedPlaybackState(message = finalMessage)
+            }
+        }
+    }
+
+    fun stopConnectedPlayback() {
+        connectedPlaybackClient?.close()
+        connectedPlaybackClient = null
+        connectedPlaybackState.value = ConnectedPlaybackState(message = "Connected playback stopped.")
+    }
+
+    fun sendConnectedPlaybackCommand(target: ConnectedDevice, action: ConnectedPlaybackAction, positionMs: Long = 0L) {
+        val client = connectedPlaybackClient ?: run {
+            connectedPlaybackState.value = connectedPlaybackState.value.copy(message = "Connected playback is offline.")
+            return
+        }
+        viewModelScope.launch {
+            try { client.sendCommand(target, action, positionMs) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                connectedPlaybackState.value = connectedPlaybackState.value.copy(message = error.message ?: "Remote control failed.")
+            }
+        }
+    }
+
+    private fun connectedPlayerSnapshot(): ConnectedPlayerSnapshot {
+        val player = controller
+        val count = player?.mediaItemCount ?: 0
+        val ids = if (player != null && count <= 10_000) List(count) { player.getMediaItemAt(it).mediaId } else emptyList()
+        val queueRevision = stableRevision(ids.mapIndexed { index, id -> "$index:$id" }.joinToString("\n"))
+        val index = player?.currentMediaItemIndex ?: -1
+        val item = player?.currentMediaItem
+        val mediaId = item?.mediaId.orEmpty()
+        val trackRevision = stableRevision("$connectedPlaybackGeneration:$queueRevision:$index:$mediaId")
+        val safeTrackId = mediaId.takeIf { it.matches(Regex("[A-Za-z0-9:_-]{1,256}")) && !it.startsWith("local:") }
+        return ConnectedPlayerSnapshot(
+            trackId = safeTrackId,
+            title = item?.mediaMetadata?.title?.toString()?.take(256),
+            artist = item?.mediaMetadata?.artist?.toString()?.take(256),
+            isPlaying = player?.isPlaying == true,
+            positionMs = player?.currentPosition?.coerceAtLeast(0) ?: 0L,
+            durationMs = player?.duration?.takeIf { it >= 0 } ?: 0L,
+            trackRevision = trackRevision,
+            queueRevision = queueRevision,
+        )
+    }
+
+    private var connectedPlaybackGeneration = 0L
+
+    private fun executeConnectedCommand(command: ConnectedPlaybackCommand) {
+        check(Looper.myLooper() == Looper.getMainLooper()) { "Playback commands must run on the app thread" }
+        val player = controller ?: error("Playback service is offline")
+        val fresh = connectedPlayerSnapshot()
+        check(fresh.trackRevision == command.expectedTrackRevision) { "The playing song changed" }
+        check(fresh.queueRevision == command.expectedQueueRevision) { "The queue changed" }
+        when (command.action) {
+            ConnectedPlaybackAction.PLAY -> { if (player.playbackState == Player.STATE_IDLE) player.prepare(); player.play() }
+            ConnectedPlaybackAction.PAUSE -> player.pause()
+            ConnectedPlaybackAction.NEXT -> player.seekToNextMediaItem()
+            ConnectedPlaybackAction.PREVIOUS -> player.seekToPreviousMediaItem()
+            ConnectedPlaybackAction.SEEK -> {
+                require(command.positionMs in 0..fresh.durationMs) { "Seek position is outside the song" }
+                player.seekTo(command.positionMs)
+            }
+        }
+    }
+
+    private fun stableRevision(value: String): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8)).take(16).joinToString("") { "%02x".format(it) }
     fun driveResolutionLaunched() { driveResolution = null }
     fun completeDriveAuthorization(approved: Boolean) = accountAction {
         val signIn = pendingGoogleAccount.also { pendingGoogleAccount = null }
@@ -504,7 +630,7 @@ class EchoViewModel @Inject constructor(
     }
     fun spotifyCallback(uri: Uri) = runAction("Spotify connected") { spotify.handleCallback(uri); spotifyPlaylists = spotify.playlists() }
     fun fetchSpotify() = runAction { spotifyPlaylists = spotify.playlists() }
-    override fun onCleared() { controller?.removeListener(listener); MediaController.releaseFuture(connection) }
+    override fun onCleared() { stopConnectedPlayback(); controller?.removeListener(listener); MediaController.releaseFuture(connection) }
 }
 
 internal fun firstPlayableIndex(items: List<Track>, offlineOnly: Boolean = false, downloaded: Set<String> = emptySet()): Int =

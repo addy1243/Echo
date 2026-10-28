@@ -109,6 +109,35 @@ class FirebaseAccountSync @Inject constructor(
         }
     }
 
+    /** Uses only the already-linked account and encrypted Firebase session; never starts Google UI. */
+    suspend fun existingSession(expectedAccount: String): FirebaseSession = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            val ticket = generation.get()
+            val subject = accounts.subject?.takeIf { it.isNotBlank() }
+                ?: error("Sign in with Google before connecting playback")
+            check(accounts.email.value.equals(expectedAccount, true)) { "Google account changed; reconnect playback" }
+            val config = EchoFirebaseProject.configuration()
+            val key = accountKey(config.projectId, expectedAccount)
+            val (cached, cachedSubject) = credentials.get(key)?.let(::readSession)
+                ?: error("Connect Firebase once in Profile before using connected playback")
+            require(cachedSubject == subject && cached.email.equals(expectedAccount, true)) {
+                "Firebase session does not match the current Google account; reconnect Firebase"
+            }
+            val session = if (cached.expiresAt <= System.currentTimeMillis() + 60_000)
+                FirebaseAuthRest(config).refresh(cached) else cached
+            check(generation.get() == ticket && accounts.email.value.equals(expectedAccount, true) && accounts.subject == subject) {
+                "Account changed; connected playback stopped"
+            }
+            if (session !== cached) synchronized(accountLock) {
+                check(generation.get() == ticket && accounts.email.value.equals(expectedAccount, true) && accounts.subject == subject) {
+                    "Account changed; connected playback stopped"
+                }
+                credentials.set(key, sessionJson(session, subject))
+            }
+            session
+        }
+    }
+
     fun signOut(expectedEmail: String?) {
         synchronized(accountLock) {
             generation.incrementAndGet()

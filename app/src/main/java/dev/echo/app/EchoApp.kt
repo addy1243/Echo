@@ -56,6 +56,8 @@ private val Ink = Color(0xFF101014)
 @Composable
 fun EchoApp(vm: EchoViewModel) {
     dev.echo.app.account.AccountSyncHost(vm)
+    val connected by vm.connectedPlaybackState.collectAsStateWithLifecycle()
+    val otherPlayers = connected.devices.filter { it.id != vm.connectedPlaybackDeviceIdForUi && it.controlEnabled && it.player.title != null }
     val nav = rememberNavController()
     val entry by nav.currentBackStackEntryAsState()
     LaunchedEffect(vm.requestedDownloads, entry) {
@@ -106,6 +108,18 @@ fun EchoApp(vm: EchoViewModel) {
                 navigationIcon = { if (route !in listOf("home", "search", "library", "profile", "settings")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = { IconButton(onClick = { nav.navigate("settings") { launchSingleTop = true } }) { Icon(Icons.Default.Settings, "Settings") } }) },
             bottomBar = { if (route != "player") Column {
+                if (otherPlayers.isNotEmpty()) Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
+                    .testTag("connected-playback-banner").clickable(role = Role.Button) {
+                        nav.navigate("profile") { popUpTo("home"); launchSingleTop = true }
+                    }.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Devices, null, tint = Violet, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (otherPlayers.size == 1) otherPlayers.first().let {
+                        "${if (it.player.isPlaying) "Playing" else "Paused"} on ${it.label}: ${it.player.title}"
+                    } else "${otherPlayers.size} connected players", modifier = Modifier.weight(1f), maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                    Text("Controls", color = Violet, fontSize = 12.sp)
+                }
                 if (vm.current != null && route != "player") MiniPlayer(vm) { nav.navigate("player") { launchSingleTop = true } }
                 Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).navigationBarsPadding().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                     listOf(Triple("home", "Home", Icons.Default.Home), Triple("search", "Search", Icons.Default.Search), Triple("library", "Library", Icons.Default.LibraryMusic), Triple("profile", "Profile", Icons.Default.Person)).forEach { (key, label, icon) ->

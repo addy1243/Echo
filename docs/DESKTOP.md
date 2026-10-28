@@ -26,6 +26,10 @@ The per-user MSI installs program files under `%LOCALAPPDATA%\EchoMusicDesktop`,
 - Private manual downloads with integrity checks, progress, Cancel/Retry/Remove and offline-only playback. Transfers run while Echo is open; Retry restarts interruptions. Frequent-song automatic caching is absent.
 - Optional Google/Firebase library sync and daily/manual Windows update checks with verified MSI staging and explicit interactive installation.
 
+## Connected playback candidate
+
+The unpublished 0.2.1 candidate adds opt-in current-song visibility and remote controls through Realtime Database while Echo is open. It requires new builds on both platforms and published owner-only RTDB rules; see [setup and executed checks](CONNECTED_PLAYBACK.md). Audio transfer, synchronized listening and multi-output playback remain separate work.
+
 ## Accounts and sync
 
 Both clients use **echo-85da4**. After separate consent, Firebase shares playlists, saved-track metadata, favorites and bounded history, including deletion/unlike markers and account-wide history clearing. Audio, credentials, local paths and temporary streams are excluded. Sign-out retains the device-wide local library.

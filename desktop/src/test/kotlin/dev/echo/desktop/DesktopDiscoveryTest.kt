@@ -35,14 +35,27 @@ class DesktopDiscoveryTest {
 
     @Test fun emptyLibraryNeverFabricatesPersonalSeedsAndCancellationStopsSearches() = runBlocking {
         var calls = 0
-        val result = loadDesktopDiscovery(DesktopLibraryState(), { calls++; emptyList() })
+        val queries = mutableListOf<String>()
+        val result = loadDesktopDiscovery(DesktopLibraryState(), { query -> calls++; queries += query; listOf(song("new")) }, YearMonth.of(2026, 10))
         assertEquals(1, calls)
+        assertEquals(listOf("new music releases 2026-10"), queries)
         assertTrue(result.discovery.isEmpty())
+        assertEquals(listOf(song("new")), result.newMusic)
         calls = 0
         try {
             loadDesktopDiscovery(DesktopLibraryState(tracks = listOf(song("a"), song("b"))), { calls++; throw CancellationException() })
             fail("Expected cancellation")
         } catch (_: CancellationException) { }
         assertEquals(1, calls)
+    }
+
+    @Test fun changedLibraryArtistsSeedFreshPersonalizedSearches() = runBlocking {
+        val queries = mutableListOf<String>()
+        val search: suspend (String) -> List<Track> = { query -> queries += query; listOf(song(query)) }
+        val before = loadDesktopDiscovery(DesktopLibraryState(tracks = listOf(song("one", "Old artist"))), search, YearMonth.of(2026, 10))
+        val after = loadDesktopDiscovery(DesktopLibraryState(tracks = listOf(song("two", "Synced artist"))), search, YearMonth.of(2026, 10))
+        assertEquals(listOf("Old artist"), before.artists)
+        assertEquals(listOf("Synced artist"), after.artists)
+        assertTrue("Synced artist" in queries)
     }
 }

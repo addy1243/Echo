@@ -1,6 +1,8 @@
 package dev.echo.desktop
 
 import dev.echo.core.Track
+import dev.echo.data.firebase.ConnectedPlaybackAction
+import dev.echo.data.firebase.ConnectedPlaybackCommand
 import dev.echo.data.provider.YouTubeProvider
 import java.io.Closeable
 import java.io.File
@@ -205,30 +207,57 @@ class DesktopPlayback(
         }
     }
 
-    fun toggle() { if (!closed) scope.launch {
-        if (state.value.loading) return@launch
-        if (state.value.playing) { wantsPlaying = false; stopCounting(); player?.controls()?.setPause(true); update { it.copy(playing = false) } }
-        else if (state.value.current != null) {
+    fun toggle() { if (!closed) scope.launch { if (!state.value.loading) setPlayingNow(!state.value.playing) } }
+
+    private fun setPlayingNow(playing: Boolean) {
+        if (state.value.loading) { wantsPlaying = playing; return }
+        if (!playing) { wantsPlaying = false; stopCounting(); player?.controls()?.setPause(true); update { it.copy(playing = false) } }
+        else if (state.value.current != null && !state.value.playing) {
             wantsPlaying = true
             if (state.value.error != null || state.value.positionMs >= state.value.durationMs && state.value.durationMs > 0) start(state.value.queue, state.value.index)
             else player?.controls()?.play()
         }
-    } }
-    fun next() { if (!closed) scope.launch {
+    }
+    fun next() { if (!closed) scope.launch { nextNow() } }
+    private fun nextNow() {
         val next = if (state.value.index + 1 < state.value.queue.size) state.value.index + 1
             else if (state.value.repeatMode == DesktopRepeatMode.ALL && state.value.queue.isNotEmpty()) 0 else -1
         if (next >= 0) { record("SKIPPED"); start(state.value.queue, next) }
-    } }
-    fun previous() { if (!closed) scope.launch {
-        if (state.value.positionMs > 3000) player?.controls()?.setTime(0)
+    }
+    fun previous() { if (!closed) scope.launch { previousNow() } }
+    private fun previousNow() {
+        if (state.value.positionMs > 3000) seekNow(0)
         else if (state.value.index > 0) { record("SKIPPED"); start(state.value.queue, state.value.index - 1) }
         else if (state.value.repeatMode == DesktopRepeatMode.ALL && state.value.queue.isNotEmpty()) {
             record("SKIPPED"); start(state.value.queue, state.value.queue.lastIndex)
         }
-    } }
+    }
+
+    internal suspend fun executeConnectedCommand(command: ConnectedPlaybackCommand) = withContext(dispatcher) {
+        val current = state.value
+        check(!closed && current.current != null && current.occurrence.toString() == command.expectedTrackRevision &&
+            current.queueRevision.toString() == command.expectedQueueRevision) { "Playback changed before the command arrived" }
+        when (command.action) {
+            ConnectedPlaybackAction.PLAY -> setPlayingNow(true)
+            ConnectedPlaybackAction.PAUSE -> setPlayingNow(false)
+            ConnectedPlaybackAction.NEXT -> nextNow()
+            ConnectedPlaybackAction.PREVIOUS -> previousNow()
+            ConnectedPlaybackAction.SEEK -> {
+                require(command.positionMs in 0..current.durationMs) { "Seek position is outside the song" }
+                seekNow(command.positionMs)
+            }
+        }
+    }
     fun seek(positionMs: Long) { if (!closed) scope.launch {
-        if (!state.value.loading && state.value.durationMs > 0) player?.controls()?.setTime(positionMs.coerceIn(0, state.value.durationMs))
+        if (!state.value.loading && state.value.durationMs > 0) seekNow(positionMs)
     } }
+    private fun seekNow(positionMs: Long) {
+        val native = player ?: return
+        val target = positionMs.coerceIn(0, state.value.durationMs.coerceAtLeast(0))
+        native.controls().setTime(target)
+        // VLC does not emit timeChanged while paused; resume callbacks reconcile the requested position.
+        update { it.copy(positionMs = target) }
+    }
     fun setVolume(volume: Float) { if (!closed && volume.isFinite()) scope.launch {
         val bounded = volume.coerceIn(0f, 1f)
         player?.audio()?.setVolume((bounded * 100).toInt())

@@ -2,7 +2,7 @@
 
 Google sign-in is optional. Listening, imports, offline audio and local history work without it. Android **Profile** contains sign-in/out, **Connect Firebase / Sync now** and automatic sync; desktop exposes equivalent controls under **Devices & account**. Login and permission to upload the existing library are separate.
 
-Firebase is the primary backend for the upcoming Android **0.2.0 / code11** and Windows **0.2.0** release. The owner authorized publication; preparation and verification are pending. The immutable published [Android 0.1.9 / code10](releases/0.1.9.md) uses prior Drive playlist sync. Existing local libraries/Drive snapshots are preserved; source changes do not update a physical phone automatically.
+Firebase is the primary library backend in published Android **0.2.0 / code11** and Windows **0.2.0**. The 0.2.1 candidate separately adds opt-in [connected playback](CONNECTED_PLAYBACK.md); live emulator/native-Windows control acceptance passed. The immutable published [Android 0.1.9 / code10](releases/0.1.9.md) uses prior Drive playlist sync. Existing local libraries/Drive snapshots are preserved; source changes do not update a physical phone automatically.
 
 ## Authentication and project
 

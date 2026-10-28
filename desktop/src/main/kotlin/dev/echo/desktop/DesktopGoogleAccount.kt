@@ -158,7 +158,7 @@ class DesktopGoogleAccount(
             auth.signInGoogle(identity.getString("access_token"), email)
         }
         check(session.email.equals(email, ignoreCase = true)) { "Firebase account changed. Sign in again." }
-        commit(copySaved().put("firebase", JSONObject().put("project", config.projectId).put("uid", session.uid)
+        if (session !== previous) commit(copySaved().put("firebase", JSONObject().put("project", config.projectId).put("uid", session.uid)
             .put("email", session.email).put("idToken", session.idToken).put("refreshToken", session.refreshToken)
             .put("expiresAt", session.expiresAt)))
         session

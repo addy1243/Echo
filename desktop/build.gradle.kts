@@ -45,7 +45,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi)
             packageName = "EchoMusic"
-            packageVersion = "0.2.0"
+            packageVersion = "0.2.1"
             windows {
                 iconFile.set(project.file("resources/echo.ico"))
                 installationPath = "EchoMusicDesktop"
@@ -91,6 +91,17 @@ tasks.register<JavaExec>("firebaseReadinessCheck") {
     providers.gradleProperty("echoDesktopOauthJson").orNull?.let { args("--import-and-sign-in", it) }
 }
 
+tasks.register<JavaExec>("connectedPlaybackLiveCheck") {
+    group = "verification"
+    description = "Explicit saved-account RTDB acceptance with two temporary native players; no library sync or installation."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.echo.desktop.ConnectedPlaybackLiveCheckKt")
+    jvmArgs("--add-modules=jdk.httpserver")
+    if (providers.gradleProperty("echoConnectedLocalOnly").orNull == "true") args("--local-only")
+    else if (providers.gradleProperty("echoConnectedAndroidPeer").orNull == "true") args("--android-peer")
+}
+
 tasks.register<JavaExec>("cloudSyncCheck") {
     group = "verification"
     description = "Explicit real-account sync acceptance; may upload/apply library changes."
@@ -111,8 +122,8 @@ tasks.register<JavaExec>("msiCheck") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("dev.echo.desktop.DesktopMsiCheckKt")
-    args(providers.gradleProperty("echoMsiPath").getOrElse(layout.buildDirectory.file("compose/binaries/main/msi/EchoMusic-0.2.0.msi").get().asFile.absolutePath),
-        providers.gradleProperty("echoMsiVersion").getOrElse("0.2.0"))
+    args(providers.gradleProperty("echoMsiPath").getOrElse(layout.buildDirectory.file("compose/binaries/main/msi/EchoMusic-0.2.1.msi").get().asFile.absolutePath),
+        providers.gradleProperty("echoMsiVersion").getOrElse("0.2.1"))
 }
 
 tasks.register<JavaExec>("publishedWindowsUpdateCheck") {

@@ -23,6 +23,9 @@ import androidx.compose.ui.window.rememberWindowState
 import dev.echo.core.Track
 import dev.echo.desktop.DesktopLibrary.Companion.localTrack
 import dev.echo.data.provider.YouTubeProvider
+import dev.echo.data.firebase.ConnectedDevice
+import dev.echo.data.firebase.ConnectedPlaybackAction
+import dev.echo.data.firebase.ConnectedPlaybackState
 import kotlinx.coroutines.*
 import java.awt.Dimension
 import java.io.File
@@ -78,6 +81,27 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     DisposableEffect(updater) { onDispose { updater.close() } }
     val google = remember { DesktopGoogleAccount() }
     val account by google.state.collectAsState()
+    val connectedPlayback = remember { DesktopConnectedPlayback(store, google, player) }
+    val connectedState by connectedPlayback.state.collectAsState()
+    var connectedPlaybackEnabled by remember { mutableStateOf(connectedPlayback.enabled()) }
+    var lastConnectedAccount by remember { mutableStateOf(account.email) }
+    LaunchedEffect(account.email) {
+        if (lastConnectedAccount != account.email) {
+            lastConnectedAccount = account.email
+            connectedPlaybackEnabled = false
+            connectedPlayback.setEnabled(false)
+            connectedPlayback.stop()
+        }
+    }
+    LaunchedEffect(account.email, connectedPlaybackEnabled, lastConnectedAccount) {
+        if (account.email == null || account.email != lastConnectedAccount || !connectedPlaybackEnabled ||
+            !dev.echo.data.firebase.EchoFirebaseProject.configured) {
+            connectedPlayback.stop()
+            return@LaunchedEffect
+        }
+        withContext(Dispatchers.IO) { connectedPlayback.run() }
+    }
+    DisposableEffect(connectedPlayback) { onDispose { connectedPlayback.stop() } }
     val firebase = remember { DesktopFirebaseSync(store, google) }
     val cloudSync by firebase.state.collectAsState()
     var accountJob by remember { mutableStateOf<Job?>(null) }
@@ -382,8 +406,14 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                     }
                     }
                 }
-                if (playback.queue.isNotEmpty()) Column(Modifier.width(245.dp).fillMaxHeight()
+                if (playback.queue.isNotEmpty() || connectedPlaybackEnabled) Column(Modifier.width(245.dp).fillMaxHeight()
                     .background(Color(0xFF10151D)).padding(20.dp)) {
+                    if (connectedPlaybackEnabled) ConnectedPlaybackPanel(connectedState, connectedPlayback.deviceId,
+                        onCommand = { device, action, position -> scope.launch {
+                            try { connectedPlayback.sendCommand(device, action, position) }
+                            catch (_: Exception) { notice = "The remote command could not be sent. Check the device and account connection." }
+                        } })
+                    if (playback.queue.isNotEmpty()) {
                     Text("Now playing", fontWeight = FontWeight.Bold, fontSize = 17.sp)
                     Spacer(Modifier.height(18.dp))
                     Cover(playback.current, Modifier.fillMaxWidth().height(180.dp))
@@ -418,6 +448,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                                 }
                             }
                         }
+                    }
                     }
                 }
             }
@@ -548,8 +579,22 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             }
             Spacer(Modifier.height(16.dp))
             Text("Connected playback", fontWeight = FontWeight.SemiBold)
-            Text("Phone playback status, shared controls, synchronized listening and multiple audio outputs are still being built. Audio files stay on their original device.",
+            Text("When enabled, this open Echo desktop app shares the current song and accepts remote controls. Audio stays on its original device; this is not synchronized playback.",
                 color = Muted, modifier = Modifier.padding(top = 8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Text("Allow remote controls on this laptop", modifier = Modifier.weight(1f))
+                Switch(checked = connectedPlaybackEnabled, enabled = account.email != null &&
+                    dev.echo.data.firebase.EchoFirebaseProject.configured, onCheckedChange = { enabled ->
+                    connectedPlayback.setEnabled(enabled)
+                    connectedPlaybackEnabled = enabled
+                    if (!enabled) connectedPlayback.stop()
+                })
+            }
+            if (account.email == null) Text("Sign in first. Connected playback uses the signed-in Firebase account.", color = Muted, fontSize = 12.sp)
+            ConnectedPlaybackPanel(connectedState, if (connectedPlaybackEnabled) connectedPlayback.deviceId else "", onCommand = { device, action, position -> scope.launch {
+                try { connectedPlayback.sendCommand(device, action, position) }
+                catch (_: Exception) { notice = "The remote command could not be sent. Check the device and account connection." }
+            } })
         } },
         confirmButton = { TextButton(onClick = { showDevices = false }) { Text("Got it") } })
     if (confirmCloudSync) AlertDialog(onDismissRequest = { confirmCloudSync = false }, title = { Text("Sync library with ${account.email}?") },
@@ -563,6 +608,57 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             } }) { Text("Sync once") }
             TextButton(onClick = { confirmCloudSync = false }) { Text("Cancel") }
         } })
+}
+
+@Composable
+private fun ConnectedPlaybackPanel(
+    state: ConnectedPlaybackState,
+    ownDeviceId: String,
+    onCommand: (ConnectedDevice, ConnectedPlaybackAction, Long) -> Unit,
+) {
+    val devices = state.devices.filter { it.id != ownDeviceId }
+    state.message?.let { Text(it, color = Muted, fontSize = 11.sp,
+        modifier = Modifier.padding(top = 8.dp))
+    }
+    devices.forEach { device ->
+        val track = device.player
+        val canControl = device.controlEnabled && track.title != null && !state.pending
+        Card(Modifier.fillMaxWidth().padding(top = 10.dp), shape = RoundedCornerShape(14.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(device.label, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text(if (device.controlEnabled) "LIVE" else "OFFLINE", color = if (device.controlEnabled) Accent else Muted,
+                        fontSize = 9.sp, letterSpacing = 1.sp)
+                }
+                Text(track.title ?: "Nothing playing", fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(track.artist.orEmpty(), fontSize = 11.sp, color = Muted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (state.pending) Text("Sending remote command…", color = Muted, fontSize = 10.sp)
+                device.ack?.takeIf { it.status == "rejected" }?.let {
+                    Text("Command declined: ${it.reason ?: "device state changed"}", color = Color(0xFFFFB7AC), fontSize = 10.sp)
+                }
+                Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = { onCommand(device, ConnectedPlaybackAction.PREVIOUS, 0) }, enabled = canControl, contentPadding = PaddingValues(4.dp), modifier = Modifier.widthIn(max = 62.dp)) { Text("Previous", fontSize = 10.sp) }
+                    Button(onClick = { onCommand(device, if (track.isPlaying) ConnectedPlaybackAction.PAUSE else ConnectedPlaybackAction.PLAY, 0) },
+                        enabled = canControl, contentPadding = PaddingValues(6.dp)) { Text(if (track.isPlaying) "Pause" else "Play", fontSize = 11.sp) }
+                    TextButton(onClick = { onCommand(device, ConnectedPlaybackAction.NEXT, 0) }, enabled = canControl, contentPadding = PaddingValues(4.dp), modifier = Modifier.widthIn(max = 50.dp)) { Text("Next", fontSize = 10.sp) }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = { onCommand(device, ConnectedPlaybackAction.SEEK,
+                        (track.positionMs - 10_000).coerceAtLeast(0)) }, enabled = canControl && track.durationMs > 0) { Text("−10s") }
+                    Text("${clock(track.positionMs)} / ${clock(track.durationMs)}", color = Muted, fontSize = 10.sp)
+                    TextButton(onClick = { onCommand(device, ConnectedPlaybackAction.SEEK,
+                        (track.positionMs + 10_000).coerceAtMost(track.durationMs)) }, enabled = canControl && track.durationMs > 0, contentPadding = PaddingValues(2.dp), modifier = Modifier.width(42.dp)) { Text("+10s", fontSize = 11.sp) }
+                }
+            }
+        }
+    }
+    if (state.pending && devices.isEmpty()) Text("Sending remote command…", color = Muted, fontSize = 11.sp,
+        modifier = Modifier.padding(top = 8.dp))
 }
 
 @Composable
