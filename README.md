@@ -1,20 +1,20 @@
 # Echo Music
 
-The unpublished 0.2.1 candidate adds opt-in [connected playback](docs/CONNECTED_PLAYBACK.md): see the other device's current song and control play/pause, previous/next and seeking. Live emulator/native-Windows control acceptance passed; published 0.2.0 does not contain these controls.
+Published [0.2.1](https://github.com/addy1243/Echo/releases/tag/v0.2.1) adds opt-in [connected playback](docs/CONNECTED_PLAYBACK.md): see the other device's current song and control play/pause, previous/next and seeking. Live emulator/native-Windows control acceptance passed; published 0.2.0 does not contain these controls.
 
 Native Kotlin Android personal music player. Android 8.0+; Kotlin, Compose Material 3, Room, Hilt, Media3 and DataStore. Open this folder in Android Studio.
 
-A **Windows desktop development preview** lives in `desktop`: desktop navigation, YouTube/local playback, Smart shuffle, Spotify imports/recording matching, discovery, playlists, favorites, history, private offline downloads and daily/manual Windows update checks. It requires installed 64-bit VLC 3 and uses Android's Echo icon. Normal Android-emulator sign-in/sync and canonical desktop/Firebase library equality passed; automatic library sync is enabled while both apps are open. No physical phone was updated. See [desktop status](docs/DESKTOP.md), [Firebase setup](docs/FIREBASE.md), [Windows updates](docs/DESKTOP_UPDATES.md) and [connected audio design](docs/DESKTOP_SYNC_DESIGN.md). The 0.2.1 connected-control candidate is verified; synchronized listening, output groups and audio relay remain future work.
+A **Windows desktop app** lives in `desktop`: desktop navigation, YouTube/local playback, Smart shuffle, Spotify imports/recording matching, discovery, playlists, favorites, history, private offline downloads and daily/manual Windows update checks. It requires installed 64-bit VLC 3 and uses Android's Echo icon. Normal Android-emulator sign-in/sync and canonical desktop/Firebase library equality passed; automatic library sync is enabled while both apps are open. No physical phone was updated. See [desktop status](docs/DESKTOP.md), [Firebase setup](docs/FIREBASE.md), [Windows updates](docs/DESKTOP_UPDATES.md) and [connected audio design](docs/DESKTOP_SYNC_DESIGN.md). The published 0.2.1 connected controls are verified; synchronized listening, output groups and audio relay remain future work.
 
 Echo Music's original source is licensed under GPL-3.0-or-later; see [LICENSE](LICENSE), [COPYING](COPYING) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms and matching source. Settings â†’ Licenses & source displays the packaged notices.
 
-## Latest release: 0.2.0 — Android and Windows
+## Latest release: 0.2.1 â€” Android and Windows
 
-[Release page](https://github.com/addy1243/Echo/releases/tag/v0.2.0) · [Android APK](https://github.com/addy1243/Echo/releases/download/v0.2.0/EchoMusic-11.apk) · [Windows installer](https://github.com/addy1243/Echo/releases/download/v0.2.0/EchoMusic-Windows-x64-0.2.0.msi) · [Full corresponding source](https://github.com/addy1243/Echo/releases/download/v0.2.0/EchoMusic-11-source.zip) · [Release record and checksums](docs/releases/0.2.0.md)
+[Release page](https://github.com/addy1243/Echo/releases/tag/v0.2.1) Â· [Android APK](https://github.com/addy1243/Echo/releases/download/v0.2.1/EchoMusic-12.apk) Â· [Windows installer](https://github.com/addy1243/Echo/releases/download/v0.2.1/EchoMusic-Windows-x64-0.2.1.msi) Â· [Full corresponding source](https://github.com/addy1243/Echo/releases/download/v0.2.1/EchoMusic-12-source.zip) Â· [Release record and checksums](docs/releases/0.2.1.md)
 
-Published 28 October 2026. Android is 0.2.0/code11, Android 8.0+, with the same signing certificate as 0.1.9 for in-place updates. Windows is 0.2.0/x64 with bundled GPL Temurin Java 21; install 64-bit VLC 3 separately. The MSI is unsigned and Windows Installer remains interactive. [Older Android 0.1.9 record](docs/releases/0.1.9.md) remains immutable.
+Published 29 October 2026. Android is 0.2.1/code12, Android 8.0+, with the same signing certificate as 0.1.9 for in-place updates. Windows is 0.2.1/x64 with bundled GPL Temurin Java 21; install 64-bit VLC 3 separately. The MSI is unsigned and Windows Installer remains interactive. [Older Android 0.1.9 record](docs/releases/0.1.9.md) remains immutable.
 
-Local laptop executable: `desktop/build/compose/binaries/main/app/EchoMusic/EchoMusic.exe`. Keep its full app/runtime directory together; the MSI installs the separate updatable copy.
+Verified local 0.2.1 executable: `build/connected-desktop/compose/binaries/main/app/EchoMusic/EchoMusic.exe`. Keep its full app/runtime directory together; the MSI installs the separate updatable copy.
 
 ## Android features
 
@@ -30,7 +30,7 @@ Use a song's **Download** action to pin private offline audio. **Settings â†’ Do
 
 **Settings â†’ Listening history** shows starts, skips, completions, interruptions and errors, with a confirmed clear action. Up to 5,000 events/90 days inform small preference adjustments within real related-song results; the screen shows the latest 500. History stays local unless Firebase library sync is explicitly enabled. See [history semantics](docs/HISTORY_NOTES.md).
 
-**Profile — Google account & library sync** supports optional Google sign-in/out and Firebase playlists/favorites/history sync. Automatic sync runs about once a minute while Echo is open. Concurrent playlist edits preserve conflict copies; unlikes, deletions and history clearing converge through versioned state. Local data remains after sign-out. Audio, downloads, credentials and local file paths are not uploaded. Normal emulator sign-in and Android/desktop/cloud equality passed; no physical phone was accessed. See [account setup](docs/ACCOUNTS.md) and [Firebase evidence](docs/FIREBASE.md).
+**Profile â€” Google account & library sync** supports optional Google sign-in/out and Firebase playlists/favorites/history sync. Automatic sync runs about once a minute while Echo is open. Concurrent playlist edits preserve conflict copies; unlikes, deletions and history clearing converge through versioned state. Local data remains after sign-out. Audio, downloads, credentials and local file paths are not uploaded. Normal emulator sign-in and Android/desktop/cloud equality passed; no physical phone was accessed. See [account setup](docs/ACCOUNTS.md) and [Firebase evidence](docs/FIREBASE.md).
 
 ## Build
 

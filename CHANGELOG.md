@@ -1,10 +1,10 @@
 # Release history
 
-## 0.2.1 / Android code12 — candidate, not published
+## 0.2.1 / Android code12 and Windows 0.2.1 — published 2026-10-29
 
 - Add opt-in connected playback on Android and Windows: current-song metadata, independent device players and remote play/pause/previous/next/seek through the same project's Realtime Database. Session/track/queue guards, expiring commands, acknowledgments, owner-only rules and foreground/lifecycle limits are described in [connected playback](docs/CONNECTED_PLAYBACK.md). Live emulator/native-Windows control acceptance passed.
 - Load desktop new-music discovery even before a library exists, refresh artist seeds after sync, and discard obsolete search results.
-- Keep the immutable 0.2.0 release and existing libraries/credentials intact. New app builds are required on both devices.
+- Keep the immutable 0.2.0 release and existing libraries/credentials intact. Update both devices from the [published 0.2.1 release](https://github.com/addy1243/Echo/releases/tag/v0.2.1).
 
 ## 0.2.0 — Android code11 and Windows 0.2.0 — published 2026-10-28
 

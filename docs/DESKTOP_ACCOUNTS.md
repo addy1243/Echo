@@ -1,6 +1,6 @@
 # Desktop Google account and Firebase setup
 
-Account/library sync shipped in Android **0.2.0 / code11** and Windows **0.2.0**. The 0.2.1 candidate adds [connected playback](CONNECTED_PLAYBACK.md) after separate opt-in; its live emulator/native-Windows acceptance passed.
+Account/library sync shipped in Android **0.2.0 / code11** and Windows **0.2.0**. Published 0.2.1 adds [connected playback](CONNECTED_PLAYBACK.md) after separate opt-in; its live emulator/native-Windows acceptance passed.
 
 Google sign-in is optional. Local listening/library operations work without it. **Devices & account** contains Google sign-in/out, Firebase manual sync and automatic sync. Authentication alone does not authorize uploading the existing library; a separate confirmation describes playlists, favorites, history and account-wide clear/delete behavior.
 

@@ -1,6 +1,6 @@
-# Connected playback (0.2.1 candidate)
+# Connected playback (0.2.1)
 
-This adds account-scoped current-song visibility and remote **play, pause, previous, next and seek ±10 seconds**. Android and Windows retain independent players and queues. This does not transfer audio or start synchronized listening, output groups or mixing. The published 0.2.0 apps do not include it; both clients need the new build.
+This adds account-scoped current-song visibility and remote **play, pause, previous, next and seek ±10 seconds**. Android and Windows retain independent players and queues. This does not transfer audio or start synchronized listening, output groups or mixing. Install the [published 0.2.1 update](https://github.com/addy1243/Echo/releases/tag/v0.2.1) on both clients.
 
 ## Setup and use
 
@@ -23,7 +23,7 @@ The app polls indexed, bounded RTDB paths approximately every two seconds and pu
 
 Local RTDB emulator checks pass for anonymous, unverified and cross-account denial; forbidden paths/fields; malformed commands; expired commands; and valid acknowledgments/cleanup. JVM checks cover bounded authenticated requests, database URL restrictions, duplicate prevention, acknowledgments without null fields and stale session/track/queue/seek rejection. A two-client in-memory transport test verifies applied-once control and old-track rejection.
 
-All 204 JVM tests, Android build/lint and the emulator Profile UI check pass. The same-key candidate is installed only on the dedicated emulator, preserving its library and sign-in. The actual Windows native adapter check passes repeated play/pause, paused seek followed by playback at the requested position, next/previous and stale-occurrence rejection. Android APK and isolated Windows MSI candidates build successfully. Live RTDB controls pass in both directions between two actual native players, and anonymous root access is denied (HTTP401). The actual Android emulator and native Windows player also pass acknowledged play/pause/seek/next/previous in both directions (Android instrumentation112.945 seconds), with fixture cleanup and queue/preferences restoration. The emulator Profile UI check passes11.853 seconds. Android release shrinking passes. Windows installer acceptance and physical-phone behavior remain unverified.
+All 204 JVM tests, Android build/lint and the emulator Profile UI check pass. The same-key build is installed only on the dedicated emulator, preserving its library and sign-in. The actual Windows native adapter check passes repeated play/pause, paused seek followed by playback at the requested position, next/previous and stale-occurrence rejection. Android APK and isolated Windows MSI builds pass. Live RTDB controls pass in both directions between two actual native players, and anonymous root access is denied (HTTP401). The actual Android emulator and native Windows player also pass acknowledged play/pause/seek/next/previous in both directions including banner navigation (Android instrumentation 124.578 seconds), with fixture cleanup and queue/preferences restoration. The emulator Profile UI check passes in 11.853 seconds. Android release shrinking passes. Windows installer acceptance and physical-phone behavior remain unverified.
 
 Run local rules checks with:
 

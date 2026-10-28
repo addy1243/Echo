@@ -1,8 +1,8 @@
 # Desktop account sync and connected audio
 
-Current status: Android/Desktop library and account sync through Firestore is implemented and verified in published 0.2.0; see [Firebase evidence](FIREBASE.md) and [release acceptance](releases/0.2.0.md). The 0.2.1 candidate implements opt-in RTDB current-song visibility and remote controls while Echo is open; owner-only rules are published and live acknowledged emulator/native-Windows controls pass. Synchronized playback, output groups and audio relay remain future work. See [implementation, setup and verification](CONNECTED_PLAYBACK.md).
+Current status: Android/Desktop library and account sync through Firestore is implemented and verified in published 0.2.0; see [Firebase evidence](FIREBASE.md) and [release acceptance](releases/0.2.0.md). Published 0.2.1 implements opt-in RTDB current-song visibility and remote controls while Echo is open; owner-only rules are published and live acknowledged emulator/native-Windows controls pass. Synchronized playback, output groups and audio relay remain future work. See [implementation, setup and verification](CONNECTED_PLAYBACK.md).
 
-Status: design and implementation boundaries, 2026-10-28. Desktop listening and library sync are shipped. The 0.2.1 connected-control candidate is separate from synchronized playback or audio relay, and is not yet a published release.
+Status: design and implementation boundaries, 2026-10-28. Desktop listening and library sync are shipped. Published 0.2.1 connected controls are separate from synchronized playback or audio relay.
 
 ## What the existing app actually provides
 
@@ -56,7 +56,7 @@ This protocol shares track identity/metadata and control intent, **not audio**. 
 
 Attach Android presence to the existing playback service while music is active. An idle closed app is not guaranteed to stay reachable; label unsupported/background states honestly. Do not launch indefinite background services merely to simulate being online. Android foreground-service types and start restrictions still apply: [service documentation](https://developer.android.com/develop/background-work/services/fgs/service-types).
 
-Before release, verify rule enforcement with the RTDB emulator, then live presence, cross-account denial, command expiry/acknowledgment, reconnect, service foreground/background and opt-out behavior on emulator plus desktop. RTDB transport, separate owner-only rules and platform adapters now exist in the 0.2.1 candidate. A settings toggle alone does not prove a live connection; state/acknowledgments and lease expiry determine availability. Keep local playback usable while setup is pending.
+Before release, verify rule enforcement with the RTDB emulator, then live presence, cross-account denial, command expiry/acknowledgment, reconnect, service foreground/background and opt-out behavior on emulator plus desktop. RTDB transport, separate owner-only rules and platform adapters now exist in published 0.2.1. A settings toggle alone does not prove a live connection; state/acknowledgments and lease expiry determine availability. Keep local playback usable while setup is pending.
 
 ## Stages 4 and 5: same song on multiple outputs/devices
 

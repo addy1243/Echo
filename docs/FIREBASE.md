@@ -1,6 +1,6 @@
 # Firebase library sync
 
-The 0.2.1 candidate adds a separate, opt-in RTDB channel for live player snapshots and remote controls. It uses the same Firebase identity and project; Firestore remains the library backend. See [connected playback setup, tested rules and limits](CONNECTED_PLAYBACK.md). The owner supplied the RTDB URL and published its tested rules. Live native-player control and anonymous denial pass; final cross-platform acceptance is recorded in the connected-playback document.
+Published 0.2.1 adds a separate, opt-in RTDB channel for live player snapshots and remote controls. It uses the same Firebase identity and project; Firestore remains the library backend. See [connected playback setup, tested rules and limits](CONNECTED_PLAYBACK.md). The owner supplied the RTDB URL and published its tested rules. Live native-player control and anonymous denial pass; final cross-platform acceptance is recorded in the connected-playback document.
 
 Firebase is Echo's primary optional account-sync backend in the published Android/Windows 0.2.0 release. Normal Android-emulator Google/Firebase sign-in and canonical Android/desktop/Firestore library equality passed; automatic sync is enabled while both apps are open. Existing local libraries and legacy Drive snapshots remain intact. No physical phone was accessed. Historical setup/check results below are labeled by their stage.
 

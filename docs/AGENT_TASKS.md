@@ -1,8 +1,8 @@
 # Tasks
 
-Current work: 0.2.1/code12 connected-playback candidate. Owner published the reviewed RTDB rules; live two-native-player checks and anonymous access denial pass. Android-emulator/native-Windows acknowledged controls pass in both directions; final packaging/publication are tracked in CONNECTED_PLAYBACK.md. No physical phone access is authorized. Preserve the existing 0.2.0 release/tag/assets.
+Latest: Android 0.2.1/code12 and Windows 0.2.1 are [published](releases/0.2.1.md). Live acknowledged emulator/native-Windows controls and the mobile banner pass; no physical phone or Windows installer acceptance occurred. Earlier preparation notes are historical.
 
-Latest: combined Android 0.2.0/code11 and Windows 0.2.0 are [published](releases/0.2.0.md). Public updater-download checks pass on both platforms; the installed emulator preserves sync state. No phone access or Windows installer acceptance occurred. Earlier preparation entries below are historical.
+Prior public release: combined Android 0.2.0/code11 and Windows 0.2.0 are [published](releases/0.2.0.md). Public updater-download checks pass on both platforms; the installed emulator preserves sync state. No phone access or Windows installer acceptance occurred. Earlier preparation entries below are historical.
 
 | Owner | Scope | Dependencies | State |
 |---|---|---|---|

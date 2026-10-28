@@ -1,8 +1,12 @@
 # Integration status
 
-Current release: **[0.2.0 — Android code11 and Windows 0.2.0](releases/0.2.0.md)**, published 2026-10-28. Newest records supersede earlier pending/unpublished states; historical results remain dated.
+Current release: **[0.2.1 - Android code12 and Windows 0.2.1](releases/0.2.1.md)**, published 2026-10-29. Newest records supersede earlier pending states; historical evidence remains dated.
 
-## Published Android and Windows 0.2.0 — 2026-10-28
+## Published connected playback - 2026-10-29
+
+[Public release](https://github.com/addy1243/Echo/releases/tag/v0.2.1) at exact source `30d94894f33555d46ad9a0619ec4798df58ad0b0`: Android APK, Windows MSI, full matching source and checksums. 204 JVM checks, build/lint/release shrinking, owner-only rules and actual Android-emulator/native-Windows current-song visibility and acknowledged controls pass. Both clients require opt-in; Android Echo must stay open. Audio relay, synchronized groups and multi-output routing remain future work. See [the release record](releases/0.2.1.md).
+
+## Published Android and Windows 0.2.0 â€” 2026-10-28
 
 [Public stable release](https://github.com/addy1243/Echo/releases/tag/v0.2.0): Android 0.2.0/code11, Windows 0.2.0, complete matching source and checksums. Exact tagged source is `0170c748979452097feb158759dbde6311024d8f`; public asset sizes/digests match the reviewed files. See [the complete release record](releases/0.2.0.md).
 

@@ -1,6 +1,6 @@
 # GitHub updates
 
-Android source defaults are now **0.2.0/code11**, published alongside Windows 0.2.0 in the owner-authorized `v0.2.0` release; see [the combined release record](releases/0.2.0.md) and [Windows update contract](DESKTOP_UPDATES.md). Earlier records below describe already-published Android releases.
+Android source defaults are **0.2.1/code12**, published alongside Windows 0.2.1; see [the release record](releases/0.2.1.md) and [Windows update contract](DESKTOP_UPDATES.md). Earlier records describe prior public releases.
 
 
 Previous stable release: [Echo Music 0.1.9 / code10](https://github.com/addy1243/Echo/releases/tag/v0.1.9), with same-key `EchoMusic-10.apk` and exact corresponding source at commit `2c32cb911541dd384f5abff11ff952cdc4a6dc8b`. The real updater on the code8 emulator passed public code10 background completion, cancellation, checksum/identity verification and normal installer handoff without accepting installation. See [CHANGELOG.md](../CHANGELOG.md) and [integration evidence](INTEGRATION_STATUS.md).

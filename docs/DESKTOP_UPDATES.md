@@ -1,5 +1,7 @@
 # Windows updates
 
+Current stable release: [0.2.1](releases/0.2.1.md). In an older Echo build, open **App updates → Check for updates**, download and choose Install; normal Windows Installer confirmation remains required.
+
 The desktop updater is separate from Android APK updates. On startup it checks at most once per 24 hours; **Check for updates** performs a manual check. It reads a bounded listing of up to 100 public releases from `addy1243/Echo`, with no GitHub token, and selects the highest valid newer Windows version. Drafts, prereleases, Android assets, old/equal versions and invalid release entries are ignored. An Android-only newest release does not hide an older published Windows update.
 
 An available update has explicit **Download** and **Install** actions. Downloading shows received/total bytes and supports Cancel. The app never replaces its own running files. Install re-verifies the staged file, then opens the normal interactive Windows Installer using `msiexec /i <file> /norestart`. It does not use quiet/passive options, accept Windows prompts, or promise installer completion. Close Echo when the installer requests it. The portable development image must be installed once through the MSI before later MSI upgrades update the installed copy; a checkout's generated EXE is a separate copy.

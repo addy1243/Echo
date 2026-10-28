@@ -1,10 +1,12 @@
 # Android and desktop feature parity
 
+Published 0.2.1 adds [connected playback](CONNECTED_PLAYBACK.md); actual emulator/native-Windows controls pass in both directions. Audio groups/relay remain future work.
+
 Current documentation review: **2026-10-28**, incorporating executed acceptance from 2026-10-27. Windows uses desktop navigation, wide tables and a persistent player rather than Android navigation. Equivalent listening/library behavior is the target; Android-only integrations are not copied.
 
-Normal Android-emulator Google/Firebase login succeeded. Its saved sync state, desktop and Firestore matched canonically, with automatic sync enabled while open. Live isolated roundtrips covered duplicate occurrences, a desktop edit and deletion convergence. No physical phone was accessed. Desktop has **88 passing JVM tests**, native playback checks, a real GitHub update-feed check and native MSI identity/data-isolation verification. See [executed evidence](DESKTOP.md) and [Firebase limits](FIREBASE.md).
+Normal Android-emulator Google/Firebase login succeeded. Its saved sync state, desktop and Firestore matched canonically, with automatic sync enabled while open. Live isolated roundtrips covered duplicate occurrences, a desktop edit and deletion convergence. No physical phone was accessed. Desktop now has **91 passing JVM tests**, native playback checks, a real GitHub update-feed check and native MSI identity/data-isolation verification. See [executed evidence](DESKTOP.md) and [Firebase limits](FIREBASE.md).
 
-Android **0.2.0 / code11** and Windows **0.2.0** are being prepared for the owner-authorized combined `v0.2.0` release; publication is pending. Windows advances the 0.1.0 preview for update discovery. Immutable [Android 0.1.9](releases/0.1.9.md) remains documented separately. The 88-test desktop result predates the final release fixes; final candidate results belong in the release record.
+Android **0.2.1 / code12** and Windows **0.2.1** are [published](releases/0.2.1.md), including opt-in live device status and remote controls. The earlier 0.2.0 release is immutable. Windows advances the 0.1.0 preview for update discovery. Immutable [Android 0.1.9](releases/0.1.9.md) remains documented separately. The 88-test desktop result predates the final release fixes; final candidate results belong in the release record.
 
 ## Implemented and remaining work
 
@@ -40,7 +42,7 @@ Android **0.2.0 / code11** and Windows **0.2.0** are being prepared for the owne
 
 ## Connected audio remains unimplemented
 
-Firebase library sync does not provide online presence or playback coordination. Live device status/remote commands, same-song phone/laptop synchronization, independent players with shared controls, same-song laptop output groups, separate songs per output, and Echo-only audio relay/mixing remain future work. They need authenticated session/command semantics, endpoint routing, buffering/drift correction and physical hardware measurements. See [DESKTOP_SYNC_DESIGN.md](DESKTOP_SYNC_DESIGN.md).
+Published 0.2.1 provides opt-in live device status and remote controls through RTDB while Echo is open. Same-song phone/laptop synchronization, laptop output groups, separate songs per output and Echo-only audio relay/mixing remain future work. They need endpoint routing, buffering/drift correction and physical hardware measurements. See [DESKTOP_SYNC_DESIGN.md](DESKTOP_SYNC_DESIGN.md).
 
 ## Next priorities
 

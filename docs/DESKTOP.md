@@ -1,16 +1,16 @@
 # Echo for Windows
 
-Windows **0.2.0** is published alongside Android **0.2.0 / code11** in the owner-authorized [v0.2.0 release](https://github.com/addy1243/Echo/releases/tag/v0.2.0). This advances the Windows 0.1.0 preview so its updater can discover the new release. The immutable [Android 0.1.9 release record](releases/0.1.9.md) remains unchanged.
+Windows **0.2.1** and Android **0.2.1/code12** are [published](https://github.com/addy1243/Echo/releases/tag/v0.2.1). They add opted-in connected playback; earlier release tags/assets remain immutable.
 
 ## Run or install
 
 Current laptop executable:
 
 ```text
-C:\Users\adars\OneDrive\Documents\Autos\Echo\desktop\build\compose\binaries\main\app\EchoMusic\EchoMusic.exe
+C:\Users\adars\OneDrive\Documents\Autos\Echo\build\connected-desktop\compose\binaries\main\app\EchoMusic\EchoMusic.exe
 ```
 
-Keep the whole `EchoMusic` directory together, including `app` and `runtime`; Java is bundled. Release installer target: `build/releases/0.2.0/EchoMusic-Windows-x64-0.2.0.msi`; checksums and matching source accompany the release. The earlier `build/distributions` 0.1.0 installer is a development preview, not this release candidate.
+Keep the whole `EchoMusic` directory together, including `app` and `runtime`; Java is bundled. Release installer target: `build/releases/0.2.1/EchoMusic-Windows-x64-0.2.1.msi`; checksums and matching source accompany the release. The earlier `build/distributions` 0.1.0 installer is a development preview, not the published release.
 
 **64-bit VLC 3 is required separately.** Echo uses LibVLC without opening VLC's window. VLC is not bundled or installed silently. The MSI is unsigned; actual Windows installation/upgrade acceptance remains unperformed.
 
@@ -26,9 +26,9 @@ The per-user MSI installs program files under `%LOCALAPPDATA%\EchoMusicDesktop`,
 - Private manual downloads with integrity checks, progress, Cancel/Retry/Remove and offline-only playback. Transfers run while Echo is open; Retry restarts interruptions. Frequent-song automatic caching is absent.
 - Optional Google/Firebase library sync and daily/manual Windows update checks with verified MSI staging and explicit interactive installation.
 
-## Connected playback candidate
+## Connected playback
 
-The unpublished 0.2.1 candidate adds opt-in current-song visibility and remote controls through Realtime Database while Echo is open. It requires new builds on both platforms and published owner-only RTDB rules; see [setup and executed checks](CONNECTED_PLAYBACK.md). Audio transfer, synchronized listening and multi-output playback remain separate work.
+Published 0.2.1 adds opt-in current-song visibility and remote controls through Realtime Database while Echo is open. It requires new builds on both platforms and published owner-only RTDB rules; see [setup and executed checks](CONNECTED_PLAYBACK.md). Audio transfer, synchronized listening and multi-output playback remain separate work.
 
 ## Accounts and sync
 
