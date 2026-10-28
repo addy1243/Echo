@@ -1,6 +1,6 @@
 # Echo for Windows
 
-Windows **0.2.0** is being prepared alongside Android **0.2.0 / code11** for the owner-authorized combined `v0.2.0` release. Publication is pending. This advances the Windows 0.1.0 preview so its updater can discover the new release. The immutable [Android 0.1.9 release record](releases/0.1.9.md) remains unchanged.
+Windows **0.2.0** is published alongside Android **0.2.0 / code11** in the owner-authorized [v0.2.0 release](https://github.com/addy1243/Echo/releases/tag/v0.2.0). This advances the Windows 0.1.0 preview so its updater can discover the new release. The immutable [Android 0.1.9 release record](releases/0.1.9.md) remains unchanged.
 
 ## Run or install
 

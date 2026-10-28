@@ -1,18 +1,16 @@
 # Integration status
 
-Current Android release: **[0.1.9 / code10](releases/0.1.9.md)**, published 2026-10-27. Newest records supersede earlier pending/unpublished states; historical results remain dated.
+Current release: **[0.2.0 — Android code11 and Windows 0.2.0](releases/0.2.0.md)**, published 2026-10-28. Newest records supersede earlier pending/unpublished states; historical results remain dated.
 
-## Unpublished Firebase and desktop parity â€” 2026-10-27
+## Published Android and Windows 0.2.0 — 2026-10-28
 
-Final acceptance supersedes earlier pending states: after the owner replaced Android's OAuth registration in echo-85da4, normal emulator Google/Firebase sign-in succeeded. The successful sync marker and automatic-sync flag were verified; its sanitized baseline matches desktop and Firestore canonically. Live isolated Android/desktop edits, duplicates and deletion convergence also passed. No physical phone was accessed. Windows updates have 88 passing desktop tests, a successful real GitHub feed check and native MSI identity verification. No public Windows release or installer acceptance is claimed.
+[Public stable release](https://github.com/addy1243/Echo/releases/tag/v0.2.0): Android 0.2.0/code11, Windows 0.2.0, complete matching source and checksums. Exact tagged source is `0170c748979452097feb158759dbde6311024d8f`; public asset sizes/digests match the reviewed files. See [the complete release record](releases/0.2.0.md).
 
-Both clients now contain coordinated Firebase playlists/favorites/history sync, using owner-supplied project echo-85da4. Desktop OAuth/Firebase identity exchange succeeded; the Firestore library read returned HTTP403 and CLI rules deployment failed with administrative HTTP401, so live library transfer remains unverified. No local library was uploaded by these checks. See [Firebase setup/evidence](FIREBASE.md).
+All 197 JVM tests, Android build/lint/shrinking, 16 isolated Room/migration/library checks and seven real candidate/platform checks pass. Native playback under the packaged Java module set passed local/offline audio, live YouTube/seek, Smart shuffle, queue and timer behavior. Final MSI identity and data-directory separation checks pass; the bundled JVM exactly matches verified GPL Temurin, with matching complete runtime/native source.
 
-The owner subsequently published the rules through Firebase Console. The read-only retry succeeded and confirmed that the account has no cloud library document yet. This resolves the prior read denial; write permission and real two-device transfers remain unverified (`build/firebase-rules-published-readiness.log`).
+Real public Android code10-to-code11 download/digest/signature/installer-intent acceptance passed without accepting installation. Published code11 was then installed in place only on emulator-5556: version/sign-in/library preservation and normal Android/desktop/Firebase equality passed. Both automatic sync settings are enabled while the apps are open. Windows public update detection and verified MSI download from an older-preview version passed without launching its installer.
 
-Desktop Spotify preview/file imports, recording matching, discovery, manual downloads/offline mode, Play next and shuffled append are integrated. All 77 desktop JVM tests pass; native VLC transport/queue/timer and verified offline file playback/seek/network gate checks pass. Android build/lint and 59 data JVM tests pass. Thirteen isolated Room checks and the Profile UI check pass on dedicated emulator-5556; no physical phone was accessed or installed. Windows app image rebuilt; no release was published. Remaining parity is recorded in [DESKTOP_PARITY.md](DESKTOP_PARITY.md).
-
-
+No physical phone was accessed. The Windows MSI is unsigned and actual Windows install/upgrade acceptance remains unverified. Connected audio/device controls remain future work. Earlier dated records below are historical and do not replace the 0.2.0 source tag/assets.
 
 ## Post-release acceptance: Google sign-in works â€” 2026-10-27
 

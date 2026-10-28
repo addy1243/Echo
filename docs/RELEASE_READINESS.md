@@ -1,9 +1,8 @@
 # Release status
 
-## Prepared: Android 0.2.0/code11 and Windows 0.2.0
+## Published: Android 0.2.0/code11 and Windows 0.2.0
 
-The owner authorized the combined GitHub release. Final application tests/builds, same-key Android upgrade-candidate checks and native Windows MSI identity checks pass. Matching desktop/Java/native sources and legal notices are being sealed into the corresponding-source archive. Publication and public download checks remain pending. See [the 0.2.0 record](releases/0.2.0.md). The older published release records below remain unchanged.
-
+The combined [v0.2.0 release](https://github.com/addy1243/Echo/releases/tag/v0.2.0) is public/stable with both binaries, matching complete source and SHA256SUMS. Public asset sizes/digests match the reviewed files. All 197 JVM tests, Android build/lint/shrinking, 16 Room checks, seven candidate/platform checks and native packaged-module playback/MSI checks pass. No physical phone was accessed or Windows installer accepted. See [the complete 0.2.0 record](releases/0.2.0.md); older records below remain unchanged.
 
 ## Published: 0.1.9 / code10
 

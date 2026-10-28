@@ -1,5 +1,7 @@
 # Tasks
 
+Latest: combined Android 0.2.0/code11 and Windows 0.2.0 are [published](releases/0.2.0.md). Public updater-download checks pass on both platforms; the installed emulator preserves sync state. No phone access or Windows installer acceptance occurred. Earlier preparation entries below are historical.
+
 | Owner | Scope | Dependencies | State |
 |---|---|---|---|
 | Orchestrator + player/artwork, history and offline subagents | Player playlist actions, artwork, listening events/preferences, downloads/cache, Google account/Drive sync, queue append/search/shuffle and sleep timer | Android OAuth package/certificate registration and installed Google account provider; live consent remains owner verification; see ACCOUNTS.md | Shipped in 0.1.8/code9; executed checks in INTEGRATION_STATUS.md |

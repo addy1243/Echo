@@ -1,5 +1,7 @@
 # Desktop account sync and connected audio
 
+Current status: library/account sync is implemented and verified in published 0.2.0; see [Firebase evidence](FIREBASE.md) and [release acceptance](releases/0.2.0.md). The connected playback/output/relay portions below remain a design, not implemented features.
+
 Status: design and implementation boundaries, 2026-10-26. This document does not claim any live account transfer, remote control, synchronized playback or audio relay has been implemented or tested. The first desktop milestone is local desktop listening with a desktop layout. The owner requested all modes below; they are separate capabilities, not alternative interpretations of one feature.
 
 ## What the existing app actually provides

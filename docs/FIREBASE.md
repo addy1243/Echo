@@ -1,6 +1,6 @@
 # Firebase library sync
 
-Firebase is Echo's primary optional account-sync backend in the prepared Android/Windows 0.2.0 release. Normal Android-emulator Google/Firebase sign-in and canonical Android/desktop/Firestore library equality passed; automatic sync is enabled while both apps are open. Existing local libraries and legacy Drive snapshots remain intact. No physical phone was accessed. Historical setup/check results below are labeled by their stage.
+Firebase is Echo's primary optional account-sync backend in the published Android/Windows 0.2.0 release. Normal Android-emulator Google/Firebase sign-in and canonical Android/desktop/Firestore library equality passed; automatic sync is enabled while both apps are open. Existing local libraries and legacy Drive snapshots remain intact. No physical phone was accessed. Historical setup/check results below are labeled by their stage.
 
 ## Configured project and setup
 
@@ -51,6 +51,8 @@ No rules were deployed and no real Firebase project data was read or written by 
 ## Executed client checks — 2026-10-27
 
 ### Live library roundtrip and project consolidation
+
+Published 0.2.0/code11 was installed in place on the emulator after the public-updater check. Its successful Firebase sync marker/sign-in persisted and its normal library again matched desktop and Firestore canonically (`build/release-020-installed-sync-equality.log`). No physical phone was accessed.
 
 **Final normal-app acceptance:** after creating the replacement Android client in echo-85da4, the owner completed Google sign-in and Firebase sync through Echo's normal emulator UI. Echo's own account/sync markers confirm success and automatic sync enabled. Its sanitized baseline was compared with desktop and Firestore: canonical equality passed for playlists, favorites, history and saved tracks (`build/firebase-sync-and-android-icon-final.log`). Desktop automatic sync is also enabled. This supersedes earlier pending Android-login states below. Verification remains emulator-only; no physical phone was accessed or updated.
 

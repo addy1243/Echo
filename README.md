@@ -6,27 +6,29 @@ A **Windows desktop development preview** lives in `desktop`: desktop navigation
 
 Echo Music's original source is licensed under GPL-3.0-or-later; see [LICENSE](LICENSE), [COPYING](COPYING) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms and matching source. Settings â†’ Licenses & source displays the packaged notices.
 
-## Latest Android release: 0.1.9
+## Latest release: 0.2.0 — Android and Windows
 
-[Download v0.1.9](https://github.com/addy1243/Echo/releases/tag/v0.1.9) Â· [Release notes, installation, checksums and verified limits](docs/releases/0.1.9.md)
+[Release page](https://github.com/addy1243/Echo/releases/tag/v0.2.0) · [Android APK](https://github.com/addy1243/Echo/releases/download/v0.2.0/EchoMusic-11.apk) · [Windows installer](https://github.com/addy1243/Echo/releases/download/v0.2.0/EchoMusic-Windows-x64-0.2.0.msi) · [Full corresponding source](https://github.com/addy1243/Echo/releases/download/v0.2.0/EchoMusic-11-source.zip) · [Release record and checksums](docs/releases/0.2.0.md)
 
-Published 27 October 2026, versionCode10, Android8.0+. Adds queue drag/drop, background manual song/app-update downloads with visible progress, and Profile. Google sign-in is owner-confirmed working; Drive transfers and two-device sync remain unverified. The APK uses the original signing identity and includes a matching GPL source bundle.
+Published 28 October 2026. Android is 0.2.0/code11, Android 8.0+, with the same signing certificate as 0.1.9 for in-place updates. Windows is 0.2.0/x64 with bundled GPL Temurin Java 21; install 64-bit VLC 3 separately. The MSI is unsigned and Windows Installer remains interactive. [Older Android 0.1.9 record](docs/releases/0.1.9.md) remains immutable.
+
+Local laptop executable: `desktop/build/compose/binaries/main/app/EchoMusic/EchoMusic.exe`. Keep its full app/runtime directory together; the MSI installs the separate updatable copy.
 
 ## Android features
 
-The working tree migrates account sync to Firebase after separate consent, adding favorites/history and account-wide clear/delete semantics. The published 0.1.9 APK still uses the Drive behavior documented below; rebuilding source does not update an installed phone. See [current account migration](docs/FIREBASE.md).
+Version 0.2.0 uses Firebase after separate consent, including favorites/history and account-wide clear/delete semantics. Install the newer same-key APK to obtain these changes. See [account sync](docs/FIREBASE.md).
 
 In a playlist, **Add playlist to queue** offers Playlist order, Shuffle or Smart shuffle and preserves existing playback/upcoming songs. Search result taps play just the selected song, then continue the prior queue. Shuffle starts from a random playable occurrence, with every occurrence reachable in a new repeat-off session. Smart shuffle keeps active playback or chooses a random anchor for a fresh session. The full player also offers a **Sleep timer** (15/30/45/60 minutes) that pauses without clearing the queue and runs while the player screen is closed. See [queue behavior](docs/QUEUE_ACTIONS.md) and [sleep timer](docs/SLEEP_TIMER.md).
 
-Drag an upcoming queue row by its handle to arrange real playback order; the current song stays fixed. Profile also shows local playlist count and account device registrations from the last successful sync, without implying devices are online.
+Drag an upcoming queue row by its handle to arrange real playback order; the current song stays fixed. Profile shows the local playlist count, account status and last successful Firebase sync; live device presence is not implemented.
 
 The player and queue can add any saved/recommended recording to an existing or new playlist. Full-player artwork requests a larger recognized Google image variant with original-image fallback; source images still limit detail.
 
 Use a song's **Download** action to pin private offline audio. **Settings â†’ Downloads & cache** lists saved/pending/failed items with retry, cancel and remove, and has separate **Offline mode** and **Cache frequently played songs** switches. The automatic cache is opt-in after three qualified listens on unmetered internet, with a separate 256 MiB budget. Explicit downloads have a 2 GiB budget and are never automatically evicted. Manual downloads continue after leaving Echo, with progress/cancel notifications and visible byte/percentage progress in Downloads. Interrupted transfers restart through Retry. See [offline design and limits](docs/OFFLINE.md).
 
-**Settings â†’ Listening history** shows starts, skips, completions, interruptions and errors, with a confirmed clear action. Up to 5,000 events/90 days inform small preference adjustments within real related-song results; the screen shows the latest 500. Logs remain local. See [history semantics](docs/HISTORY_NOTES.md).
+**Settings â†’ Listening history** shows starts, skips, completions, interruptions and errors, with a confirmed clear action. Up to 5,000 events/90 days inform small preference adjustments within real related-song results; the screen shows the latest 500. History stays local unless Firebase library sync is explicitly enabled. See [history semantics](docs/HISTORY_NOTES.md).
 
-**Profile â†’ Google account & playlist sync** supports optional Google sign-in/out and private Drive playlist synchronization, manually or approximately every minute while Echo is open. Concurrent playlist edits produce conflict copies. Google sign-in uses Android's installed Google account provider rather than bundled proprietary identity SDKs. The owner confirmed Android Google sign-in works on 27 October 2026. Separate Drive consent, playlist transfers, account switching and two-device convergence remain unverified. See [account setup, sync behavior and limits](docs/ACCOUNTS.md). Local library/audio stays on the device after sign-out; it is not an account-isolated local library. Audio, likes and listening history do not sync.
+**Profile — Google account & library sync** supports optional Google sign-in/out and Firebase playlists/favorites/history sync. Automatic sync runs about once a minute while Echo is open. Concurrent playlist edits preserve conflict copies; unlikes, deletions and history clearing converge through versioned state. Local data remains after sign-out. Audio, downloads, credentials and local file paths are not uploaded. Normal emulator sign-in and Android/desktop/cloud equality passed; no physical phone was accessed. See [account setup](docs/ACCOUNTS.md) and [Firebase evidence](docs/FIREBASE.md).
 
 ## Build
 
