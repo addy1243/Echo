@@ -138,12 +138,23 @@ fun main(args: Array<String>): Unit = runBlocking {
                 .callTimeout(5, java.util.concurrent.TimeUnit.SECONDS).build()
             withContext(NonCancellable + Dispatchers.IO) {
                 (if (androidPeer) controllers.take(1) else controllers).forEach { controller ->
-                    for (part in listOf("devices", "commands")) {
-                        val url = EchoFirebaseProject.realtimeDatabaseUrl.toHttpUrl().newBuilder()
-                            .addPathSegments("users/${session.uid}/playback/$part/${controller.deviceId}.json")
-                            .addQueryParameter("auth", session.idToken).build()
-                        http.newCall(Request.Builder().url(url).delete().build()).execute().close()
+                    fun url(path: String) = EchoFirebaseProject.realtimeDatabaseUrl.toHttpUrl().newBuilder()
+                        .addPathSegments("users/${session.uid}/playback/$path").addQueryParameter("auth", session.idToken)
+                    val mailbox = http.newCall(Request.Builder().url(url("commands/${controller.deviceId}.json")
+                        .addQueryParameter("limitToLast", "32").build()).build()).execute().use { response ->
+                        check(response.isSuccessful)
+                        val bytes = response.body!!.byteStream().readNBytes(262145)
+                        check(bytes.size <= 262144)
+                        val text = bytes.toString(Charsets.UTF_8)
+                        if (text == "null") org.json.JSONObject() else org.json.JSONObject(text)
                     }
+                    for (id in mailbox.keys()) {
+                        require(id.matches(Regex("[A-Za-z0-9_-]{1,128}")))
+                        http.newCall(Request.Builder().url(url("commands/${controller.deviceId}/$id.json").build()).delete().build())
+                            .execute().use { check(it.isSuccessful) }
+                    }
+                    http.newCall(Request.Builder().url(url("devices/${controller.deviceId}.json").build()).delete().build())
+                        .execute().use { check(it.isSuccessful) }
                 }
             }
         }
