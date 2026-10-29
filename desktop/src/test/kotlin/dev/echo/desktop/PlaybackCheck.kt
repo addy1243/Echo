@@ -25,11 +25,31 @@ fun main(args: Array<String>) = runBlocking {
     val histories = mutableListOf<String>()
     val provider = YouTubeProvider()
     val playback = DesktopPlayback(provider) { _, event, listened -> histories += "$event:$listened" }
+    fun tracePlaybackState(phase: String) {
+        val state = playback.state.value
+        val errorType = when {
+            state.error == null -> "none"
+            state.error.contains("VLC", ignoreCase = true) -> "vlc"
+            state.error.contains("offline", ignoreCase = true) -> "offline"
+            state.error.contains("audio", ignoreCase = true) -> "audio"
+            else -> "other"
+        }
+        println("DIAG playbackCheck phase=$phase currentIndex=${state.index} playing=${state.playing} loading=${state.loading} " +
+            "ended=${state.ended} positionMs=${state.positionMs} durationMs=${state.durationMs} errorType=$errorType")
+    }
     try {
         playback.setVolume(0.05f)
         val track = Track("local:check", "Desktop playback check", "Echo", durationMs = 12_000, sourceUri = file.toURI().toString())
+        tracePlaybackState("before-first-play")
         playback.play(listOf(track, track))
-        withTimeout(20_000) { playback.state.first { it.error != null || it.playing && it.positionMs > 1000 } }
+        tracePlaybackState("first-play-submitted")
+        try {
+            withTimeout(20_000) { playback.state.first { it.error != null || it.playing && it.positionMs > 1000 } }
+        } catch (timeout: TimeoutCancellationException) {
+            tracePlaybackState("first-play-timeout")
+            throw timeout
+        }
+        tracePlaybackState("first-play-state-observed")
         check(playback.state.value.error == null) { playback.state.value.error.orEmpty() }
         playback.toggle(); delay(600)
         check(!playback.state.value.playing) { "Pause did not apply" }

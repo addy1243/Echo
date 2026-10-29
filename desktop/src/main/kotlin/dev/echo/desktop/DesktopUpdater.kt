@@ -19,7 +19,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 
-const val DESKTOP_VERSION = "0.2.1"
+const val DESKTOP_VERSION = "0.2.2"
 const val DESKTOP_UPGRADE_UUID = "a810ba6c-3581-4e29-a09d-f344ca0230ad"
 private const val UPDATE_REPOSITORY = "addy1243/Echo"
 private const val MAX_INSTALLER_BYTES = 512L * 1024 * 1024
