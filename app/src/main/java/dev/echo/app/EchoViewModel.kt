@@ -139,6 +139,9 @@ class EchoViewModel @Inject constructor(
         ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,64}")) }
         ?: java.util.UUID.randomUUID().toString().also { connectedPlaybackPrefs.edit().putString("device-id", it).apply() }
     private var connectedPlaybackClient: ConnectedPlaybackClient? = null
+    val selectedConnectedPlaybackTargetId = MutableStateFlow<String?>(null)
+    val selectedConnectedPlaybackDevice = MutableStateFlow<ConnectedDevice?>(null)
+    private var connectedPlaybackSelectionAccount: String? = null
 
     fun signInGoogle() { if (!accountBusy) googleAccountChoice = googleAccounts.chooseAccountIntent() }
     fun accountChoiceLaunched() { googleAccountChoice = null }
@@ -155,6 +158,7 @@ class EchoViewModel @Inject constructor(
     fun signOutGoogle() = accountAction {
         pendingGoogleAccount = null; driveAccount = null; driveResolution = null; googleAccountChoice = null
         setConnectedPlaybackEnabled(false)
+        clearConnectedPlaybackSelection()
         firebaseSync.signOut(googleAccounts.email.value)
         googleAccounts.signOut()
         accountStatus = "Signed out. This device's library and downloads were kept."
@@ -195,6 +199,8 @@ class EchoViewModel @Inject constructor(
 
     suspend fun runConnectedPlayback() {
         val email = googleAccounts.email.value?.takeIf { connectedPlaybackEnabled.value } ?: return
+        if (connectedPlaybackSelectionAccount != null && connectedPlaybackSelectionAccount != email) clearConnectedPlaybackSelection()
+        connectedPlaybackSelectionAccount = email
         val player = ConnectedPlaybackClient(
             databaseUrl = dev.echo.data.firebase.EchoFirebaseProject.realtimeDatabaseUrl,
             deviceId = connectedPlaybackDeviceIdForUi,
@@ -207,7 +213,13 @@ class EchoViewModel @Inject constructor(
             } },
         )
         connectedPlaybackClient = player
-        val collector = viewModelScope.launch { player.state.collect { connectedPlaybackState.value = it } }
+        val collector = viewModelScope.launch {
+            player.state.collect { state ->
+                connectedPlaybackState.value = state
+                val selectedId = selectedConnectedPlaybackTargetId.value
+                if (selectedId != null) state.devices.firstOrNull { it.id == selectedId }?.let { selectedConnectedPlaybackDevice.value = it }
+            }
+        }
         var failure: String? = null
         try { player.run() }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -232,14 +244,43 @@ class EchoViewModel @Inject constructor(
         connectedPlaybackState.value = ConnectedPlaybackState(message = "Connected playback stopped.")
     }
 
+    fun selectConnectedPlaybackTarget(device: ConnectedDevice?) {
+        if (device == null || device.id == connectedPlaybackDeviceIdForUi) {
+            clearConnectedPlaybackSelection()
+            return
+        }
+        selectedConnectedPlaybackTargetId.value = device.id
+        selectedConnectedPlaybackDevice.value = device
+        connectedPlaybackSelectionAccount = googleAccounts.email.value
+    }
+
+    private fun clearConnectedPlaybackSelection() {
+        selectedConnectedPlaybackTargetId.value = null
+        selectedConnectedPlaybackDevice.value = null
+        connectedPlaybackSelectionAccount = null
+    }
+
+    fun canControlConnectedDevice(target: ConnectedDevice): Boolean =
+        target.id == selectedConnectedPlaybackTargetId.value &&
+            isFreshConnectedPlaybackTarget(target, connectedPlaybackState.value)
+
     fun sendConnectedPlaybackCommand(target: ConnectedDevice, action: ConnectedPlaybackAction, positionMs: Long = 0L) {
         val client = connectedPlaybackClient ?: run {
-            connectedPlaybackState.value = connectedPlaybackState.value.copy(message = "Connected playback is offline.")
+            connectedPlaybackState.value = connectedPlaybackState.value.copy(message = "Reconnecting to ${target.label}.")
+            return
+        }
+        if (!canControlConnectedDevice(target)) {
+            connectedPlaybackState.value = connectedPlaybackState.value.copy(message = "Reconnecting to ${target.label}; controls are paused until its current state is confirmed.")
             return
         }
         viewModelScope.launch {
-            try { client.sendCommand(target, action, positionMs) }
-            catch (cancelled: CancellationException) { throw cancelled }
+            try {
+                val fresh = connectedPlaybackState.value.devices.firstOrNull { it.id == target.id }
+                check(fresh != null && canControlConnectedDevice(target)) {
+                    "Reconnecting to ${target.label}; controls are paused until its current state is confirmed."
+                }
+                client.sendCommand(requireNotNull(fresh), action, positionMs)
+            } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 connectedPlaybackState.value = connectedPlaybackState.value.copy(message = error.message ?: "Remote control failed.")
             }
@@ -526,6 +567,7 @@ class EchoViewModel @Inject constructor(
         require(!offlineSettings.value.offlineOnly || items.getOrNull(selected)?.let(::available) == true) { "This song is not available offline. Download it first or turn off Offline mode." }
         require(playable.isNotEmpty()) { "No audio source is available. Match imported tracks to local music first." }
         require(items.getOrNull(selected)?.sourceUri != null) { "This track has no audio source. Choose Match to select a local recording." }
+        selectConnectedPlaybackTarget(null)
         if (shuffle) {
             sendQueueCommand(QueueCommands.START_SHUFFLED, playable, items.take(selected).count(::available))
             recommendedIds = emptySet()
@@ -537,7 +579,7 @@ class EchoViewModel @Inject constructor(
         player.shuffleModeEnabled = shuffle
         player.prepare(); player.play()
     }
-    fun playSelected(track: Track) = runAction { sendQueueCommand(QueueCommands.PLAY_SELECTED, listOf(track)) }
+    fun playSelected(track: Track) = runAction { selectConnectedPlaybackTarget(null); sendQueueCommand(QueueCommands.PLAY_SELECTED, listOf(track)) }
 
     fun appendPlaylist(items: List<Track>, mode: QueueAddMode) = runAction {
         val playable = queueAvailable(items)
@@ -589,7 +631,7 @@ class EchoViewModel @Inject constructor(
         if (tracks.value.none { it.id == track.id }) library.upsertTracks(listOf(track))
         val player = controller ?: error("Playback service is connecting")
         player.addMediaItem(if (next) (player.currentMediaItemIndex + 1).coerceAtLeast(0) else player.mediaItemCount, track.mediaItem())
-        if (player.playbackState == Player.STATE_IDLE) player.prepare()
+        if (player.playbackState == Player.STATE_IDLE) { selectConnectedPlaybackTarget(null); player.prepare() }
     }
     fun toggle() { controller?.let { if (it.isPlaying) it.pause() else { if (it.playbackState == Player.STATE_IDLE) it.prepare(); it.play() } } }
     fun resume() { controller?.play() }
@@ -651,3 +693,11 @@ private fun Track.mediaItem(): MediaItem = MediaItem.Builder().setMediaId(id)
     .setUri(sourceUri ?: "")
     .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(artist).setAlbumTitle(album)
         .setArtworkUri(artworkUri?.let(Uri::parse)).setIsPlayable(true).setIsBrowsable(false).build()).build()
+
+internal fun isFreshConnectedPlaybackTarget(captured: ConnectedDevice, state: ConnectedPlaybackState): Boolean {
+    if (!captured.controlEnabled || state.pending) return false
+    val fresh = state.devices.firstOrNull { it.id == captured.id } ?: return false
+    return fresh.controlEnabled && fresh.sessionId == captured.sessionId &&
+        fresh.player.trackRevision == captured.player.trackRevision &&
+        fresh.player.queueRevision == captured.player.queueRevision && fresh.updatedAt >= captured.updatedAt
+}

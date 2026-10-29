@@ -1,5 +1,7 @@
 # Decisions
 
+- 2026-10-29: Implement the owner-approved unified native player UI using the existing v1 connected-playback channel. A selected remote player drives Android mini/full player and Windows bottom player without moving audio. Use compact device selection, collapsed offline records, inline expanding actions and fresh selected-session/occurrence guards. Keep transfer, groups, background participation and endpoint routing as subsequent capabilities, with accurate unavailable explanations in this milestone. See CONNECTED_PLAYER_DESIGN.md and CONNECTED_PLAYBACK.md.
+
 - 2026-10-28: Implement opt-in foreground connected playback using REST RTDB in the existing echo-85da4 project, reusing Firebase sessions and existing player adapters. Preserve Firestore library sync. Use bounded indexed polling, heartbeat leases, expiring session/track/queue-guarded commands and acknowledgments. Keep actual audio transport, grouped timing, multi-output routing and closed-phone control separate. See CONNECTED_PLAYBACK.md.
 
 - 2026-10-28: Prepare the owner-authorized combined `v0.2.0` GitHub release as Android 0.2.0/code11 and Windows 0.2.0, with exact corresponding source and checksums. Windows advances the 0.1.0 preview so existing update checks can discover it. Public Windows packaging uses GPL Temurin JDK21 with matching runtime sources; preserve the MSI UpgradeCode and separate program/data paths. Publication and installer acceptance remain separate from preparing source/artifacts.

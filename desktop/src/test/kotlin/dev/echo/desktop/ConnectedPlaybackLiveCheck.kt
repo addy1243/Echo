@@ -141,7 +141,7 @@ fun main(args: Array<String>): Unit = runBlocking {
                     fun url(path: String) = EchoFirebaseProject.realtimeDatabaseUrl.toHttpUrl().newBuilder()
                         .addPathSegments("users/${session.uid}/playback/$path").addQueryParameter("auth", session.idToken)
                     val mailbox = http.newCall(Request.Builder().url(url("commands/${controller.deviceId}.json")
-                        .addQueryParameter("limitToLast", "32").build()).build()).execute().use { response ->
+                        .addQueryParameter("orderBy", "\"createdAt\"").addQueryParameter("limitToLast", "32").build()).build()).execute().use { response ->
                         check(response.isSuccessful)
                         val bytes = response.body!!.byteStream().readNBytes(262145)
                         check(bytes.size <= 262144)
@@ -157,7 +157,7 @@ fun main(args: Array<String>): Unit = runBlocking {
                         .execute().use { check(it.isSuccessful) }
                 }
             }
-        }
+        }.onFailure { println("WARN connected playback cleanup failed (${it.javaClass.simpleName})") }
         preferences.forEach { it.removeNode() }
         Files.list(directory).use { files -> files.forEach { Files.deleteIfExists(it) } }
         Files.deleteIfExists(directory)

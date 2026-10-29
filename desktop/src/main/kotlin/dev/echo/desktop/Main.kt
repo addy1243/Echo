@@ -13,6 +13,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.painterResource
@@ -25,7 +27,6 @@ import dev.echo.desktop.DesktopLibrary.Companion.localTrack
 import dev.echo.data.provider.YouTubeProvider
 import dev.echo.data.firebase.ConnectedDevice
 import dev.echo.data.firebase.ConnectedPlaybackAction
-import dev.echo.data.firebase.ConnectedPlaybackState
 import kotlinx.coroutines.*
 import java.awt.Dimension
 import java.io.File
@@ -84,6 +85,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     val connectedPlayback = remember { DesktopConnectedPlayback(store, google, player) }
     val connectedState by connectedPlayback.state.collectAsState()
     var connectedPlaybackEnabled by remember { mutableStateOf(connectedPlayback.enabled()) }
+    var selectedRemoteId by remember { mutableStateOf<String?>(null) }
+    var lastSelectedRemote by remember { mutableStateOf<ConnectedDevice?>(null) }
     var lastConnectedAccount by remember { mutableStateOf(account.email) }
     LaunchedEffect(account.email) {
         if (lastConnectedAccount != account.email) {
@@ -100,6 +103,15 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             return@LaunchedEffect
         }
         withContext(Dispatchers.IO) { connectedPlayback.run() }
+    }
+    LaunchedEffect(account.email, connectedPlaybackEnabled) {
+        if (account.email == null || !connectedPlaybackEnabled) {
+            selectedRemoteId = null
+            lastSelectedRemote = null
+        }
+    }
+    LaunchedEffect(selectedRemoteId, connectedState.devices) {
+        selectedRemoteId?.let { id -> connectedState.devices.firstOrNull { it.id == id }?.let { lastSelectedRemote = it } }
     }
     DisposableEffect(connectedPlayback) { onDispose { connectedPlayback.stop() } }
     val firebase = remember { DesktopFirebaseSync(store, google) }
@@ -127,7 +139,6 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     var renamePlaylist by remember { mutableStateOf<DesktopPlaylist?>(null) }
     var deletePlaylist by remember { mutableStateOf<DesktopPlaylist?>(null) }
     var clearHistory by remember { mutableStateOf(false) }
-    var timerMenu by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
     var matchingJob by remember { mutableStateOf<Job?>(null) }
     var matchingProgress by remember { mutableStateOf<String?>(null) }
@@ -179,6 +190,36 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     }
     val selectedPlaylist = library.playlists.find { "playlist:${it.id}" == page }
     val trackMap = library.tracks.associateBy { it.id }
+    val selectedRemote = selectedRemotePlayer(selectedRemoteId, connectedState.devices, lastSelectedRemote)
+    val remotePlayer = selectedRemote?.device
+    val remoteLive = selectedRemote != null && !selectedRemote.reconnecting && remotePlayer?.controlEnabled == true &&
+        remotePlayer?.player?.title?.isNullOrBlank() == false &&
+        connectedPlaybackEnabled && account.email != null && !connectedState.pending
+    val presentedTrack = if (selectedRemoteId != null) remotePlayer?.let { connectedPresentationTrack(it.player, trackMap) } else playback.current
+    val presentedTitle = if (selectedRemoteId != null) remotePlayer?.player?.title else playback.current?.title
+    val presentedArtist = if (selectedRemoteId != null) remotePlayer?.player?.artist else playback.current?.artist
+    val presentedPlaying = if (selectedRemoteId != null) remotePlayer?.player?.isPlaying == true else playback.playing
+    val presentedPosition = if (selectedRemoteId != null) remotePlayer?.player?.positionMs ?: 0L else playback.positionMs
+    val presentedDuration = if (selectedRemoteId != null) remotePlayer?.player?.durationMs ?: 0L else playback.durationMs
+    val ownDeviceId = connectedPlayback.deviceId
+    val otherPlayers = connectedState.devices.filter { it.id != ownDeviceId }.let { devices ->
+        if (lastSelectedRemote != null && devices.none { it.id == lastSelectedRemote!!.id })
+            devices + lastSelectedRemote!!.copy(controlEnabled = false) else devices
+    }
+    val onlinePlayers = otherPlayers.filter { it.controlEnabled && it.id != selectedRemoteId }
+    val offlinePlayersBase = otherPlayers.filterNot { it.controlEnabled || it.id == selectedRemoteId }
+    val offlinePlayers = offlinePlayersBase + listOfNotNull(selectedRemote?.takeIf { it.reconnecting }?.device?.takeIf {
+        offlinePlayersBase.none { offline -> offline.id == it.id }
+    })
+    fun sendRemoteCommand(target: ConnectedDevice, action: ConnectedPlaybackAction, position: Long = 0L) {
+        val fresh = connectedState.devices.firstOrNull { it.id == target.id && it.controlEnabled }
+        if (!remoteLive || selectedRemoteId != target.id || fresh == null || fresh.sessionId != target.sessionId ||
+            fresh.player.trackRevision != target.player.trackRevision || fresh.player.queueRevision != target.player.queueRevision) return
+        scope.launch {
+            try { connectedPlayback.sendCommand(fresh, action, position) }
+            catch (_: Exception) { notice = "The remote command could not be sent. Check the device and account connection." }
+        }
+    }
     val tracks = when {
         page == "Search" -> results
         page == "Liked songs" -> library.tracks.filter { it.id in library.favorites }
@@ -190,8 +231,9 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     val upcomingIndexes = if (playback.current == null) emptyList() else
         (playback.index + 1 until playback.queue.size).toList() +
             if (playback.repeatMode == DesktopRepeatMode.ALL) (0 until playback.index).toList() else emptyList()
-    val currentRow = if (tracks.map { it.id } == playback.queue.map { it.id }) playback.index else -1
+    val currentRow = if (selectedRemoteId == null && tracks.map { it.id } == playback.queue.map { it.id }) playback.index else -1
     fun play(items: List<Track>, index: Int, selectedOnly: Boolean = false) {
+        selectedRemoteId = null
         val track = items.getOrNull(index) ?: return
         if (!desktopPlayable(track)) {
             query = "${track.artist} ${track.title}".take(200)
@@ -207,6 +249,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     }
     fun smartShuffle(items: List<Track>) {
         if (smartJob?.isActive == true) return
+        selectedRemoteId = null
         val captured = player.state.value
         val original = items.filter(::desktopPlayable)
         val playlist = selectedPlaylist
@@ -330,8 +373,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                         Button(onClick = { play(tracks, 0) }) { Text("Play all") }
                         OutlinedButton(onClick = { play(tracks.shuffled(), 0) }) { Text("Shuffle") }
                         OutlinedButton(onClick = { smartShuffle(tracks) }, enabled = !smartBusy) { Text("Smart shuffle") }
-                        TextButton(onClick = { player.append(tracks.filter(::desktopPlayable)) }) { Text("Add to queue") }
-                        TextButton(onClick = { player.append(tracks.filter(::desktopPlayable).shuffled()) }) { Text("Queue shuffled") }
+                        TextButton(onClick = { selectedRemoteId = null; player.append(tracks.filter(::desktopPlayable)) }) { Text("Add to queue") }
+                        TextButton(onClick = { selectedRemoteId = null; player.append(tracks.filter(::desktopPlayable).shuffled()) }) { Text("Queue shuffled") }
                     }
                     if (smartBusy) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -367,8 +410,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                             val event = if (page == "History") library.history.asReversed().getOrNull(index) else null
                             TrackRow(track, index, index == currentRow, track.id in library.favorites,
                                 onPlay = { play(tracks, index, page == "Search") }, onLike = { disk { store.toggleFavorite(track) } },
-                                onAdd = { addTrack = track }, onQueue = { player.append(listOf(track).filter(::desktopPlayable)) },
-                                onNext = { player.append(listOf(track).filter(::desktopPlayable), next = true) },
+                                onAdd = { addTrack = track }, onQueue = { selectedRemoteId = null; player.append(listOf(track).filter(::desktopPlayable)) },
+                                onNext = { selectedRemoteId = null; player.append(listOf(track).filter(::desktopPlayable), next = true) },
                                 onDownload = track.takeIf { it.provider == "youtube" }?.let { {
                                     try { offline.download(it) } catch (e: Exception) { notice = e.message ?: "Download could not start" }
                                 } },
@@ -406,101 +449,40 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                     }
                     }
                 }
-                if (playback.queue.isNotEmpty() || connectedPlaybackEnabled) Column(Modifier.width(245.dp).fillMaxHeight()
-                    .background(Color(0xFF10151D)).padding(20.dp)) {
-                    if (connectedPlaybackEnabled) ConnectedPlaybackPanel(connectedState, connectedPlayback.deviceId,
-                        onCommand = { device, action, position -> scope.launch {
-                            try { connectedPlayback.sendCommand(device, action, position) }
-                            catch (_: Exception) { notice = "The remote command could not be sent. Check the device and account connection." }
-                        } })
-                    if (playback.queue.isNotEmpty()) {
-                    Text("Now playing", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                    Spacer(Modifier.height(18.dp))
-                    Cover(playback.current, Modifier.fillMaxWidth().height(180.dp))
-                    Text(playback.current?.title.orEmpty(), fontSize = 18.sp, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(top = 18.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(playback.current?.artist.orEmpty(), color = Muted, maxLines = 1)
-                    Spacer(Modifier.height(26.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("UP NEXT", color = Muted, fontSize = 10.sp, letterSpacing = 2.sp, modifier = Modifier.weight(1f))
-                        TextButton(onClick = { player.clearUpcoming() }) { Text("Clear", fontSize = 11.sp) }
-                    }
-                    LazyColumn(Modifier.weight(1f).padding(top = 12.dp)) {
-                        itemsIndexed(upcomingIndexes, key = { _, absolute -> "${playback.queueRevision}:$absolute" }) { index, absolute ->
-                            val track = playback.queue[absolute]
-                            val revision = playback.queueRevision
-                            val occurrence = playback.occurrence
-                            Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f).clickable { scope.launch {
-                                    player.jumpTo(absolute, revision)
-                                } }.padding(vertical = 7.dp)) {
-                                    Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
-                                    Text(if (track.id in recommendedIds) "Smart pick · ${track.artist}" else track.artist,
-                                        color = if (track.id in recommendedIds) Accent else Muted, maxLines = 1, fontSize = 11.sp)
-                                }
-                                Column {
-                                    TextButton(onClick = { scope.launch {
-                                        player.moveUpcoming(absolute, upcomingIndexes[index - 1], occurrence, revision)
-                                    } }, enabled = index > 0, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(28.dp)) { Text("↑") }
-                                    TextButton(onClick = { scope.launch {
-                                        player.removeUpcoming(absolute, occurrence, revision)
-                                    } }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(28.dp)) { Text("×") }
-                                }
-                            }
-                        }
-                    }
-                    }
-                }
             }
-            if (playback.error != null) Text(playback.error.orEmpty(), color = Color(0xFFFFB7AC), fontSize = 12.sp,
+            if (selectedRemoteId == null && playback.error != null) Text(playback.error.orEmpty(), color = Color(0xFFFFB7AC), fontSize = 12.sp,
                 modifier = Modifier.fillMaxWidth().background(Color(0xFF38252A)).padding(12.dp))
             HorizontalDivider(color = Color(0xFF28303C))
-            Row(Modifier.fillMaxWidth().height(108.dp).background(Panel).padding(horizontal = 24.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                Cover(playback.current, Modifier.size(58.dp))
-                Column(Modifier.width(220.dp)) {
-                    Text(playback.current?.title ?: "Ready when you are", fontWeight = FontWeight.SemiBold,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(if (playback.loading) "Preparing audio…" else playback.current?.artist ?: "Choose a song to start",
-                        color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { player.previous() }, enabled = playback.current != null) { Text("Previous") }
-                        Button(onClick = { player.toggle() }, enabled = playback.current != null && !playback.loading) {
-                            Text(if (playback.playing) "Pause" else "Play")
-                        }
-                        TextButton(onClick = { player.next() }, enabled = playback.current != null) { Text("Next") }
-                        TextButton(onClick = { player.setRepeatMode(DesktopRepeatMode.entries[
-                            (playback.repeatMode.ordinal + 1) % DesktopRepeatMode.entries.size]) }) {
-                            Text("Repeat: ${playback.repeatMode.name.lowercase()}", fontSize = 11.sp)
-                        }
-                        Box {
-                            TextButton(onClick = { timerMenu = true }) {
-                                Text(playback.sleepRemainingMs?.let { "Sleep ${clock(it)}" } ?: "Sleep", fontSize = 11.sp)
-                            }
-                            DropdownMenu(expanded = timerMenu, onDismissRequest = { timerMenu = false }) {
-                                listOf(15, 30, 45, 60).forEach { minutes -> DropdownMenuItem(text = { Text("$minutes minutes") },
-                                    onClick = { player.setSleepTimer(minutes); timerMenu = false }) }
-                                DropdownMenuItem(text = { Text("Cancel timer") },
-                                    onClick = { player.setSleepTimer(null); timerMenu = false })
-                            }
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(clock(playback.positionMs), fontSize = 10.sp, color = Muted)
-                        Slider(value = playback.positionMs.toFloat().coerceIn(0f, playback.durationMs.coerceAtLeast(1).toFloat()),
-                            onValueChange = { player.seek(it.toLong()) },
-                            valueRange = 0f..playback.durationMs.coerceAtLeast(1).toFloat(),
-                            enabled = playback.durationMs > 0, modifier = Modifier.weight(1f).height(26.dp).padding(horizontal = 12.dp))
-                        Text(clock(playback.durationMs), fontSize = 10.sp, color = Muted)
-                    }
-                }
-                Column(Modifier.width(150.dp)) {
-                    Text("Volume", fontSize = 11.sp, color = Muted)
-                    Slider(playback.volume, { player.setVolume(it) })
-                }
-            }
+            DesktopPlayerBar(presentedTrack, presentedTitle, presentedArtist, presentedPlaying, presentedPosition, presentedDuration,
+                remoteMode = selectedRemoteId != null, remoteDevice = remotePlayer,
+                remoteEnabled = remoteLive, commandPending = connectedState.pending,
+                localAvailable = playback.current != null, localLoading = playback.loading,
+                localVolume = playback.volume, localRepeat = playback.repeatMode.name.lowercase(), localSleep = playback.sleepRemainingMs,
+                onLocalPrevious = { selectedRemoteId = null; player.previous() },
+                onLocalToggle = { selectedRemoteId = null; player.toggle() },
+                onLocalNext = { selectedRemoteId = null; player.next() },
+                onLocalSeek = { player.seek(it) }, onLocalVolume = { player.setVolume(it) },
+                onLocalRepeat = { player.setRepeatMode(DesktopRepeatMode.entries[(playback.repeatMode.ordinal + 1) % DesktopRepeatMode.entries.size]) },
+                onLocalShuffle = { selectedRemoteId = null; player.shuffleUpcoming() },
+                onLocalSleep = { player.setSleepTimer(it) }, onRemoteCommand = ::sendRemoteCommand,
+                connected = connectedPlaybackEnabled && account.email != null,
+                connectedMessage = connectedState.message, otherPlayers = otherPlayers,
+                onlinePlayers = onlinePlayers, offlinePlayers = offlinePlayers,
+                localStatus = when {
+                    playback.current == null -> "Ready"
+                    playback.ended -> "Ready"
+                    playback.playing -> "Playing · ${playback.current?.title.orEmpty()}"
+                    else -> "Paused · ${playback.current?.title.orEmpty()}"
+                },
+                selectedRemoteId = selectedRemoteId, reconnecting = selectedRemote?.reconnecting == true,
+                onSelectLocal = { selectedRemoteId = null }, onSelectRemote = { device ->
+                    selectedRemoteId = device.id; lastSelectedRemote = device
+                },
+                upcomingIndexes = upcomingIndexes, playback = playback, recommendedIds = recommendedIds,
+                onClearQueue = { selectedRemoteId = null; player.clearUpcoming() },
+                onJump = { index, revision -> selectedRemoteId = null; scope.launch { player.jumpTo(index, revision) } },
+                onMove = { from, to, occurrence, revision -> selectedRemoteId = null; scope.launch { player.moveUpcoming(from, to, occurrence, revision) } },
+                onRemove = { index, occurrence, revision -> selectedRemoteId = null; scope.launch { player.removeUpcoming(index, occurrence, revision) } })
         }
     }
     if (showImport) DesktopImportDialog(store, onChanged = { disk { } }, onError = { notice = it }, onDismiss = { showImport = false })
@@ -591,10 +573,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                 })
             }
             if (account.email == null) Text("Sign in first. Connected playback uses the signed-in Firebase account.", color = Muted, fontSize = 12.sp)
-            ConnectedPlaybackPanel(connectedState, if (connectedPlaybackEnabled) connectedPlayback.deviceId else "", onCommand = { device, action, position -> scope.launch {
-                try { connectedPlayback.sendCommand(device, action, position) }
-                catch (_: Exception) { notice = "The remote command could not be sent. Check the device and account connection." }
-            } })
+            Text("Choose connected players from the bottom player. Remote controls only work while a player is reachable.",
+                color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
         } },
         confirmButton = { TextButton(onClick = { showDevices = false }) { Text("Got it") } })
     if (confirmCloudSync) AlertDialog(onDismissRequest = { confirmCloudSync = false }, title = { Text("Sync library with ${account.email}?") },
@@ -611,55 +591,281 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
 }
 
 @Composable
-private fun ConnectedPlaybackPanel(
-    state: ConnectedPlaybackState,
-    ownDeviceId: String,
-    onCommand: (ConnectedDevice, ConnectedPlaybackAction, Long) -> Unit,
+private fun DesktopPlayerBar(
+    track: Track?, title: String?, artist: String?, playing: Boolean, positionMs: Long, durationMs: Long,
+    remoteMode: Boolean, remoteDevice: ConnectedDevice?, remoteEnabled: Boolean, commandPending: Boolean,
+    localAvailable: Boolean, localLoading: Boolean, localVolume: Float, localRepeat: String, localSleep: Long?,
+    onLocalPrevious: () -> Unit, onLocalToggle: () -> Unit, onLocalNext: () -> Unit, onLocalSeek: (Long) -> Unit,
+    onLocalVolume: (Float) -> Unit, onLocalRepeat: () -> Unit, onLocalShuffle: () -> Unit, onLocalSleep: (Int?) -> Unit,
+    onRemoteCommand: (ConnectedDevice, ConnectedPlaybackAction, Long) -> Unit,
+    connected: Boolean, connectedMessage: String?, otherPlayers: List<ConnectedDevice>, onlinePlayers: List<ConnectedDevice>,
+    offlinePlayers: List<ConnectedDevice>, localStatus: String, selectedRemoteId: String?, reconnecting: Boolean,
+    onSelectLocal: () -> Unit, onSelectRemote: (ConnectedDevice) -> Unit,
+    upcomingIndexes: List<Int>, playback: DesktopPlaybackState, recommendedIds: Set<String>,
+    onClearQueue: () -> Unit, onJump: (Int, Long) -> Unit,
+    onMove: (Int, Int, Long, Long) -> Unit, onRemove: (Int, Long, Long) -> Unit,
 ) {
-    val devices = state.devices.filter { it.id != ownDeviceId }
-    state.message?.let { Text(it, color = Muted, fontSize = 11.sp,
-        modifier = Modifier.padding(top = 8.dp))
+    BoxWithConstraints(Modifier.fillMaxWidth().background(Panel)) {
+        val narrow = maxWidth < 1180.dp
+        val shortName = remoteDevice?.let { shortDeviceName(it.label) } ?: if (remoteMode) "Device" else "Laptop"
+        val stateName = when {
+            remoteMode && reconnecting -> "Reconnecting to ${remoteDevice?.label ?: lastKnownDeviceName(otherPlayers, selectedRemoteId)}"
+            remoteMode && commandPending -> "Command pending on ${remoteDevice?.label ?: "device"}"
+            remoteMode && remoteDevice?.player?.title != null -> "${if (playing) "Playing on" else "Paused on"} ${remoteDevice.label}"
+            remoteMode -> "Controlling ${remoteDevice?.label ?: "device"}"
+            playing -> "Playing on this laptop"
+            localAvailable -> "Paused on this laptop"
+            else -> "This laptop"
+        }
+        val deviceLabel = when {
+            remoteMode && reconnecting -> "Reconnecting · $shortName"
+            remoteMode && commandPending -> "Pending · $shortName"
+            remoteMode && remoteDevice?.player?.title != null -> "${if (playing) "Playing" else "Paused"} · $shortName"
+            remoteMode -> "Controlling · $shortName"
+            else -> "⌘ Laptop"
+        }
+        val pick: @Composable () -> Unit = {
+            DesktopPlayerPicker(deviceLabel, stateName, remoteMode, selectedRemoteId, connected,
+                connectedMessage, otherPlayers, onlinePlayers, offlinePlayers, localVolume, localRepeat, localSleep,
+                localStatus, commandPending, remoteDevice, onSelectLocal, onSelectRemote,
+                onLocalVolume, onLocalRepeat, onLocalShuffle, onLocalSleep)
+        }
+        val transport: @Composable (Modifier) -> Unit = { modifier ->
+            PlayerTransport(modifier, remoteMode, remoteDevice, remoteEnabled, playing,
+                positionMs, durationMs, localAvailable, localLoading, onLocalPrevious, onLocalToggle, onLocalNext,
+                onLocalSeek, onRemoteCommand)
+        }
+        if (narrow) Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Cover(track, Modifier.size(54.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(title ?: if (remoteMode) "Ready to play" else "Ready when you are", fontWeight = FontWeight.SemiBold,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(artist ?: if (remoteMode) "" else "Choose a song to start", color = Muted, fontSize = 12.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                transport(Modifier.weight(1f))
+                pick()
+                if (!remoteMode && playback.current != null) QueuePicker(playback, upcomingIndexes, recommendedIds,
+                    onClearQueue, onJump, onMove, onRemove)
+            }
+        } else Row(Modifier.fillMaxWidth().height(108.dp).padding(horizontal = 24.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Cover(track, Modifier.size(58.dp))
+            Column(Modifier.widthIn(min = 130.dp, max = 230.dp)) {
+                Text(title ?: if (remoteMode) "Ready to play" else "Ready when you are", fontWeight = FontWeight.SemiBold,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(artist ?: if (remoteMode) "" else "Choose a song to start", color = Muted, fontSize = 12.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            transport(Modifier.weight(1f))
+            if (!remoteMode) {
+                Column(Modifier.width(118.dp)) {
+                    Text("Volume", fontSize = 11.sp, color = Muted)
+                    Slider(localVolume, onLocalVolume)
+                }
+                if (playback.current != null) QueuePicker(playback, upcomingIndexes, recommendedIds,
+                    onClearQueue, onJump, onMove, onRemove)
+            }
+            pick()
+        }
     }
-    devices.forEach { device ->
-        val track = device.player
-        val canControl = device.controlEnabled && track.title != null && !state.pending
-        Card(Modifier.fillMaxWidth().padding(top = 10.dp), shape = RoundedCornerShape(14.dp)) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(device.label, fontWeight = FontWeight.SemiBold, maxLines = 1,
-                        overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    Text(if (device.controlEnabled) "LIVE" else "OFFLINE", color = if (device.controlEnabled) Accent else Muted,
-                        fontSize = 9.sp, letterSpacing = 1.sp)
+}
+
+@Composable
+private fun PlayerTransport(
+    modifier: Modifier, remoteMode: Boolean, remoteDevice: ConnectedDevice?, remoteEnabled: Boolean,
+    playing: Boolean, positionMs: Long, durationMs: Long, localAvailable: Boolean, localLoading: Boolean,
+    onLocalPrevious: () -> Unit, onLocalToggle: () -> Unit, onLocalNext: () -> Unit, onLocalSeek: (Long) -> Unit,
+    onRemoteCommand: (ConnectedDevice, ConnectedPlaybackAction, Long) -> Unit,
+) {
+    var dragValue by remember(remoteMode, remoteEnabled, remoteDevice?.id, remoteDevice?.sessionId,
+        remoteDevice?.player?.trackRevision, remoteDevice?.player?.queueRevision) { mutableStateOf<Float?>(null) }
+    var dragTarget by remember(remoteMode, remoteEnabled, remoteDevice?.id, remoteDevice?.sessionId,
+        remoteDevice?.player?.trackRevision, remoteDevice?.player?.queueRevision) { mutableStateOf<ConnectedDevice?>(null) }
+    val canTransport = if (remoteMode) remoteEnabled else localAvailable
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            TextButton(onClick = {
+                if (remoteMode) remoteDevice?.let { onRemoteCommand(it, ConnectedPlaybackAction.PREVIOUS, 0) }
+                else onLocalPrevious()
+            }, enabled = canTransport) { Text("Previous") }
+            Button(onClick = {
+                if (remoteMode) remoteDevice?.let { onRemoteCommand(it,
+                    if (playing) ConnectedPlaybackAction.PAUSE else ConnectedPlaybackAction.PLAY, 0) }
+                else onLocalToggle()
+            }, enabled = canTransport && (remoteMode || !localLoading)) { Text(if (playing) "Pause" else "Play") }
+            TextButton(onClick = {
+                if (remoteMode) remoteDevice?.let { onRemoteCommand(it, ConnectedPlaybackAction.NEXT, 0) }
+                else onLocalNext()
+            }, enabled = canTransport) { Text("Next") }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(clock(positionMs), fontSize = 10.sp, color = Muted)
+            Slider(value = (dragValue ?: positionMs.toFloat()).coerceIn(0f, durationMs.coerceAtLeast(1).toFloat()),
+                onValueChange = { value ->
+                    if (remoteMode) {
+                        if (dragTarget == null) dragTarget = remoteDevice
+                        dragValue = value
+                    } else onLocalSeek(value.toLong())
+                }, onValueChangeFinished = {
+                    if (remoteMode) {
+                        val target = dragTarget
+                        val value = dragValue
+                        if (target != null && value != null) onRemoteCommand(target, ConnectedPlaybackAction.SEEK, value.toLong())
+                        dragTarget = null; dragValue = null
+                    }
+                }, valueRange = 0f..durationMs.coerceAtLeast(1).toFloat(), enabled = durationMs > 0 && canTransport,
+                modifier = Modifier.weight(1f).height(26.dp).padding(horizontal = 10.dp))
+            Text(clock(durationMs), fontSize = 10.sp, color = Muted)
+        }
+    }
+}
+
+@Composable
+private fun DesktopPlayerPicker(
+    buttonLabel: String, accessibleLabel: String, remoteMode: Boolean, selectedRemoteId: String?,
+    connected: Boolean, connectedMessage: String?, devices: List<ConnectedDevice>, online: List<ConnectedDevice>,
+    offline: List<ConnectedDevice>, volume: Float, repeat: String, sleep: Long?, localStatus: String,
+    commandPending: Boolean, selectedDevice: ConnectedDevice?, onSelectLocal: () -> Unit,
+    onSelectRemote: (ConnectedDevice) -> Unit, onVolume: (Float) -> Unit, onRepeat: () -> Unit,
+    onShuffle: () -> Unit, onSleep: (Int?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var otherOpen by remember { mutableStateOf(false) }
+    var moveOpen by remember { mutableStateOf(false) }
+    var togetherOpen by remember { mutableStateOf(false) }
+    var sleepOpen by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.semantics { contentDescription = accessibleLabel }) {
+            Text(buttonLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+            Column(Modifier.width(350.dp).heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
+                Text("Your players", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                devices.firstOrNull { it.id == selectedRemoteId && it.controlEnabled }?.let { device ->
+                        DropdownMenuItem(text = {
+                            Column {
+                                Text("${if (device.label.contains("android", true)) "▣" else "▱"}  ${device.label}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(if (!device.controlEnabled) "Offline" else if (device.player.title == null) "Ready to play" else
+                                    "${if (device.player.isPlaying) "Playing" else "Paused"} · ${device.player.title}",
+                                    color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }, onClick = { onSelectRemote(device); expanded = false })
+                    }
+                DropdownMenuItem(text = {
+                    Column {
+                        Text("▱  This laptop")
+                        Text(localStatus, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }, onClick = { onSelectLocal(); expanded = false })
+                online.filterNot { it.id == selectedRemoteId }.forEach { device ->
+                    DropdownMenuItem(text = {
+                        Column {
+                            Text("${if (device.label.contains("android", true)) "▣" else "▱"}  ${device.label}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (device.player.title == null) "Ready to play" else
+                                "${if (device.player.isPlaying) "Playing" else "Paused"} · ${device.player.title}",
+                                color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }, onClick = { onSelectRemote(device); expanded = false })
                 }
-                Text(track.title ?: "Nothing playing", fontSize = 12.sp, fontWeight = FontWeight.Medium,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(track.artist.orEmpty(), fontSize = 11.sp, color = Muted,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (state.pending) Text("Sending remote command…", color = Muted, fontSize = 10.sp)
-                device.ack?.takeIf { it.status == "rejected" }?.let {
-                    Text("Command declined: ${it.reason ?: "device state changed"}", color = Color(0xFFFFB7AC), fontSize = 10.sp)
+                if (offline.isNotEmpty()) {
+                    TextButton(onClick = { otherOpen = !otherOpen }, modifier = Modifier.fillMaxWidth()) {
+                        Text("${if (otherOpen) "▾" else "▸"} Other devices (${offline.size})", modifier = Modifier.fillMaxWidth())
+                    }
+                    if (otherOpen) offline.forEach { device -> DropdownMenuItem(text = {
+                        Column { Text(device.label, maxLines = 1, overflow = TextOverflow.Ellipsis); Text("Offline · last known session", color = Muted, fontSize = 11.sp) }
+                    }, onClick = { onSelectRemote(device); expanded = false }) }
                 }
-                Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()) {
-                    TextButton(onClick = { onCommand(device, ConnectedPlaybackAction.PREVIOUS, 0) }, enabled = canControl, contentPadding = PaddingValues(4.dp), modifier = Modifier.widthIn(max = 62.dp)) { Text("Previous", fontSize = 10.sp) }
-                    Button(onClick = { onCommand(device, if (track.isPlaying) ConnectedPlaybackAction.PAUSE else ConnectedPlaybackAction.PLAY, 0) },
-                        enabled = canControl, contentPadding = PaddingValues(6.dp)) { Text(if (track.isPlaying) "Pause" else "Play", fontSize = 11.sp) }
-                    TextButton(onClick = { onCommand(device, ConnectedPlaybackAction.NEXT, 0) }, enabled = canControl, contentPadding = PaddingValues(4.dp), modifier = Modifier.widthIn(max = 50.dp)) { Text("Next", fontSize = 10.sp) }
+                if (remoteMode) {
+                    connectedMessage?.let { Text(it, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
+                    if (commandPending) Text("Remote command pending…", color = Muted, fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                    selectedDevice?.ack?.takeIf { it.status == "rejected" }?.let {
+                        Text("Command declined: ${it.reason ?: "device state changed"}", color = Color(0xFFFFB7AC), fontSize = 12.sp,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                    }
+                } else if (!connected) Text(connectedMessage ?: "Sign in and enable connected playback to see other live players.",
+                    color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                if (!remoteMode) {
+                    Text("Volume", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp))
+                    Slider(volume, onVolume, modifier = Modifier.padding(horizontal = 12.dp))
+                    TextButton(onClick = onRepeat, modifier = Modifier.fillMaxWidth()) { Text("Repeat: $repeat", modifier = Modifier.fillMaxWidth()) }
+                    TextButton(onClick = onShuffle, modifier = Modifier.fillMaxWidth()) { Text("Shuffle upcoming", modifier = Modifier.fillMaxWidth()) }
+                    Box {
+                        TextButton(onClick = { sleepOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(sleep?.let { "Sleep timer · ${clock(it)}" } ?: "Sleep timer", modifier = Modifier.fillMaxWidth())
+                        }
+                        DropdownMenu(sleepOpen, onDismissRequest = { sleepOpen = false }) {
+                            listOf(15, 30, 45, 60).forEach { minute -> DropdownMenuItem(text = { Text("$minute minutes") },
+                                onClick = { onSleep(minute); sleepOpen = false }) }
+                            DropdownMenuItem(text = { Text("Cancel timer") }, onClick = { onSleep(null); sleepOpen = false })
+                        }
+                    }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier.fillMaxWidth()) {
-                    TextButton(onClick = { onCommand(device, ConnectedPlaybackAction.SEEK,
-                        (track.positionMs - 10_000).coerceAtLeast(0)) }, enabled = canControl && track.durationMs > 0) { Text("−10s") }
-                    Text("${clock(track.positionMs)} / ${clock(track.durationMs)}", color = Muted, fontSize = 10.sp)
-                    TextButton(onClick = { onCommand(device, ConnectedPlaybackAction.SEEK,
-                        (track.positionMs + 10_000).coerceAtMost(track.durationMs)) }, enabled = canControl && track.durationMs > 0, contentPadding = PaddingValues(2.dp), modifier = Modifier.width(42.dp)) { Text("+10s", fontSize = 11.sp) }
+                TextButton(onClick = { moveOpen = !moveOpen }, modifier = Modifier.fillMaxWidth()) { Text("Move this song…", modifier = Modifier.fillMaxWidth()) }
+                if (moveOpen) Text("Moving playback to another device is not available yet.", color = Muted, fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                TextButton(onClick = { togetherOpen = !togetherOpen }, modifier = Modifier.fillMaxWidth()) { Text("Play together…", modifier = Modifier.fillMaxWidth()) }
+                if (togetherOpen) Text("Shared playback is not available yet.", color = Muted, fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                Text("Audio outputs", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                Text("Output selection is not available yet.", color = Muted, fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueuePicker(
+    playback: DesktopPlaybackState, upcoming: List<Int>, recommended: Set<String>, onClear: () -> Unit,
+    onJump: (Int, Long) -> Unit, onMove: (Int, Int, Long, Long) -> Unit, onRemove: (Int, Long, Long) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }) { Text("Queue") }
+        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+            Column(Modifier.width(340.dp).heightIn(max = 400.dp)) {
+                Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Up next", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { onClear(); expanded = false }) { Text("Clear") }
+                }
+                LazyColumn(Modifier.heightIn(max = 350.dp)) {
+                    itemsIndexed(upcoming, key = { _, absolute -> "${playback.queueRevision}:$absolute" }) { index, absolute ->
+                        val track = playback.queue[absolute]
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f).clickable { onJump(absolute, playback.queueRevision); expanded = false }.padding(vertical = 7.dp)) {
+                                Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+                                Text(if (track.id in recommended) "Smart pick · ${track.artist}" else track.artist,
+                                    color = if (track.id in recommended) Accent else Muted, maxLines = 1, fontSize = 11.sp)
+                            }
+                            Column {
+                                TextButton(onClick = { onMove(absolute, upcoming[index - 1], playback.occurrence, playback.queueRevision) },
+                                    enabled = index > 0, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(28.dp)) { Text("↑") }
+                                TextButton(onClick = { onRemove(absolute, playback.occurrence, playback.queueRevision) },
+                                    contentPadding = PaddingValues(0.dp), modifier = Modifier.size(28.dp)) { Text("×") }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
-    if (state.pending && devices.isEmpty()) Text("Sending remote command…", color = Muted, fontSize = 11.sp,
-        modifier = Modifier.padding(top = 8.dp))
 }
+
+private fun shortDeviceName(label: String): String = when {
+    label.contains("windows", true) -> "Laptop"
+    label.contains("android", true) -> "Phone"
+    else -> label.substringBefore(' ').take(14)
+}
+
+private fun lastKnownDeviceName(devices: List<ConnectedDevice>, id: String?): String =
+    devices.firstOrNull { it.id == id }?.label ?: "device"
 
 @Composable
 private fun NavItem(label: String, selected: Boolean, action: () -> Unit) {

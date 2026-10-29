@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
 import dev.echo.core.Track
 import dev.echo.core.Playlist
@@ -39,10 +40,31 @@ import dev.echo.core.Playlist
     var credits by remember { mutableStateOf(false) }
     var add by remember { mutableStateOf<Track?>(null) }
     var seeking by remember { mutableStateOf<Float?>(null) }
-    val current = tracks.find { it.id == vm.current?.mediaId }
+    var seekTarget by remember { mutableStateOf<dev.echo.data.firebase.ConnectedDevice?>(null) }
+    val targetId by vm.selectedConnectedPlaybackTargetId.collectAsStateWithLifecycle()
+    val connectedState by vm.connectedPlaybackState.collectAsStateWithLifecycle()
+    val cachedTarget by vm.selectedConnectedPlaybackDevice.collectAsStateWithLifecycle()
+    val remote = if (targetId == null) null else connectedState.devices.firstOrNull { it.id == targetId } ?: cachedTarget
+    val remoteSelected = targetId != null
+    val canControlRemote = remote != null && remote.player.title != null && vm.canControlConnectedDevice(remote)
+    LaunchedEffect(targetId, remote?.sessionId, remote?.player?.trackRevision, remote?.player?.queueRevision, vm.current?.mediaId) {
+        seeking = null
+        seekTarget = null
+    }
+    val current = if (remoteSelected) tracks.firstOrNull { it.id == remote?.player?.trackId } else tracks.find { it.id == vm.current?.mediaId }
     val player = vm.controller
     val revision = vm.revision
     val accent = MaterialTheme.colorScheme.primary
+    val remotePosition = seekTarget?.player?.positionMs ?: remote?.player?.positionMs ?: 0L
+    val remoteDuration = seekTarget?.player?.durationMs ?: remote?.player?.durationMs ?: 0L
+    val duration = if (remoteSelected || seekTarget != null) remoteDuration else vm.duration
+    val basePosition = if (remoteSelected || seekTarget != null) remotePosition else vm.position
+    val progress = seeking ?: basePosition.toFloat().coerceIn(0f, duration.toFloat().coerceAtLeast(1f))
+    val liveRemote = remote?.let { candidate -> connectedState.devices.firstOrNull { it.id == candidate.id && it.sessionId == candidate.sessionId && it.controlEnabled } }
+    val displayedTitle = if (remoteSelected) remote?.player?.title ?: if (liveRemote != null) "Ready for playback" else "Reconnecting to player" else vm.current?.mediaMetadata?.title?.toString() ?: "Choose a song"
+    val displayedArtist = if (remoteSelected) remote?.player?.artist.orEmpty() else vm.current?.mediaMetadata?.artist?.toString().orEmpty()
+    val artworkUri = if (remoteSelected) connectedArtworkUri(remote?.player?.trackId, tracks) else vm.current?.mediaMetadata?.artworkUri?.toString()
+    val displayedPlaying = if (remoteSelected) remote?.player?.isPlaying == true else vm.playing
     BoxWithConstraints(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF342742), Color(0xFF141318), Color(0xFF101014)))).testTag("player-screen")) {
         val artSize = minOf(maxWidth - 56.dp, maxHeight * .38f).coerceIn(140.dp, 340.dp)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 26.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -50,52 +72,82 @@ import dev.echo.core.Playlist
                 IconButton(onClick = close) { Icon(Icons.Default.KeyboardArrowDown, "Close player", modifier = Modifier.size(30.dp)) }
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("NOW PLAYING", style = MaterialTheme.typography.labelSmall, letterSpacing = 2.sp, color = accent)
-                    Text(if (vm.recommendedIds.contains(vm.current?.mediaId)) "Recommended for this session" else "Your music, in the moment", style = MaterialTheme.typography.bodySmall)
+                    Text(if (!remoteSelected && vm.recommendedIds.contains(vm.current?.mediaId)) "Recommended for this session" else "Your music, in the moment", style = MaterialTheme.typography.bodySmall)
                 }
-                IconButton(onClick = { showQueue = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Open queue") }
+                if (!remoteSelected) IconButton(onClick = { showQueue = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Open queue") }
+                else Spacer(Modifier.size(48.dp))
             }
             Spacer(Modifier.height(14.dp))
-            Surface(shape = RoundedCornerShape(28.dp), shadowElevation = 20.dp) { Artwork(vm.current?.mediaMetadata?.artworkUri?.toString(), artSize.value.toInt()) }
+            Surface(shape = RoundedCornerShape(28.dp), shadowElevation = 20.dp) { Artwork(artworkUri, artSize.value.toInt()) }
             Spacer(Modifier.height(26.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(vm.current?.mediaMetadata?.title?.toString() ?: "Choose a song", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(displayedTitle, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("player-track-title"))
                     Spacer(Modifier.height(6.dp))
-                    Text(vm.current?.mediaMetadata?.artist?.toString().orEmpty(), style = MaterialTheme.typography.bodyLarge, color = Color(0xFFC8C1CE), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(displayedArtist, style = MaterialTheme.typography.bodyLarge, color = Color(0xFFC8C1CE), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 IconButton(enabled = current != null, onClick = { current?.let(vm::favorite) }) { Icon(if (current?.id in favorites) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Like song", tint = accent) }
                 IconButton(enabled = current != null, onClick = { add = current }) { Icon(Icons.Default.PlaylistAdd, "Add current song to playlist", tint = accent) }
             }
             Spacer(Modifier.height(18.dp))
-            current?.let { DownloadTrackAction(vm, it) }
-            SleepTimerControls(vm)
-            val progress = seeking ?: vm.position.toFloat().coerceIn(0f, vm.duration.toFloat().coerceAtLeast(1f))
-            Slider(progress, { seeking = it }, valueRange = 0f..vm.duration.toFloat().coerceAtLeast(1f), enabled = vm.duration > 0,
-                onValueChangeFinished = { seeking?.let { player?.seekTo(it.toLong()) }; seeking = null }, modifier = Modifier.fillMaxWidth().testTag("player-seek"))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(playerTime(progress.toLong()), style = MaterialTheme.typography.labelSmall); Text(playerTime(vm.duration), style = MaterialTheme.typography.labelSmall) }
+            if (!remoteSelected) {
+                current?.let { DownloadTrackAction(vm, it) }
+                SleepTimerControls(vm)
+            }
+            Slider(progress, { value ->
+                if (seekTarget == null && remoteSelected) seekTarget = remote
+                seeking = value
+            }, valueRange = 0f..duration.toFloat().coerceAtLeast(1f), enabled = if (remoteSelected || seekTarget != null) {
+                val captured = seekTarget ?: remote
+                duration > 0 && captured != null && vm.canControlConnectedDevice(captured)
+            } else duration > 0,
+                onValueChangeFinished = {
+                    val value = seeking
+                    val captured = seekTarget
+                    if (value != null) {
+                        if (captured != null) vm.sendConnectedPlaybackCommand(captured, dev.echo.data.firebase.ConnectedPlaybackAction.SEEK, value.toLong())
+                        else player?.seekTo(value.toLong())
+                    }
+                    seeking = null
+                    seekTarget = null
+                }, modifier = Modifier.fillMaxWidth().testTag("player-seek"))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(playerTime(progress.toLong()), style = MaterialTheme.typography.labelSmall); Text(playerTime(duration), style = MaterialTheme.typography.labelSmall) }
             Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                IconButton(onClick = { player?.shuffleModeEnabled = player?.shuffleModeEnabled != true }) { Icon(Icons.Default.Shuffle, "Shuffle", tint = if (player?.shuffleModeEnabled == true && revision >= 0) accent else Color(0xFFA29BAA)) }
-                IconButton(enabled = player != null, onClick = { player?.seekToPrevious() }) { Icon(Icons.Default.SkipPrevious, "Previous", modifier = Modifier.size(34.dp)) }
-                FilledIconButton(enabled = vm.current != null, onClick = vm::toggle, modifier = Modifier.size(80.dp)) {
-                    if (vm.buffering) CircularProgressIndicator(Modifier.size(30.dp), color = MaterialTheme.colorScheme.onPrimary)
-                    else Icon(if (vm.playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (vm.playing) "Pause" else "Play", modifier = Modifier.size(42.dp))
-                }
-                IconButton(enabled = player?.hasNextMediaItem() == true && revision >= 0, onClick = { player?.seekToNextMediaItem() }) { Icon(Icons.Default.SkipNext, "Next", modifier = Modifier.size(34.dp)) }
-                IconButton(onClick = { player?.repeatMode = when (player?.repeatMode) { Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL; Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE; else -> Player.REPEAT_MODE_OFF } }) {
-                    Icon(if (player?.repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat, "Repeat mode ${player?.repeatMode}", tint = if (player != null && player.repeatMode != Player.REPEAT_MODE_OFF && revision >= 0) accent else Color(0xFFA29BAA))
+                if (remoteSelected) {
+                    IconButton(enabled = canControlRemote, onClick = { remote?.let { vm.sendConnectedPlaybackCommand(it, dev.echo.data.firebase.ConnectedPlaybackAction.PREVIOUS) } }) { Icon(Icons.Default.SkipPrevious, "Previous on ${remote?.label ?: "selected player"}", modifier = Modifier.size(34.dp)) }
+                    FilledIconButton(enabled = canControlRemote && !connectedState.pending, onClick = { remote?.let { vm.sendConnectedPlaybackCommand(it, if (displayedPlaying) dev.echo.data.firebase.ConnectedPlaybackAction.PAUSE else dev.echo.data.firebase.ConnectedPlaybackAction.PLAY) } }, modifier = Modifier.size(80.dp)) {
+                        Icon(if (displayedPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, "${if (displayedPlaying) "Pause" else "Play"} on ${remote?.label ?: "selected player"}", modifier = Modifier.size(42.dp))
+                    }
+                    IconButton(enabled = canControlRemote && !connectedState.pending, onClick = { remote?.let { vm.sendConnectedPlaybackCommand(it, dev.echo.data.firebase.ConnectedPlaybackAction.NEXT) } }) { Icon(Icons.Default.SkipNext, "Next on ${remote?.label ?: "selected player"}", modifier = Modifier.size(34.dp)) }
+                } else {
+                    IconButton(onClick = { player?.shuffleModeEnabled = player?.shuffleModeEnabled != true }) { Icon(Icons.Default.Shuffle, "Shuffle", tint = if (player?.shuffleModeEnabled == true && revision >= 0) accent else Color(0xFFA29BAA)) }
+                    IconButton(enabled = player != null, onClick = { player?.seekToPrevious() }) { Icon(Icons.Default.SkipPrevious, "Previous", modifier = Modifier.size(34.dp)) }
+                    FilledIconButton(enabled = vm.current != null, onClick = vm::toggle, modifier = Modifier.size(80.dp)) {
+                        if (vm.buffering) CircularProgressIndicator(Modifier.size(30.dp), color = MaterialTheme.colorScheme.onPrimary)
+                        else Icon(if (vm.playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (vm.playing) "Pause" else "Play", modifier = Modifier.size(42.dp))
+                    }
+                    IconButton(enabled = player?.hasNextMediaItem() == true && revision >= 0, onClick = { player?.seekToNextMediaItem() }) { Icon(Icons.Default.SkipNext, "Next", modifier = Modifier.size(34.dp)) }
+                    IconButton(onClick = { player?.repeatMode = when (player?.repeatMode) { Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL; Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE; else -> Player.REPEAT_MODE_OFF } }) {
+                        Icon(if (player?.repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat, "Repeat mode ${player?.repeatMode}", tint = if (player != null && player.repeatMode != Player.REPEAT_MODE_OFF && revision >= 0) accent else Color(0xFFA29BAA))
+                    }
                 }
             }
+            ConnectedPlayerControls(vm)
             Spacer(Modifier.height(24.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { showQueue = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, null); Spacer(Modifier.width(8.dp)); Text("Up next · ${vm.queueItems.drop(1).size}") }
-                if (current?.attribution != null) TextButton(onClick = { credits = true }) { Text("Credits") }
-                else Text(current?.provider?.replaceFirstChar { it.uppercase() }.orEmpty(), style = MaterialTheme.typography.labelSmall, color = Color(0xFFA29BAA))
+            if (!remoteSelected) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { showQueue = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, null); Spacer(Modifier.width(8.dp)); Text("Up next · ${vm.queueItems.drop(1).size}") }
+                    if (current?.attribution != null) TextButton(onClick = { credits = true }) { Text("Credits") }
+                    else Text(current?.provider?.replaceFirstChar { it.uppercase() }.orEmpty(), style = MaterialTheme.typography.labelSmall, color = Color(0xFFA29BAA))
+                }
+            } else if (connectedState.pending) {
+                Text("Remote command pending confirmation…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Spacer(Modifier.height(16.dp))
         }
     }
-    if (showQueue) QueueSheet(vm, tracks, onAdd = { add = it }) { showQueue = false }
+    if (showQueue && !remoteSelected) QueueSheet(vm, tracks, onAdd = { add = it }) { showQueue = false }
     add?.let { track -> AddToPlaylistDialog(track, vm, playlists) { add = null } }
     if (credits && current != null) Credits(current) { credits = false }
 }

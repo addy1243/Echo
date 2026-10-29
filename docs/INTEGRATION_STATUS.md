@@ -2,6 +2,12 @@
 
 Current release: **[0.2.1 - Android code12 and Windows 0.2.1](releases/0.2.1.md)**, published 2026-10-29. Newest records supersede earlier pending states; historical evidence remains dated.
 
+## Unreleased unified player UI — 2026-10-29
+
+The owner-approved native UI is implemented: Windows bottom player and compact device picker replace the device-card rail; Android mini/full player share the selected local/remote target with three circular connected actions and inline choices. Missing players retain metadata with disabled controls. Fresh selected-device/session/track/queue checks guard commands and seek releases. The native engines, RTDB schema/rules and library sync are unchanged.
+
+208 JVM checks, Android build/lint and separate Windows app-image packaging pass. Two focused emulator UI checks pass in 23.513 seconds; the real Android/native-Windows paired selected-player/control check passes in 111.862 seconds. Windows live metadata, reconnect disabling and laptop-sized layout were visually checked. This candidate is not published, the installed Windows Start-menu app is unchanged, and no physical phone was accessed. Transfer, groups, routing and background phone control remain unavailable. See [usage, evidence and candidate paths](CONNECTED_PLAYBACK.md).
+
 ## Published connected playback - 2026-10-29
 
 [Public release](https://github.com/addy1243/Echo/releases/tag/v0.2.1) at exact source `30d94894f33555d46ad9a0619ec4798df58ad0b0`: Android APK, Windows MSI, full matching source and checksums. 204 JVM checks, build/lint/release shrinking, owner-only rules and actual Android-emulator/native-Windows current-song visibility and acknowledged controls pass. Both clients require opt-in; Android Echo must stay open. Audio relay, synchronized groups and multi-output routing remain future work. See [the release record](releases/0.2.1.md).

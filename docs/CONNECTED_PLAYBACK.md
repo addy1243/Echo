@@ -2,6 +2,33 @@
 
 This adds account-scoped current-song visibility and remote **play, pause, previous, next and seek ±10 seconds**. Android and Windows retain independent players and queues. This does not transfer audio or start synchronized listening, output groups or mixing. Install the [published 0.2.1 update](https://github.com/addy1243/Echo/releases/tag/v0.2.1) on both clients.
 
+## Unreleased unified-player candidate — 2026-10-29
+
+The approved [unified connected player design](CONNECTED_PLAYER_DESIGN.md) is implemented in source. Published 0.2.1 packages still use the original interface described below; no release assets or tags were replaced.
+
+- Windows removes the permanent remote-device card rail. The bottom player shows the selected local or remote session; its compact device menu keeps offline records under Other devices. Move and Together expand in place, with accurate unavailable explanations.
+- Android mini and full player share selected remote metadata, artwork and transport. A top-bar device entry works without a local queue. Devices, Move and Together are three circular labeled actions below full-player transport; the mini player reveals the same actions through its compact Devices button. Profile retains consent/settings.
+- Selection changes the viewed/controlled player without starting or stopping either native engine. Local Play selects this device. Missing targets retain their last metadata with Reconnecting and disabled controls. Account changes/sign-out clear account-associated selection.
+- Existing remote play/pause/previous/next and absolute seek use fresh device/session/track/queue guards. Seek dragging captures its target and is cancelled on a target or occurrence change. Remote volume, queue, shuffle, repeat and timers are not offered by v1.
+- Snapshot title/artist remain visible without a portable track ID. Artwork uses an exact library match or a validated canonical YouTube ID; other sources keep a placeholder. Metadata does not become a playable local file.
+
+The candidate reuses the existing RTDB protocol, rules and native engines. Remote progress follows confirmed snapshots, normally on state changes/five-second heartbeats; smooth synchronized progress, transfer, groups, audio relay, endpoint routing and closed-phone control remain unimplemented.
+
+Local verification: all **208 JVM tests** pass (25 app, 66 data, 24 playback, 93 desktop), Android debug APK/test APK and lint pass, and the separate Windows app image builds with the existing GPL Temurin runtime. Actual Windows launch, laptop-sized bottom player, compact picker and in-place Move expansion were visually checked. Two emulator UI checks pass, including idle-player device selection, remote metadata, retained disconnect state with disabled controls, expanded mini-player actions and tab navigation (23.513 seconds). Full and mini captures were visually reviewed. Expanded full-player choices scroll into view once after placement; the mini player's whole expanded area is bounded to 40% of screen height and scrolls internally.
+
+The actual Android-emulator/native-Windows paired check passes through the toolbar entry, inline device list and selected remote player (111.862 seconds). Both directions pass acknowledged play/pause, absolute seek and next/previous. The Windows candidate also displayed the emulator's actual fixture song; after disconnection its selected metadata remained with disabled controls and Reconnecting. Selection was returned to the local laptop afterward. Fixture queues, account and opt-in settings were restored by the emulator check. No physical phone was accessed.
+
+The test helper's bounded mailbox cleanup read now specifies `orderBy="createdAt"`. After explicit owner authorization, the fingerprint-restricted cleanup removed **3 offline Windows acceptance registrations** and their command records. A read-only Firestore check confirmed **0 playback-test tracks** in the real library. Real devices and library records were excluded from deletion. Evidence: `build/unified-player-approved-cleanup.log`.
+
+Evidence: `build/unified-player-final-guard-build.log`, `build/unified-player-final-guard-ui.log`, `build/unified-player-native-peer-pass.log`, `build/unified-player-paired-acceptance.log`, and `build/unified-player-{full,mini}.png`.
+
+Candidate locations (not installed through Windows Installer and not published):
+
+- Windows: `build/unified-player-desktop/compose/binaries/main/app/EchoMusic/EchoMusic.exe`.
+- Android: `app/build/outputs/apk/debug/app-debug.apk`, same signing identity and current development version. Installed in place only on emulator-5556. No phone access or data reset.
+
+## Published 0.2.1 behavior
+
 ## Setup and use
 
 1. Use the existing Firebase project `echo-85da4` and sign into the same Google account on both devices. Complete **Connect Firebase / Sync now** once so the app has its Firebase session.

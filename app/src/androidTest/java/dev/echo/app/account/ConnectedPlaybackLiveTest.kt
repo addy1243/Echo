@@ -60,8 +60,31 @@ class ConnectedPlaybackLiveTest {
         var originalPosition = 0L
         var originalIndex = 0
         var originalPlaying = false
+        var stage = "waiting for the Android player and account"
+        fun mark(next: String) {
+            stage = next
+            println("CONNECTED_PLAYBACK_LIVE_STAGE: $stage")
+        }
+        fun findText(node: android.view.accessibility.AccessibilityNodeInfo?, text: String): android.view.accessibility.AccessibilityNodeInfo? {
+            if (node == null) return null
+            if (node.text?.toString()?.contains(text) == true || node.contentDescription?.toString()?.contains(text) == true) return node
+            for (index in 0 until node.childCount) findText(node.getChild(index), text)?.let { return it }
+            return null
+        }
+        fun accessibilityDump(node: android.view.accessibility.AccessibilityNodeInfo?, depth: Int = 0): String {
+            if (node == null || depth > 30) return ""
+            val text = node.text?.toString().orEmpty().replace('\n', ' ').take(160)
+            val description = node.contentDescription?.toString().orEmpty().replace('\n', ' ').take(160)
+            val line = "${"  ".repeat(depth)}${node.className} text=[$text] description=[$description] clickable=${node.isClickable}\n"
+            return buildString {
+                append(line)
+                for (index in 0 until node.childCount) append(accessibilityDump(node.getChild(index), depth + 1))
+            }
+        }
         try {
+            mark(stage)
             await { vm.controller != null && !vm.accountBusy }
+            mark("enabling connected playback and waiting for the Windows acceptance fixture")
             main {
                 val player = requireNotNull(vm.controller)
                 originalItems = List(player.mediaItemCount) { player.getMediaItemAt(it) }
@@ -71,6 +94,7 @@ class ConnectedPlaybackLiveTest {
                 vm.setConnectedPlaybackEnabled(true)
             }
             suspend fun remote(): ConnectedDevice {
+                mark("waiting for the Windows acceptance fixture to appear in connected state")
                 await { vm.connectedPlaybackState.value.devices.any { it.label == "Echo for Windows" &&
                     it.player.title?.startsWith("Acceptance ") == true && it.controlEnabled } }
                 return vm.connectedPlaybackState.value.devices.first { it.label == "Echo for Windows" &&
@@ -84,23 +108,43 @@ class ConnectedPlaybackLiveTest {
                 delay(2_500)
             }
             remote()
-            fun findText(node: android.view.accessibility.AccessibilityNodeInfo?, text: String): android.view.accessibility.AccessibilityNodeInfo? {
-                if (node == null) return null
-                if (node.text?.toString()?.contains(text) == true) return node
-                for (index in 0 until node.childCount) findText(node.getChild(index), text)?.let { return it }
-                return null
-            }
-            val banner = withTimeout(10_000) {
-                var found = findText(instrumentation.uiAutomation.rootInActiveWindow, "on Echo for Windows:")
-                while (found == null) { delay(100); found = findText(instrumentation.uiAutomation.rootInActiveWindow, "on Echo for Windows:") }
+            mark("finding the connected-player toolbar entry")
+            val playerEntry = withTimeout(10_000) {
+                var found = findText(instrumentation.uiAutomation.rootInActiveWindow, "Connected player controls")
+                while (found == null) { delay(100); found = findText(instrumentation.uiAutomation.rootInActiveWindow, "Connected player controls") }
                 found
             }
-            var clickable = banner
+            var clickable = playerEntry
             while (!clickable.isClickable && clickable.parent != null) clickable = clickable.parent
-            assertTrue("The laptop-song banner must open device controls", clickable.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
+            assertTrue("The connected-player entry must open the unified player without a local queue", clickable.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
+            mark("waiting for the full player after toolbar entry click")
             withTimeout(10_000) {
-                while (findText(instrumentation.uiAutomation.rootInActiveWindow, "Your profile") == null) delay(100)
+                while (findText(instrumentation.uiAutomation.rootInActiveWindow, "NOW PLAYING") == null) delay(100)
             }
+            mark("finding Devices action in the full player")
+            val devicesAction = withTimeout(10_000) {
+                var found = findText(instrumentation.uiAutomation.rootInActiveWindow, "Devices")
+                while (found == null) { delay(100); found = findText(instrumentation.uiAutomation.rootInActiveWindow, "Devices") }
+                found
+            }
+            var devicesClickable = devicesAction
+            while (!devicesClickable.isClickable && devicesClickable.parent != null) devicesClickable = devicesClickable.parent
+            assertTrue("Devices action should reveal the inline player list", devicesClickable.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
+            mark("waiting for the Windows acceptance fixture row after expanding Devices")
+            val laptopRow = withTimeout(10_000) {
+                var found = findText(instrumentation.uiAutomation.rootInActiveWindow, "Acceptance 1")
+                while (found == null) { delay(100); found = findText(instrumentation.uiAutomation.rootInActiveWindow, "Acceptance 1") }
+                found
+            }
+            var rowClickable = laptopRow
+            while (!rowClickable.isClickable && rowClickable.parent != null) rowClickable = rowClickable.parent
+            assertTrue("Selecting the Windows acceptance row must show its playback in the same player", rowClickable.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
+            mark("waiting for the selected Windows acceptance session")
+            val remoteId = remote().id
+            await { vm.selectedConnectedPlaybackTargetId.value == remoteId }
+            mark("waiting for acceptance track title in the full player")
+            withTimeout(10_000) { while (findText(instrumentation.uiAutomation.rootInActiveWindow, "Acceptance 1") == null) delay(100) }
+            mark("running Windows to Android playback command checks")
             command(ConnectedPlaybackAction.PAUSE) { !it.player.isPlaying }
             command(ConnectedPlaybackAction.SEEK, 25_000) { it.player.positionMs in 24_000..26_000 }
             command(ConnectedPlaybackAction.PLAY) { it.player.isPlaying && it.player.positionMs >= 25_000 }
@@ -118,13 +162,35 @@ class ConnectedPlaybackLiveTest {
             await { vm.controller?.isPlaying == true && (vm.controller?.currentPosition ?: 0) >= 25_000 }
             await { vm.controller?.currentMediaItem?.mediaId == tracks[1].id }
             await { vm.controller?.currentMediaItem?.mediaId == tracks[0].id }
+            mark("waiting for Android playback snapshot acknowledgement")
             await { vm.connectedPlaybackState.value.devices.any { it.id == vm.connectedPlaybackDeviceIdForUi &&
                 it.player.title == tracks[0].title && it.ack?.status == "applied" } }
             delay(3_000)
             assertTrue("Signed-in account must be retained", accounts.email.value != null)
+            mark("connected playback checks complete")
+        } catch (failure: Throwable) {
+            println("CONNECTED_PLAYBACK_LIVE_FAILURE_STAGE: $stage")
+            val root = instrumentation.uiAutomation.rootInActiveWindow
+            if (root?.packageName?.toString() == context.packageName) {
+                val diagnostics = "stage=$stage\npackage=${root.packageName}\n${accessibilityDump(root)}"
+                try {
+                    val directory = context.getExternalFilesDir(null) ?: context.filesDir
+                    File(directory, "connected-player-live-failure.txt").writeText(diagnostics)
+                    val screenshot = instrumentation.uiAutomation.takeScreenshot()
+                    File(directory, "connected-player-live-failure.png").outputStream().use {
+                        screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                    }
+                    println("CONNECTED_PLAYBACK_LIVE_DIAGNOSTICS: ${File(directory, "connected-player-live-failure.txt").absolutePath}")
+                    println("CONNECTED_PLAYBACK_LIVE_SCREENSHOT: ${File(directory, "connected-player-live-failure.png").absolutePath}")
+                } catch (diagnosticFailure: Exception) {
+                    println("CONNECTED_PLAYBACK_LIVE_DIAGNOSTICS_FAILED: ${diagnosticFailure.javaClass.simpleName}")
+                }
+            }
+            throw failure
         } finally {
             main {
                 vm.setConnectedPlaybackEnabled(previouslyEnabled)
+                vm.selectConnectedPlaybackTarget(null)
                 vm.controller?.apply {
                     pause(); clearMediaItems()
                     if (originalItems.isNotEmpty()) {
