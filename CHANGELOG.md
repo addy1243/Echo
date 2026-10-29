@@ -1,6 +1,8 @@
 # Release history
 
-## 0.2.2 / Android code13 and Windows 0.2.2 — source candidate 2026-10-29
+## 0.2.2 / Android code13 and Windows 0.2.2 — published 2026-10-29
+
+[Published combined release](https://github.com/addy1243/Echo/releases/tag/v0.2.2); see [the complete release record](docs/releases/0.2.2.md).
 
 - Add unified-player controls for selecting this device or a reachable existing player, with remote reconnect status and controls. Players keep independent audio sessions and queues.
 - Move playback, Play together, and audio-output selection are not available; no audio transfer or synchronized playback is provided.

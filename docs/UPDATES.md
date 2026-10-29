@@ -1,9 +1,9 @@
 # GitHub updates
 
-Android source defaults are **0.2.2/code13**, prepared alongside Windows 0.2.2; see [the release record](releases/0.2.2.md) and [Windows update contract](DESKTOP_UPDATES.md). Earlier records describe prior public releases.
+Android **0.2.2/code13** and Windows **0.2.2** are [published](https://github.com/addy1243/Echo/releases/tag/v0.2.2); see [the release record](releases/0.2.2.md) and [Windows update contract](DESKTOP_UPDATES.md). Public Android and Windows updater download/identity checks passed from 0.2.1; system installation was not accepted. See the release record.
 
 
-Previous stable release: [Echo Music 0.1.9 / code10](https://github.com/addy1243/Echo/releases/tag/v0.1.9), with same-key `EchoMusic-10.apk` and exact corresponding source at commit `2c32cb911541dd384f5abff11ff952cdc4a6dc8b`. The real updater on the code8 emulator passed public code10 background completion, cancellation, checksum/identity verification and normal installer handoff without accepting installation. See [CHANGELOG.md](../CHANGELOG.md) and [integration evidence](INTEGRATION_STATUS.md).
+Previous stable release: [Echo Music 0.2.1 / code12](https://github.com/addy1243/Echo/releases/tag/v0.2.1), with same-key `EchoMusic-12.apk` and exact corresponding source at commit `30d94894f33555d46ad9a0619ec4798df58ad0b0`. See [the 0.2.1 release record](releases/0.2.1.md).
 
 Echo checks the latest published stable release from `addy1243/Echo` once per 24 hours at startup. Settings → Check for updates checks immediately. No notification is shown when there is no newer compatible asset. Drafts and prereleases are ignored. A public repository is required; no GitHub token or client secret is included in the APK.
 

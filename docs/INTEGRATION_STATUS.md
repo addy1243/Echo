@@ -1,12 +1,12 @@
 # Integration status
 
-Current release: **[0.2.1 - Android code12 and Windows 0.2.1](releases/0.2.1.md)**, published 2026-10-29. Newest records supersede earlier pending states; historical evidence remains dated.
+Current release: **[0.2.2 - Android code13 and Windows 0.2.2](releases/0.2.2.md)**, published 2026-10-29 from exact source `3d143945750932681249041a31da64de38dc9332`. Earlier release evidence remains dated.
 
-## Unreleased unified player UI — 2026-10-29
+## Published unified player UI — 2026-10-29
 
 The owner-approved native UI is implemented: Windows bottom player and compact device picker replace the device-card rail; Android mini/full player share the selected local/remote target with three circular connected actions and inline choices. Missing players retain metadata with disabled controls. Fresh selected-device/session/track/queue checks guard commands and seek releases. The native engines, RTDB schema/rules and library sync are unchanged.
 
-208 JVM checks, Android build/lint and separate Windows app-image packaging pass. Two focused emulator UI checks pass in 23.513 seconds; the real Android/native-Windows paired selected-player/control check passes in 111.862 seconds. Windows live metadata, reconnect disabling and laptop-sized layout were visually checked. This candidate is not published, the installed Windows Start-menu app is unchanged, and no physical phone was accessed. Transfer, groups, routing and background phone control remain unavailable. See [usage, evidence and candidate paths](CONNECTED_PLAYBACK.md).
+208 JVM checks, Android build/lint and separate Windows app-image packaging pass. Two focused emulator UI checks pass in 23.513 seconds; the real Android/native-Windows paired selected-player/control check passes in 111.862 seconds. Windows live metadata, reconnect disabling and laptop-sized layout were visually checked. This UI shipped in 0.2.2; no physical phone was accessed. Public Android and Windows updater download/identity checks passed from 0.2.1; system installation was not accepted. See the release record. Transfer, groups, routing and background phone control remain unavailable. See [usage and evidence](CONNECTED_PLAYBACK.md).
 
 ## Published connected playback - 2026-10-29
 

@@ -1,8 +1,8 @@
 # Unified connected player — approved design
 
-Design reviewed by Sol product-design and systems-architecture agents on 2026-10-29 and approved by the owner. Luna implemented the first native UI milestone under Sol review. Status: **unreleased source candidate**; transfer, groups, output routing and background participation remain subsequent milestones. Current verification is recorded in [connected playback](CONNECTED_PLAYBACK.md).
+Design reviewed by Sol product-design and systems-architecture agents on 2026-10-29 and approved by the owner. Luna implemented the first native UI milestone under Sol review, published in [0.2.2](https://github.com/addy1243/Echo/releases/tag/v0.2.2). Transfer, groups, output routing and background participation remain subsequent milestones. Current verification is recorded in [connected playback](CONNECTED_PLAYBACK.md).
 
-The published 0.2.1 clients support independent native players and acknowledged remote play/pause/previous/next/relative seek. They do not yet provide a unified remote full player, transfer, groups or output routing. See [current behavior](CONNECTED_PLAYBACK.md).
+The 0.2.1 clients introduced independent native players and acknowledged remote controls. Version 0.2.2 adds the unified player interface while keeping those sessions independent; it does not provide transfer, groups or output routing. See [current behavior](CONNECTED_PLAYBACK.md).
 
 ## Product contract
 
@@ -15,6 +15,8 @@ Three actions must remain distinct:
 | Select a player | View and control its existing session. Independent queues keep playing as they were. |
 | Move this song… | Prepare another player, start the same recording, then pause the source after observed success. |
 | Play together… | Explicitly select members of a coordinated same-song session. |
+
+Owner clarification (2026-10-29): future Move carries the current song, position and remaining playback queue; Play together uses one shared queue for coordinated song changes. Preserve duplicate occurrences and the actual shuffle traversal. Saved playlists remain separate account-library records synced through Firebase; transferring a queue must not create or overwrite a saved playlist. Device-local recordings require explicit portability handling, without silently dropping unavailable entries.
 
 First launch selects this device. Preserve an explicitly selected target through reconnects; never silently redirect commands to the local player. Browsing Play must state its destination. Until portable remote play-track is supported, label it **Play on this device**.
 
@@ -110,13 +112,13 @@ Before offering trusted enrollment/revoke or coordinator authority as security g
 
 ## Delivery and acceptance gates
 
-1. **Reviewable design:** phone/desktop prototype, selected target, compact picker and clearly proposed transfer/group flows. No production UI removal yet.
-2. **Unified remote player:** replace cards and Android banner routing together; reuse supported commands. Verify metadata/progress, stale/reconnect behavior, idle targets, keyboard/text scaling and independent local playback. Add absolute seek/gain only with adapter/protocol/rules tests.
+1. **Reviewable design:** completed and approved; see the product contract and replacement layout above.
+2. **Unified remote player:** implemented and published in 0.2.2 with supported commands. Transfer/group flows remain separate; gain and output routing are unavailable.
 3. **Lifecycle/live transport:** service-owned Android participation, bounded streaming/reconnect and opt-out/account-change handling. Verify emulator/native Windows, preserving queues and credentials.
 4. **Transfer:** exact recording, readiness, target-busy/source-change races, lost acknowledgments, process death and rollback. Deploy changed rules/backend only with their tests and required owner setup.
 5. **Groups:** coordinator fencing, prebuffer/start/seek/next, leave/rejoin and preserved queues. Audible alignment requires actual hardware measurements before a synchronized claim.
 6. **Scale/outputs:** pagination beyond 32 registrations, N-member soak/resource tests, endpoint selection/unplug and independent-output audio tests.
 
-Sol owns architecture/design/review; Luna writes implementation. Continue emulator-only Android testing. No library reset, credential replacement, physical-phone access, release publication or existing asset replacement is part of this design change.
+Sol owns architecture/design/review; Luna writes implementation. Android testing remains emulator-only. No library reset, credential replacement, physical-phone access or existing asset replacement was part of this release.
 
-This document separates the approved architecture from implementation status. Only the first selected-player UI milestone is implemented in the working tree. It does not establish transfer, group, background or acoustic synchronization support.
+This document separates the approved architecture from implementation status. The selected-player UI milestone is published in 0.2.2. It does not establish transfer, group, background or acoustic synchronization support.

@@ -1,6 +1,6 @@
 # Tasks
 
-Latest: Android 0.2.1/code12 and Windows 0.2.1 are [published](releases/0.2.1.md). Live acknowledged emulator/native-Windows controls and the mobile banner pass; no physical phone or Windows installer acceptance occurred. Earlier preparation notes are historical.
+Latest: Android 0.2.2/code13 and Windows 0.2.2 are [published](releases/0.2.2.md) from exact source `3d143945750932681249041a31da64de38dc9332`. Unified-player UI and paired emulator/native-Windows controls pass. No physical phone was accessed; Public Android and Windows updater download/identity checks passed from 0.2.1; system installation was not accepted. Earlier preparation notes are historical.
 
 Prior public release: combined Android 0.2.0/code11 and Windows 0.2.0 are [published](releases/0.2.0.md). Public updater-download checks pass on both platforms; the installed emulator preserves sync state. No phone access or Windows installer acceptance occurred. Earlier preparation entries below are historical.
 

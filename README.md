@@ -1,20 +1,20 @@
 # Echo Music
 
-Published [0.2.1](https://github.com/addy1243/Echo/releases/tag/v0.2.1) adds opt-in [connected playback](docs/CONNECTED_PLAYBACK.md): see the other device's current song and control play/pause, previous/next and seeking. Live emulator/native-Windows control acceptance passed; published 0.2.0 does not contain these controls.
+Published [0.2.2](https://github.com/addy1243/Echo/releases/tag/v0.2.2) adds the unified player interface to [connected playback](docs/CONNECTED_PLAYBACK.md). Select a reachable Echo player to view and control its existing session; players keep independent audio and queues. Moving songs, Play together and audio-output routing remain unavailable.
 
 Native Kotlin Android personal music player. Android 8.0+; Kotlin, Compose Material 3, Room, Hilt, Media3 and DataStore. Open this folder in Android Studio.
 
-A **Windows desktop app** lives in `desktop`: desktop navigation, YouTube/local playback, Smart shuffle, Spotify imports/recording matching, discovery, playlists, favorites, history, private offline downloads and daily/manual Windows update checks. It requires installed 64-bit VLC 3 and uses Android's Echo icon. Normal Android-emulator sign-in/sync and canonical desktop/Firebase library equality passed; automatic library sync is enabled while both apps are open. No physical phone was updated. See [desktop status](docs/DESKTOP.md), [Firebase setup](docs/FIREBASE.md), [Windows updates](docs/DESKTOP_UPDATES.md) and [connected audio design](docs/DESKTOP_SYNC_DESIGN.md). The published 0.2.1 connected controls are verified; synchronized listening, output groups and audio relay remain future work.
+A **Windows desktop app** lives in `desktop`: desktop navigation, YouTube/local playback, Smart shuffle, Spotify imports/recording matching, discovery, playlists, favorites, history, private offline downloads and daily/manual Windows update checks. It requires installed 64-bit VLC 3 and uses Android's Echo icon. Normal Android-emulator sign-in/sync and canonical desktop/Firebase library equality passed; automatic library sync is enabled while both apps are open. No physical phone was updated. See [desktop status](docs/DESKTOP.md), [Firebase setup](docs/FIREBASE.md), [Windows updates](docs/DESKTOP_UPDATES.md) and [connected audio design](docs/DESKTOP_SYNC_DESIGN.md). The unified player UI is published in 0.2.2; moving playback, groups and output routing remain unavailable.
 
 Echo Music's original source is licensed under GPL-3.0-or-later; see [LICENSE](LICENSE), [COPYING](COPYING) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms and matching source. Settings → Licenses & source displays the packaged notices.
 
-## Latest release: 0.2.1 — Android and Windows
+## Latest release: 0.2.2 — Android and Windows
 
-[Release page](https://github.com/addy1243/Echo/releases/tag/v0.2.1) · [Android APK](https://github.com/addy1243/Echo/releases/download/v0.2.1/EchoMusic-12.apk) · [Windows installer](https://github.com/addy1243/Echo/releases/download/v0.2.1/EchoMusic-Windows-x64-0.2.1.msi) · [Full corresponding source](https://github.com/addy1243/Echo/releases/download/v0.2.1/EchoMusic-12-source.zip) · [Release record and checksums](docs/releases/0.2.1.md)
+[Release page](https://github.com/addy1243/Echo/releases/tag/v0.2.2) · [Android APK](https://github.com/addy1243/Echo/releases/download/v0.2.2/EchoMusic-13.apk) · [Windows installer](https://github.com/addy1243/Echo/releases/download/v0.2.2/EchoMusic-Windows-x64-0.2.2.msi) · [Full corresponding source](https://github.com/addy1243/Echo/releases/download/v0.2.2/EchoMusic-13-source.zip) · [Release record and checksums](docs/releases/0.2.2.md)
 
-Published 29 October 2026. Android is 0.2.1/code12, Android 8.0+, with the same signing certificate as 0.1.9 for in-place updates. Windows is 0.2.1/x64 with bundled GPL Temurin Java 21; install 64-bit VLC 3 separately. The MSI is unsigned and Windows Installer remains interactive. [Older Android 0.1.9 record](docs/releases/0.1.9.md) remains immutable.
+Published 29 October 2026. Android is 0.2.2/code13, Android 8.0+, with the existing signing certificate for in-place updates. Windows is 0.2.2/x64 with bundled GPL Temurin Java 21; install 64-bit VLC 3 separately. The MSI is unsigned and Windows Installer remains interactive. [Previous 0.2.1 release record](docs/releases/0.2.1.md) remains immutable.
 
-Verified local 0.2.1 executable: `build/connected-desktop/compose/binaries/main/app/EchoMusic/EchoMusic.exe`. Keep its full app/runtime directory together; the MSI installs the separate updatable copy.
+Local 0.2.2 executable: `build/player-release/compose/binaries/main/app/EchoMusic/EchoMusic.exe`. Keep its full app/runtime directory together; the MSI installs the separate updatable copy. Public Android and Windows updater checks passed from 0.2.1, including complete download and identity verification; system installation was not accepted. See the release record.
 
 ## Android features
 
@@ -102,7 +102,7 @@ Development changes and validation limits are recorded in [the release history](
 
 In-app updates use [GitHub Releases](https://github.com/addy1243/Echo/releases). See [publishing/update instructions](docs/UPDATES.md): upload a newer same-key APK named `EchoMusic-<versionCode>.apk`. Settings includes Check for updates; startup checks once daily. Android requires permission and confirmation to install.
 
-Use Android Studio **Build → Generate Signed App Bundle / APK**, create/select your private signing key outside the repository and select release. `gradlew :app:assembleRelease` creates an unsigned APK until signing is configured. Never commit keystores, tokens or client secrets. Preserve your signing key to install future upgrades without erasing the library. No publication or paid service is configured.
+Use Android Studio **Build → Generate Signed App Bundle / APK**, create/select your private signing key outside the repository and select release. `gradlew :app:assembleRelease` creates an unsigned APK until signing is configured. Never commit keystores, tokens or client secrets. Preserve your signing key to install future upgrades without erasing the library. Releases are published manually; no paid service is configured.
 
 The database is version 2 with an explicit non-destructive migration from version 1 and exported Room schemas. Future schema changes must increment the version and provide tested migrations; destructive migration fallback is absent.
 

@@ -1,16 +1,16 @@
 # Echo for Windows
 
-Windows **0.2.1** and Android **0.2.1/code12** are [published](https://github.com/addy1243/Echo/releases/tag/v0.2.1). They add opted-in connected playback; earlier release tags/assets remain immutable.
+Windows **0.2.2** and Android **0.2.2/code13** are [published](https://github.com/addy1243/Echo/releases/tag/v0.2.2). The unified player UI selects and controls an existing local or reachable remote session; moving playback, groups and output routing remain unavailable. Earlier release tags/assets remain immutable.
 
 ## Run or install
 
 Current laptop executable:
 
 ```text
-C:\Users\adars\OneDrive\Documents\Autos\Echo\build\connected-desktop\compose\binaries\main\app\EchoMusic\EchoMusic.exe
+C:\Users\adars\OneDrive\Documents\Autos\Echo\build\player-release\compose\binaries\main\app\EchoMusic\EchoMusic.exe
 ```
 
-Keep the whole `EchoMusic` directory together, including `app` and `runtime`; Java is bundled. Release installer target: `build/releases/0.2.1/EchoMusic-Windows-x64-0.2.1.msi`; checksums and matching source accompany the release. The earlier `build/distributions` 0.1.0 installer is a development preview, not the published release.
+Keep the whole `EchoMusic` directory together, including `app` and `runtime`; Java is bundled. Release installer: `build/releases/0.2.2/EchoMusic-Windows-x64-0.2.2.msi`; checksums and matching source accompany the release. The earlier `build/distributions` 0.1.0 installer is a development preview, not the published release.
 
 **64-bit VLC 3 is required separately.** Echo uses LibVLC without opening VLC's window. VLC is not bundled or installed silently. The MSI is unsigned; actual Windows installation/upgrade acceptance remains unperformed.
 
@@ -28,7 +28,7 @@ The per-user MSI installs program files under `%LOCALAPPDATA%\EchoMusicDesktop`,
 
 ## Connected playback
 
-Published 0.2.1 adds opt-in current-song visibility and remote controls through Realtime Database while Echo is open. It requires new builds on both platforms and published owner-only RTDB rules; see [setup and executed checks](CONNECTED_PLAYBACK.md). Audio transfer, synchronized listening and multi-output playback remain separate work.
+Published 0.2.2 adds a unified player interface for opt-in current-song visibility and existing remote controls through Realtime Database while Echo is open. Audio transfer, synchronized listening and multi-output playback remain unavailable; see [setup and executed checks](CONNECTED_PLAYBACK.md).
 
 ## Accounts and sync
 
