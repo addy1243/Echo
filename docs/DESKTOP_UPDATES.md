@@ -8,6 +8,8 @@ An available update has explicit **Download** and **Install** actions. Downloadi
 
 ## Installer closes but the old version stays open
 
+Latest owner report and direct inspection (2026-10-29): the installed configuration still reports **0.2.1**, and both personal Start-menu shortcuts target `%LOCALAPPDATA%\EchoMusicDesktop\EchoMusic.exe`. The 0.2.2 public updater download/identity test passed without launching installation; it does not establish an installed upgrade. The actual installer/upgrade failure remains unresolved. Continue with [the next-session handoff](NEXT_SESSION_HANDOFF.md), preserving library data and credentials.
+
 Check the running executable path. The MSI updates `%LOCALAPPDATA%\EchoMusicDesktop\EchoMusic.exe`; a project-generated portable EXE is a separate copy. A successful repair/reconfiguration may close normally while that older portable app remains open. Close it, launch the installed EchoMusic shortcut and verify **App updates → Installed version**. Correct any personal shortcut that still targets the project folder; preserve the shared `%LOCALAPPDATA%\EchoMusic` data directory.
 
 On 2026-10-29, Windows Installer events reported successful 0.2.1 reconfiguration (status 0), the installed executable/configuration and registry reported 0.2.1, and the launched installed app displayed **Installed version 0.2.1** with the existing library present. The top-level personal Start-menu shortcut had targeted the old project image; it was corrected to the installed EXE. This verifies this user's installation/launch, not an upgrade between two previously registered MSI versions.
