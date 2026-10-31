@@ -1,20 +1,20 @@
 # Echo Music
 
-Published [0.2.2](https://github.com/addy1243/Echo/releases/tag/v0.2.2) adds the unified player interface to [connected playback](docs/CONNECTED_PLAYBACK.md). Select a reachable Echo player to view and control its existing session; players keep independent audio and queues. Moving songs, Play together and audio-output routing remain unavailable.
+[0.2.3](https://github.com/addy1243/Echo/releases/tag/v0.2.3) adds Move playback and Play together to the compact [connected player](docs/CONNECTED_PLAYBACK.md). Move carries the current song, position and remaining queue. Play together coordinates a shared queue across two to eight devices on the same account. Each player resolves its own stream; acoustic synchronization, cross-account rooms and OS output routing are unavailable.
 
 Native Kotlin Android personal music player. Android 8.0+; Kotlin, Compose Material 3, Room, Hilt, Media3 and DataStore. Open this folder in Android Studio.
 
-A **Windows desktop app** lives in `desktop`: desktop navigation, YouTube/local playback, Smart shuffle, Spotify imports/recording matching, discovery, playlists, favorites, history, private offline downloads and daily/manual Windows update checks. It requires installed 64-bit VLC 3 and uses Android's Echo icon. Normal Android-emulator sign-in/sync and canonical desktop/Firebase library equality passed; automatic library sync is enabled while both apps are open. No physical phone was updated. See [desktop status](docs/DESKTOP.md), [Firebase setup](docs/FIREBASE.md), [Windows updates](docs/DESKTOP_UPDATES.md) and [connected audio design](docs/DESKTOP_SYNC_DESIGN.md). The unified player UI is published in 0.2.2; moving playback, groups and output routing remain unavailable.
+A **Windows desktop app** lives in `desktop`: desktop navigation, YouTube/local playback, Smart shuffle, Spotify imports/recording matching, discovery, playlists, favorites, history, private offline downloads and daily/manual Windows update checks. It requires installed 64-bit VLC 3 and uses Android's Echo icon. Android-emulator/Windows native Move, shared transport and recovery passed against both the local demo and production Firebase backend. Saved-playlist sync retains its existing contracts. No physical phone was accessed. See [desktop status](docs/DESKTOP.md), [Firebase setup](docs/FIREBASE.md), [Windows updates](docs/DESKTOP_UPDATES.md) and [connected playback](docs/CONNECTED_PLAYBACK.md).
 
 Echo Music's original source is licensed under GPL-3.0-or-later; see [LICENSE](LICENSE), [COPYING](COPYING) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms and matching source. Settings → Licenses & source displays the packaged notices.
 
-## Latest release: 0.2.2 — Android and Windows
+## 0.2.3 — Android and Windows
 
-[Release page](https://github.com/addy1243/Echo/releases/tag/v0.2.2) · [Android APK](https://github.com/addy1243/Echo/releases/download/v0.2.2/EchoMusic-13.apk) · [Windows installer](https://github.com/addy1243/Echo/releases/download/v0.2.2/EchoMusic-Windows-x64-0.2.2.msi) · [Full corresponding source](https://github.com/addy1243/Echo/releases/download/v0.2.2/EchoMusic-13-source.zip) · [Release record and checksums](docs/releases/0.2.2.md)
+[Release page](https://github.com/addy1243/Echo/releases/tag/v0.2.3) · [Android APK](https://github.com/addy1243/Echo/releases/download/v0.2.3/EchoMusic-14.apk) · [Windows installer](https://github.com/addy1243/Echo/releases/download/v0.2.3/EchoMusic-Windows-x64-0.2.3.msi) · [Full corresponding source](https://github.com/addy1243/Echo/releases/download/v0.2.3/EchoMusic-14-source.zip) · [Release record and checksums](docs/releases/0.2.3.md)
 
-Published 29 October 2026. Android is 0.2.2/code13, Android 8.0+, with the existing signing certificate for in-place updates. Windows is 0.2.2/x64 with bundled GPL Temurin Java 21; install 64-bit VLC 3 separately. The MSI is unsigned and Windows Installer remains interactive. [Previous 0.2.1 release record](docs/releases/0.2.1.md) remains immutable.
+Android is0.2.3/code14, Android8.0+, with the original signing certificate for in-place updates. Windows is0.2.3/x64 with bundled GPL Temurin Java21; install64-bit VLC3 separately. The MSI is unsigned and installation remains interactive. The actual installed Start-menu app upgraded successfully with library and credential hashes preserved. Earlier release tags/assets remain immutable.
 
-Local 0.2.2 executable: `build/player-release/compose/binaries/main/app/EchoMusic/EchoMusic.exe`. Keep its full app/runtime directory together; the MSI installs the separate updatable copy. Public Android and Windows updater checks passed from 0.2.1, including complete download and identity verification; system installation was not accepted. See the release record.
+Local0.2.3 executable: `desktop/build/compose/binaries/main/app/EchoMusic/EchoMusic.exe`. Keep its full app/runtime directory together; the MSI installs the separate updatable copy. Use the existing Start-menu shortcut after an MSI upgrade and restart Echo to load the new version. Publication and verification status are recorded in the release record.
 
 ## Android features
 

@@ -109,6 +109,7 @@ class ConnectedPlaybackTest {
     @Test fun twoClientsApplyOnceAcknowledgeAndRejectAnOldTrack(): Unit = runBlocking {
         val database = JSONObject()
         val applied = mutableListOf<ConnectedPlaybackAction>()
+        var participatingInV2 = false
         fun serverValue(value: Any?): Any? = when (value) {
             is JSONObject -> if (value.optString(".sv") == "timestamp") System.currentTimeMillis() else JSONObject().also { copy ->
                 value.keys().forEach { key -> serverValue(value.opt(key))?.let { copy.put(key, it) } }
@@ -134,7 +135,9 @@ class ConnectedPlaybackTest {
         var player = ConnectedPlayerSnapshot("youtube:abcdefghijk", "Song", "Artist", true, 1000, 90_000, "t1", "q1")
         fun client(id: String, target: Boolean) = ConnectedPlaybackClient(
             "https://echo-85da4-default-rtdb.asia-southeast1.firebasedatabase.app", id, id, { session }, { player },
-            { command -> if (target) { applied += command.action; player = player.copy(isPlaying = false) } }, http)
+            { command -> if (target) { applied += command.action; player = player.copy(isPlaying = false) } }, http,
+            v2Participation = { target && participatingInV2 },
+            controlEnabled = { !(target && participatingInV2) })
         val sender = client("sender", false)
         val receiver = client("receiver", true)
         val jobs = listOf(launch { sender.run() }, launch { receiver.run() })
@@ -145,6 +148,12 @@ class ConnectedPlaybackTest {
             withTimeout(8_000) { sender.state.first { !it.pending && it.message == "Remote command applied." } }
             delay(2_200)
             assertEquals(listOf(ConnectedPlaybackAction.PAUSE), applied)
+            participatingInV2 = true
+            withTimeout(6_000) { sender.state.first { state -> state.devices.any { it.id == "receiver" && !it.controlEnabled } } }
+            sender.sendCommand(target, ConnectedPlaybackAction.PLAY)
+            withTimeout(8_000) { sender.state.first { !it.pending && it.message?.startsWith("Remote command rejected") == true } }
+            assertEquals("v1 remote controls are fenced during v2 participation", listOf(ConnectedPlaybackAction.PAUSE), applied)
+            participatingInV2 = false
             sender.sendCommand(target.copy(player = target.player.copy(trackRevision = "old-track")), ConnectedPlaybackAction.PAUSE)
             withTimeout(8_000) { sender.state.first { !it.pending && it.message?.startsWith("Remote command rejected") == true } }
             assertEquals(listOf(ConnectedPlaybackAction.PAUSE), applied)

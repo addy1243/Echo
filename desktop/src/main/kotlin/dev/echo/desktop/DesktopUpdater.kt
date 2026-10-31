@@ -5,9 +5,11 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,31 +21,32 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 
-const val DESKTOP_VERSION = "0.2.2"
+const val DESKTOP_VERSION = "0.2.3"
 const val DESKTOP_UPGRADE_UUID = "a810ba6c-3581-4e29-a09d-f344ca0230ad"
 private const val UPDATE_REPOSITORY = "addy1243/Echo"
 private const val MAX_INSTALLER_BYTES = 512L * 1024 * 1024
 private val UPDATE_HOSTS = setOf("api.github.com", "github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com")
 
-enum class DesktopUpdatePhase { IDLE, CHECKING, AVAILABLE, DOWNLOADING, READY, FAILED }
+enum class DesktopUpdatePhase { IDLE, CHECKING, AVAILABLE, DOWNLOADING, READY, INSTALLING, INSTALLATION_COMPLETE, INSTALLATION_REBOOT_REQUIRED, INSTALLATION_CANCELLED, INSTALLATION_FAILED, FAILED }
 data class DesktopUpdateRelease(val version: String, val name: String, val url: String, val size: Long,
     val sha256: String, val notes: String)
 data class DesktopUpdateState(val phase: DesktopUpdatePhase = DesktopUpdatePhase.IDLE,
     val release: DesktopUpdateRelease? = null, val receivedBytes: Long = 0, val totalBytes: Long = 0,
-    val message: String? = null)
+    val message: String? = null, val verifiedInstallerCopy: Path? = null)
 
 /** Downloads never change application or library files; Windows Installer handles an explicit installation. */
 class DesktopUpdater internal constructor(
     private val root: Path, private val currentVersion: String, private val client: OkHttpClient,
     private val verifyMsi: (Path, DesktopUpdateRelease) -> Unit,
-    private val launch: (Path) -> Unit,
+    private val launch: (Path, Path) -> Process,
     private val now: () -> Long,
 ) : Closeable {
     constructor(root: Path = Path.of(System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "EchoMusic", "updates"),
         currentVersion: String = DESKTOP_VERSION) : this(root, currentVersion,
         OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
             .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).callTimeout(10, TimeUnit.MINUTES).build(),
-        ::verifyDesktopMsi, { file -> ProcessBuilder(desktopInstallerCommand(file)).start(); Unit }, System::currentTimeMillis)
+        ::verifyDesktopMsi, { file, log -> ProcessBuilder(desktopInstallerCommand(file, log))
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD).start() }, System::currentTimeMillis)
 
     private val mutex = Mutex()
     private val mutableState = MutableStateFlow(DesktopUpdateState())
@@ -51,6 +54,8 @@ class DesktopUpdater internal constructor(
     @Volatile private var activeCall: Call? = null
     @Volatile private var cancelRequested = false
     @Volatile private var closed = false
+    @Volatile private var activeInstaller: Process? = null
+    @Volatile private var installerExit: java.util.concurrent.CompletableFuture<Process>? = null
     private val installer get() = root.resolve("pending.msi")
     private val pending get() = root.resolve("pending.json")
     private val preferences get() = root.resolve("preferences.json")
@@ -58,7 +63,7 @@ class DesktopUpdater internal constructor(
     init { desktopVersionParts(currentVersion) }
 
     suspend fun check(manual: Boolean) = mutex.withLock { withContext(Dispatchers.IO) {
-        if (closed) return@withContext
+        if (closed || activeInstaller != null) return@withContext
         cancelRequested = false
         try {
             Files.createDirectories(root)
@@ -104,7 +109,7 @@ class DesktopUpdater internal constructor(
     } }
 
     suspend fun download() = mutex.withLock { withContext(Dispatchers.IO) {
-        if (closed) return@withContext
+        if (closed || activeInstaller != null) return@withContext
         val release = state.value.release ?: return@withContext
         val partial = root.resolve("incoming.msi")
         cancelRequested = false
@@ -153,18 +158,88 @@ class DesktopUpdater internal constructor(
         } finally { activeCall = null; Files.deleteIfExists(partial) }
     } }
 
-    /** Call only from the user's Install action; no background installer launch. */
-    suspend fun launchInstaller() = mutex.withLock { withContext(Dispatchers.IO) {
-        check(!closed && state.value.phase == DesktopUpdatePhase.READY) { "Download and verify an update first" }
+    /** Saves a second verified copy at the user's chosen path; the staged installer remains intact. */
+    suspend fun saveVerifiedInstaller(destination: Path, overwriteConfirmed: Boolean = false) = mutex.withLock { withContext(Dispatchers.IO) {
+        check(!closed && activeInstaller == null && state.value.phase in setOf(DesktopUpdatePhase.READY,
+            DesktopUpdatePhase.INSTALLATION_CANCELLED, DesktopUpdatePhase.INSTALLATION_FAILED)) { "Download and verify an update first" }
         val release = state.value.release ?: error("Update metadata is missing")
         validateDesktopRelease(release)
-        check(compareDesktopVersions(release.version, currentVersion) > 0) { "This version is already installed" }
+        val target = destination.toAbsolutePath().normalize()
+        require(target.fileName.toString().endsWith(".msi", ignoreCase = true)) { "Choose an .msi file name" }
+        require(target != installer.toAbsolutePath().normalize()) { "Choose a different path from Echo's staged installer" }
+        require(overwriteConfirmed || !Files.exists(target)) { "That file already exists; confirm overwrite in the save dialog" }
         verifyFile(installer, release); verifyMsi(installer, release)
-        launch(installer.toAbsolutePath())
+        val parent = target.parent ?: error("Choose a file inside a folder")
+        Files.createDirectories(parent)
+        require(!Files.isDirectory(target)) { "Choose a file path, not a folder" }
+        val temp = Files.createTempFile(parent, ".echo-update-", ".msi")
+        try {
+            Files.copy(installer, temp, StandardCopyOption.REPLACE_EXISTING)
+            verifyFile(temp, release); verifyMsi(temp, release)
+            if (overwriteConfirmed) {
+                try { Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING) }
+                catch (_: AtomicMoveNotSupportedException) { Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING) }
+            } else Files.move(temp, target)
+            verifyFile(target, release); verifyMsi(target, release)
+            mutableState.value = state.value.copy(verifiedInstallerCopy = target,
+                message = "A second installer copy was saved and verified at $target. Install it only with the separate Install saved copy action.")
+        } finally { Files.deleteIfExists(temp) }
+    } }
+
+    /** Call only from an explicit user Install action; no background installer launch. */
+    suspend fun launchInstaller() = launchInstallerFrom(installer)
+
+    /** Installs only the separately saved copy, rechecking its bytes and MSI identity first. */
+    suspend fun launchSavedInstaller() {
+        val copy = state.value.verifiedInstallerCopy ?: error("Save a verified installer copy first")
+        launchInstallerFrom(copy)
+    }
+
+    private suspend fun launchInstallerFrom(file: Path) = mutex.withLock { withContext(Dispatchers.IO) {
+        check(!closed && activeInstaller == null && state.value.phase in setOf(DesktopUpdatePhase.READY,
+            DesktopUpdatePhase.INSTALLATION_CANCELLED, DesktopUpdatePhase.INSTALLATION_FAILED)) { "Download and verify an update first, and wait for any installer to finish" }
+        val release = state.value.release ?: error("Update metadata is missing")
+        val savedCopy = state.value.verifiedInstallerCopy
+        validateDesktopRelease(release)
+        check(compareDesktopVersions(release.version, currentVersion) > 0) { "This version is already installed" }
+        verifyFile(file, release); verifyMsi(file, release)
+        Files.createDirectories(root)
+        val log = root.resolve("installer-${now()}-${UUID.randomUUID()}.log").toAbsolutePath()
+        val process = launch(file.toAbsolutePath(), log)
+        activeInstaller = process
+        mutableState.value = DesktopUpdateState(DesktopUpdatePhase.INSTALLING, release, release.size, release.size,
+            "Windows Installer is running. Its verbose log is saved at $log", savedCopy)
+        val exit = process.onExit()
+        installerExit = exit
+        exit.whenComplete { exited, error ->
+            if (closed) return@whenComplete
+            if (error != null && runCatching { process.isAlive }.getOrDefault(true)) {
+                installerExit = null
+                mutableState.value = DesktopUpdateState(DesktopUpdatePhase.INSTALLING, release, release.size, release.size,
+                    "Windows Installer is still running, but its exit could not be monitored. Do not start another installer. Its log is at $log", savedCopy)
+                return@whenComplete
+            }
+            val exitCode = if (error == null) runCatching { exited.exitValue() }.getOrNull() else null
+            activeInstaller = null
+            installerExit = null
+            val (phase, result) = when (exitCode) {
+                0 -> DesktopUpdatePhase.INSTALLATION_COMPLETE to "Windows Installer completed successfully. Restart Echo and confirm it reports version ${release.version}. Log: $log"
+                3010 -> DesktopUpdatePhase.INSTALLATION_REBOOT_REQUIRED to "Windows Installer succeeded and reports that Windows must be restarted (3010). Echo will not restart Windows. After restarting Windows, relaunch Echo and confirm version ${release.version}. Log: $log"
+                1602 -> DesktopUpdatePhase.INSTALLATION_CANCELLED to "Windows Installer was cancelled. You can try again. Log: $log"
+                1603 -> DesktopUpdatePhase.INSTALLATION_FAILED to "Windows Installer reported a fatal error (1603). Review its log before retrying: $log"
+                1618 -> DesktopUpdatePhase.INSTALLATION_FAILED to "Another Windows Installer operation is running (1618). Wait for it to finish, then retry. Log: $log"
+                null -> DesktopUpdatePhase.INSTALLATION_FAILED to "Could not read the Windows Installer result. Review its log before retrying: $log"
+                else -> DesktopUpdatePhase.INSTALLATION_FAILED to "Windows Installer failed with exit code $exitCode. Review its log before retrying: $log"
+            }
+            mutableState.value = DesktopUpdateState(phase, release, release.size, release.size, result, savedCopy)
+        }
     } }
 
     fun cancel() { cancelRequested = true; activeCall?.cancel() }
-    override fun close() { closed = true; cancel(); client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown() }
+    override fun close() {
+        closed = true; cancel(); installerExit?.cancel(false); installerExit = null; activeInstaller = null
+        client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown()
+    }
 
     private suspend fun <T> request(url: String, block: (Response) -> T): T = suspendCancellableCoroutine { continuation ->
         continuation.invokeOnCancellation { activeCall?.cancel() }
@@ -289,7 +364,8 @@ private fun windowsSystemFile(relative: String): String {
     check(System.getProperty("os.name").startsWith("Windows")) { "Windows Installer requires Windows" }
     return Path.of(System.getenv("SystemRoot") ?: "C:\\Windows", "System32", relative).toAbsolutePath().toString()
 }
-internal fun desktopInstallerCommand(file: Path): List<String> = listOf(windowsSystemFile("msiexec.exe"), "/i", file.toAbsolutePath().toString(), "/norestart")
+internal fun desktopInstallerCommand(file: Path, log: Path): List<String> = listOf(windowsSystemFile("msiexec.exe"), "/i",
+    file.toAbsolutePath().toString(), "/norestart", "/L*v", log.toAbsolutePath().toString())
 
 internal fun verifyDesktopMsi(file: Path, release: DesktopUpdateRelease) {
     val path = file.toAbsolutePath().toString().replace("'", "''")

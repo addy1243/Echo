@@ -39,6 +39,10 @@ import dev.echo.data.firebase.ConnectedPlaybackClient
 import dev.echo.data.firebase.ConnectedPlaybackCommand
 import dev.echo.data.firebase.ConnectedPlaybackState
 import dev.echo.data.firebase.ConnectedPlayerSnapshot
+import dev.echo.data.firebase.ConnectedPlaybackParticipation
+import dev.echo.data.firebase.ConnectedPlaybackV2State
+import dev.echo.data.firebase.ConnectedPlaybackV2Client
+import dev.echo.data.firebase.GroupActionV2
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -50,6 +54,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -73,6 +79,7 @@ class EchoViewModel @Inject constructor(
     val offline: dev.echo.data.offline.OfflineRepository,
     val googleAccounts: dev.echo.app.account.GoogleAccounts,
     private val firebaseSync: dev.echo.app.account.FirebaseAccountSync,
+    private val connectedParticipation: ConnectedPlaybackParticipation,
 ) : ViewModel() {
     internal var requestedDownloads by mutableStateOf(false)
     val offlineSongs = offline.songs
@@ -133,12 +140,12 @@ class EchoViewModel @Inject constructor(
     private var driveAccount: String? = null
     private var accountJob: Job? = null
     private val connectedPlaybackPrefs = context.getSharedPreferences("connected-playback", Context.MODE_PRIVATE)
+    private val connectedStopMutex = Mutex()
     val connectedPlaybackEnabled = MutableStateFlow(connectedPlaybackPrefs.getBoolean("enabled", false))
     val connectedPlaybackState = MutableStateFlow(ConnectedPlaybackState())
-    internal val connectedPlaybackDeviceIdForUi = connectedPlaybackPrefs.getString("device-id", null)
-        ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,64}")) }
-        ?: java.util.UUID.randomUUID().toString().also { connectedPlaybackPrefs.edit().putString("device-id", it).apply() }
-    private var connectedPlaybackClient: ConnectedPlaybackClient? = null
+    val connectedPlaybackV2State = MutableStateFlow(ConnectedPlaybackV2State())
+    val displacedMoveOperationId = connectedParticipation.displacedMoveOperationId
+    internal val connectedPlaybackDeviceIdForUi = connectedParticipation.deviceId
     val selectedConnectedPlaybackTargetId = MutableStateFlow<String?>(null)
     val selectedConnectedPlaybackDevice = MutableStateFlow<ConnectedDevice?>(null)
     private var connectedPlaybackSelectionAccount: String? = null
@@ -157,7 +164,7 @@ class EchoViewModel @Inject constructor(
     }
     fun signOutGoogle() = accountAction {
         pendingGoogleAccount = null; driveAccount = null; driveResolution = null; googleAccountChoice = null
-        setConnectedPlaybackEnabled(false)
+        setConnectedPlaybackEnabledAndAwaitStop(false)
         clearConnectedPlaybackSelection()
         firebaseSync.signOut(googleAccounts.email.value)
         googleAccounts.signOut()
@@ -192,57 +199,96 @@ class EchoViewModel @Inject constructor(
     }
     fun setConnectedPlaybackEnabled(enabled: Boolean) {
         if (enabled && (googleAccounts.email.value == null || !firebaseConfigured)) return
+        if (enabled) {
+            connectedPlaybackPrefs.edit().putBoolean("enabled", true).apply()
+            connectedPlaybackEnabled.value = true
+        } else viewModelScope.launch { setConnectedPlaybackEnabledAndAwaitStop(false) }
+    }
+
+    private suspend fun setConnectedPlaybackEnabledAndAwaitStop(enabled: Boolean) = connectedStopMutex.withLock {
+        if (!enabled) {
+            try { sendConnectedServiceCommand(QueueCommands.CONNECTED_STOP)?.let { awaitServiceCommand(it) } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Local service cleanup still runs when remote/auth shutdown fails. */ }
+            // Keep the current Firebase session and opt-in valid until the service has attempted the
+            // coordinator leave; it always restores the native independent queue paused offline too.
+        }
         connectedPlaybackPrefs.edit().putBoolean("enabled", enabled).apply()
         connectedPlaybackEnabled.value = enabled
-        if (!enabled) stopConnectedPlayback()
     }
 
     suspend fun runConnectedPlayback() {
         val email = googleAccounts.email.value?.takeIf { connectedPlaybackEnabled.value } ?: return
         if (connectedPlaybackSelectionAccount != null && connectedPlaybackSelectionAccount != email) clearConnectedPlaybackSelection()
         connectedPlaybackSelectionAccount = email
-        val player = ConnectedPlaybackClient(
-            databaseUrl = dev.echo.data.firebase.EchoFirebaseProject.realtimeDatabaseUrl,
-            deviceId = connectedPlaybackDeviceIdForUi,
-            label = "Android · ${android.os.Build.MODEL.orEmpty().take(32)}",
-            sessionProvider = { firebaseSync.existingSession(email) },
-            snapshot = { withContext(Dispatchers.Main.immediate) { connectedPlayerSnapshot() } },
-            executeCommand = { withContext(Dispatchers.Main.immediate) {
-                check(connectedPlaybackEnabled.value && googleAccounts.email.value == email) { "Connected playback was disabled or the account changed" }
-                executeConnectedCommand(it)
-            } },
-        )
-        connectedPlaybackClient = player
-        val collector = viewModelScope.launch {
-            player.state.collect { state ->
-                connectedPlaybackState.value = state
-                val selectedId = selectedConnectedPlaybackTargetId.value
-                if (selectedId != null) state.devices.firstOrNull { it.id == selectedId }?.let { selectedConnectedPlaybackDevice.value = it }
-            }
-        }
-        var failure: String? = null
-        try { player.run() }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (error: Exception) {
-            failure = error.message ?: "Connect Firebase before enabling playback."
-            connectedPlaybackState.value = ConnectedPlaybackState(message = failure)
-        }
-        finally {
-            val finalMessage = failure ?: player.state.value.message ?: "Connected playback stopped."
-            player.close()
-            collector.cancel()
-            if (connectedPlaybackClient === player) {
-                connectedPlaybackClient = null
-                connectedPlaybackState.value = ConnectedPlaybackState(message = finalMessage)
-            }
-        }
+        sendConnectedServiceCommand(dev.echo.playback.QueueCommands.CONNECTED_START)
     }
 
     fun stopConnectedPlayback() {
-        connectedPlaybackClient?.close()
-        connectedPlaybackClient = null
-        connectedPlaybackState.value = ConnectedPlaybackState(message = "Connected playback stopped.")
+        sendConnectedServiceCommand(dev.echo.playback.QueueCommands.CONNECTED_STOP)
     }
+
+    fun moveConnectedPlayback(targetDeviceId: String, confirmedDisplacement: Boolean) =
+        sendConnectedV2ServiceCommand(dev.echo.playback.QueueCommands.CONNECTED_MOVE, android.os.Bundle().apply {
+            putString(dev.echo.playback.QueueCommands.CONNECTED_TARGET_ID, targetDeviceId)
+            putBoolean(dev.echo.playback.QueueCommands.CONNECTED_REPLACE, confirmedDisplacement)
+        })
+
+    fun startTogether(targetDeviceIds: List<String>, expectedTargetSessions: Map<String, String>, confirmedDisplacement: Boolean) =
+        sendConnectedV2ServiceCommand(dev.echo.playback.QueueCommands.CONNECTED_TOGETHER, android.os.Bundle().apply {
+            putStringArrayList(dev.echo.playback.QueueCommands.CONNECTED_TARGET_IDS, ArrayList(targetDeviceIds))
+            putStringArrayList(dev.echo.playback.QueueCommands.CONNECTED_TARGET_SESSIONS,
+                ArrayList(targetDeviceIds.map { expectedTargetSessions[it].orEmpty() }))
+            putBoolean(dev.echo.playback.QueueCommands.CONNECTED_REPLACE, confirmedDisplacement)
+        })
+
+    fun controlTogether(action: GroupActionV2, positionMs: Long = 0L) =
+        sendConnectedV2ServiceCommand(dev.echo.playback.QueueCommands.CONNECTED_GROUP_ACTION, android.os.Bundle().apply {
+            putString(dev.echo.playback.QueueCommands.CONNECTED_ACTION, action.name)
+            putLong(dev.echo.playback.QueueCommands.CONNECTED_POSITION, positionMs)
+        })
+
+    fun restorePreviousConnectedQueue() =
+        sendConnectedV2ServiceCommand(dev.echo.playback.QueueCommands.CONNECTED_RESTORE_PREVIOUS)
+
+    private fun sendConnectedV2ServiceCommand(action: String, args: android.os.Bundle = android.os.Bundle()) {
+        val future = try { sendConnectedServiceCommand(action, args) }
+        catch (error: Exception) {
+            message = error.message ?: "Connected playback action failed. Try again."
+            return
+        }
+        if (future == null) {
+            message = "Playback service is not connected yet."
+            return
+        }
+        future.addListener({
+            try {
+                val result = future.get()
+                if (result.resultCode != SessionResult.RESULT_SUCCESS)
+                    message = result.extras.getString("error") ?: "Connected playback action failed. Try again."
+            } catch (error: Exception) {
+                message = error.cause?.message ?: error.message ?: "Connected playback action failed. Try again."
+            }
+        }, ContextCompat.getMainExecutor(context))
+    }
+
+    private fun sendConnectedServiceCommand(action: String, args: android.os.Bundle = android.os.Bundle()):
+        com.google.common.util.concurrent.ListenableFuture<SessionResult>? {
+        val active = controller ?: run {
+            connectedPlaybackState.value = connectedPlaybackState.value.copy(message = "Playback service is not connected yet.")
+            return null
+        }
+        return active.sendCustomCommand(androidx.media3.session.SessionCommand(action, android.os.Bundle.EMPTY), args)
+    }
+
+    private suspend fun awaitServiceCommand(future: com.google.common.util.concurrent.ListenableFuture<SessionResult>): SessionResult =
+        suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation { future.cancel(false) }
+            future.addListener({
+                if (continuation.isActive) try { continuation.resume(future.get()) }
+                catch (error: Exception) { continuation.resumeWithException(error) }
+            }, ContextCompat.getMainExecutor(context))
+        }
 
     fun selectConnectedPlaybackTarget(device: ConnectedDevice?) {
         if (device == null || device.id == connectedPlaybackDeviceIdForUi) {
@@ -265,10 +311,6 @@ class EchoViewModel @Inject constructor(
             isFreshConnectedPlaybackTarget(target, connectedPlaybackState.value)
 
     fun sendConnectedPlaybackCommand(target: ConnectedDevice, action: ConnectedPlaybackAction, positionMs: Long = 0L) {
-        val client = connectedPlaybackClient ?: run {
-            connectedPlaybackState.value = connectedPlaybackState.value.copy(message = "Reconnecting to ${target.label}.")
-            return
-        }
         if (!canControlConnectedDevice(target)) {
             connectedPlaybackState.value = connectedPlaybackState.value.copy(message = "Reconnecting to ${target.label}; controls are paused until its current state is confirmed.")
             return
@@ -279,7 +321,28 @@ class EchoViewModel @Inject constructor(
                 check(fresh != null && canControlConnectedDevice(target)) {
                     "Reconnecting to ${target.label}; controls are paused until its current state is confirmed."
                 }
-                client.sendCommand(requireNotNull(fresh), action, positionMs)
+                val current = requireNotNull(fresh)
+                val args = android.os.Bundle().apply {
+                    putString(dev.echo.playback.QueueCommands.CONNECTED_TARGET_ID, current.id)
+                    putString(dev.echo.playback.QueueCommands.CONNECTED_TARGET_SESSION, current.sessionId)
+                    putString(dev.echo.playback.QueueCommands.CONNECTED_TRACK_REVISION, current.player.trackRevision)
+                    putString(dev.echo.playback.QueueCommands.CONNECTED_QUEUE_REVISION, current.player.queueRevision)
+                    putString(dev.echo.playback.QueueCommands.CONNECTED_REMOTE_ACTION, action.name)
+                    putLong(dev.echo.playback.QueueCommands.CONNECTED_POSITION, positionMs)
+                }
+                val service = controller ?: error("Playback service is not connected")
+                val result = service.sendCustomCommand(androidx.media3.session.SessionCommand(
+                    dev.echo.playback.QueueCommands.CONNECTED_REMOTE_COMMAND, android.os.Bundle.EMPTY), args)
+                val commandResult = suspendCancellableCoroutine<SessionResult> { continuation ->
+                    continuation.invokeOnCancellation { result.cancel(false) }
+                    result.addListener({
+                        if (continuation.isActive) try { continuation.resume(result.get()) }
+                        catch (error: Exception) { continuation.resumeWithException(error) }
+                    }, ContextCompat.getMainExecutor(context))
+                }
+                check(commandResult.resultCode == SessionResult.RESULT_SUCCESS) {
+                    commandResult.extras.getString("error") ?: "Remote command failed."
+                }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 connectedPlaybackState.value = connectedPlaybackState.value.copy(message = error.message ?: "Remote control failed.")
@@ -363,6 +426,14 @@ class EchoViewModel @Inject constructor(
     }
     init {
         viewModelScope.launch { updater.check(manual = false) }
+        viewModelScope.launch {
+            connectedParticipation.legacyState.collect { state ->
+                connectedPlaybackState.value = state
+                val selectedId = selectedConnectedPlaybackTargetId.value
+                if (selectedId != null) state.devices.firstOrNull { it.id == selectedId }?.let { selectedConnectedPlaybackDevice.value = it }
+            }
+        }
+        viewModelScope.launch { connectedParticipation.v2State.collect { connectedPlaybackV2State.value = it } }
         connection.addListener({
             try { controller = connection.get(); controller?.addListener(listener); sync(); queueItems = queueSnapshot(controller!!) }
             catch (e: Exception) { message = "Playback service could not connect. Reopen Echo to retry." }
@@ -633,8 +704,18 @@ class EchoViewModel @Inject constructor(
         player.addMediaItem(if (next) (player.currentMediaItemIndex + 1).coerceAtLeast(0) else player.mediaItemCount, track.mediaItem())
         if (player.playbackState == Player.STATE_IDLE) { selectConnectedPlaybackTarget(null); player.prepare() }
     }
-    fun toggle() { controller?.let { if (it.isPlaying) it.pause() else { if (it.playbackState == Player.STATE_IDLE) it.prepare(); it.play() } } }
-    fun resume() { controller?.play() }
+    fun toggle() {
+        val group = connectedPlaybackV2State.value.group
+        if (group != null) {
+            controlTogether(if (group.timeline?.playing == true) GroupActionV2.PAUSE else GroupActionV2.PLAY)
+            return
+        }
+        controller?.let { if (it.isPlaying) it.pause() else { if (it.playbackState == Player.STATE_IDLE) it.prepare(); it.play() } }
+    }
+    fun resume() {
+        if (connectedPlaybackV2State.value.group != null) controlTogether(GroupActionV2.PLAY)
+        else controller?.play()
+    }
     fun favorite(track: Track) = runAction { if (tracks.value.none { it.id == track.id }) library.upsertTracks(listOf(track)); library.setFavorite(track.id, track.id !in favorites.value) }
     fun loadPlaylist(id: String) {
         playlistLoad?.cancel()
@@ -672,7 +753,7 @@ class EchoViewModel @Inject constructor(
     }
     fun spotifyCallback(uri: Uri) = runAction("Spotify connected") { spotify.handleCallback(uri); spotifyPlaylists = spotify.playlists() }
     fun fetchSpotify() = runAction { spotifyPlaylists = spotify.playlists() }
-    override fun onCleared() { stopConnectedPlayback(); controller?.removeListener(listener); MediaController.releaseFuture(connection) }
+    override fun onCleared() { controller?.removeListener(listener); MediaController.releaseFuture(connection) }
 }
 
 internal fun firstPlayableIndex(items: List<Track>, offlineOnly: Boolean = false, downloaded: Set<String> = emptySet()): Int =

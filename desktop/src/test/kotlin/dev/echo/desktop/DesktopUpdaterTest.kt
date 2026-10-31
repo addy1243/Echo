@@ -4,11 +4,15 @@ import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import okhttp3.*
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONArray
@@ -19,6 +23,22 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class DesktopUpdaterTest {
+    private class FakeInstallerProcess : Process() {
+        private val completion = CompletableFuture<Process>()
+        @Volatile private var result: Int? = null
+        @Volatile var destroyed = false
+            private set
+        fun finish(exitCode: Int) { result = exitCode; completion.complete(this) }
+        override fun onExit(): CompletableFuture<Process> = completion
+        override fun waitFor(): Int = completion.join().exitValue()
+        override fun exitValue(): Int = result ?: throw IllegalThreadStateException()
+        override fun isAlive(): Boolean = result == null
+        override fun destroy() { destroyed = true; finish(143) }
+        override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+        override fun getInputStream(): InputStream = InputStream.nullInputStream()
+        override fun getErrorStream(): InputStream = InputStream.nullInputStream()
+    }
+
     @get:Rule val temporary = TemporaryFolder()
     private val bytes = byteArrayOf(1, 2, 3, 4)
     private val release = DesktopUpdateRelease("0.1.1", "EchoMusic-Windows-x64-0.1.1.msi",
@@ -35,7 +55,8 @@ class DesktopUpdaterTest {
             .apply { location?.let { header("Location", it) } }.build()
     private fun updater(root: java.nio.file.Path, http: OkHttpClient, version: String = "0.1.0",
         verify: (java.nio.file.Path, DesktopUpdateRelease) -> Unit = { _, _ -> },
-        launch: (java.nio.file.Path) -> Unit = {}) = DesktopUpdater(root, version, http, verify, launch) { 10L * 86_400_000 }
+        launch: (java.nio.file.Path, java.nio.file.Path) -> Process = { _, _ -> FakeInstallerProcess() }) =
+        DesktopUpdater(root, version, http, verify, launch) { 10L * 86_400_000 }
 
     @Test fun releaseSelectionIgnoresAndroidPrereleaseAndInstalledVersions() {
         assertEquals(release, parseDesktopRelease(metadata().toString(), "0.1.0"))
@@ -106,20 +127,99 @@ class DesktopUpdaterTest {
 
     @Test fun downloadChecksDigestIdentityAndRevalidatesBeforeInstallerLaunch() = runBlocking {
         val root = temporary.newFolder().toPath()
-        val verified = AtomicInteger(); val launches = AtomicInteger()
+        val verified = AtomicInteger(); val launches = AtomicInteger(); val process = FakeInstallerProcess()
         updater(root, client { reply(it, body = if (it.url.host == "api.github.com") listing() else bytes) },
             verify = { file, expected -> assertArrayEquals(bytes, Files.readAllBytes(file)); assertEquals(release, expected); verified.incrementAndGet() },
-            launch = { assertEquals(root.resolve("pending.msi").toAbsolutePath(), it); launches.incrementAndGet() }).use { updater ->
+            launch = { file, log ->
+                assertEquals(root.resolve("pending.msi").toAbsolutePath(), file)
+                assertTrue(log.startsWith(root.toAbsolutePath()))
+                assertTrue(log.fileName.toString().startsWith("installer-"))
+                launches.incrementAndGet(); process
+            }).use { updater ->
             updater.check(true); updater.download()
             assertEquals(DesktopUpdatePhase.READY, updater.state.value.phase)
             assertEquals(4L, updater.state.value.receivedBytes)
             assertEquals(0, launches.get())
-            updater.launchInstaller()
-            assertEquals(1, launches.get()); assertEquals(2, verified.get())
             Files.write(root.resolve("pending.msi"), byteArrayOf(4, 3, 2, 1))
             assertTrue(runCatching { updater.launchInstaller() }.isFailure)
+            assertEquals(0, launches.get())
+            Files.write(root.resolve("pending.msi"), bytes)
+            updater.launchInstaller()
+            assertEquals(DesktopUpdatePhase.INSTALLING, updater.state.value.phase)
+            assertTrue(runCatching { updater.launchInstaller() }.isFailure)
             assertEquals(1, launches.get())
+            assertEquals(2, verified.get())
+            process.finish(0)
+            val finished = withTimeout(2000) { updater.state.first { it.phase == DesktopUpdatePhase.INSTALLATION_COMPLETE } }
+            assertTrue(finished.message!!.contains("Restart Echo"))
+            assertTrue(finished.message!!.contains(".log"))
+            assertTrue(finished.message!!.contains("version ${release.version}"))
         }
+    }
+
+    @Test fun savedCopyIsVerifiedSeparatelyAndOnlyItsExplicitInstallActionLaunchesIt(): Unit = runBlocking {
+        val root = temporary.newFolder().toPath()
+        val chosen = root.resolve("user-chosen").resolve("EchoMusic-copy.msi")
+        val processes = listOf(FakeInstallerProcess(), FakeInstallerProcess()); val launches = mutableListOf<java.nio.file.Path>()
+        updater(root, client { reply(it, body = if (it.url.host == "api.github.com") listing() else bytes) },
+            verify = { file, expected ->
+                assertArrayEquals(bytes, Files.readAllBytes(file)); assertEquals(release, expected)
+            }, launch = { file, _ -> launches.add(file); processes[launches.lastIndex] }).use { updater ->
+            updater.check(true); updater.download()
+            Files.createDirectories(chosen.parent); Files.write(chosen, byteArrayOf(1, 2))
+            assertTrue(runCatching { updater.saveVerifiedInstaller(chosen) }.isFailure)
+            assertArrayEquals(byteArrayOf(1, 2), Files.readAllBytes(chosen))
+            updater.saveVerifiedInstaller(chosen, overwriteConfirmed = true)
+            assertEquals(chosen.toAbsolutePath(), updater.state.value.verifiedInstallerCopy)
+            assertArrayEquals(bytes, Files.readAllBytes(root.resolve("pending.msi")))
+            assertArrayEquals(bytes, Files.readAllBytes(chosen))
+            assertTrue(launches.isEmpty())
+
+            updater.launchInstaller()
+            processes[0].finish(1603)
+            withTimeout(2000) { updater.state.first { it.phase == DesktopUpdatePhase.INSTALLATION_FAILED } }
+            Files.write(chosen, byteArrayOf(9, 8, 7, 6))
+            assertTrue(runCatching { updater.launchSavedInstaller() }.isFailure)
+            assertEquals(1, launches.size)
+            Files.write(chosen, bytes)
+            updater.launchSavedInstaller()
+            assertEquals(listOf(root.resolve("pending.msi").toAbsolutePath(), chosen.toAbsolutePath()), launches)
+            assertTrue(updater.state.value.message!!.contains("verbose log"))
+            processes[1].finish(0)
+            withTimeout(2000) { updater.state.first { it.phase == DesktopUpdatePhase.INSTALLATION_COMPLETE } }
+            Unit
+        }
+    }
+
+    @Test fun installerExitCodesReportCancelFatalErrorAndContention() = runBlocking {
+        for ((code, phase, text) in listOf(
+            Triple(1602, DesktopUpdatePhase.INSTALLATION_CANCELLED, "cancelled"),
+            Triple(1603, DesktopUpdatePhase.INSTALLATION_FAILED, "fatal error (1603)"),
+            Triple(1618, DesktopUpdatePhase.INSTALLATION_FAILED, "Another Windows Installer operation"),
+            Triple(3010, DesktopUpdatePhase.INSTALLATION_REBOOT_REQUIRED, "Windows must be restarted (3010)")
+        )) {
+            val root = temporary.newFolder().toPath(); val process = FakeInstallerProcess()
+            updater(root, client { reply(it, body = if (it.url.host == "api.github.com") listing() else bytes) },
+                launch = { _, _ -> process }).use { updater ->
+                updater.check(true); updater.download(); updater.launchInstaller()
+                assertEquals(DesktopUpdatePhase.INSTALLING, updater.state.value.phase)
+                updater.check(true)
+                assertEquals(DesktopUpdatePhase.INSTALLING, updater.state.value.phase)
+                process.finish(code)
+                val result = withTimeout(2000) { updater.state.first { it.phase == phase } }
+                assertTrue("$code: ${result.message}", result.message!!.contains(text))
+            }
+        }
+    }
+
+    @Test fun closingUpdaterStopsObservationWithoutTerminatingInstaller() = runBlocking {
+        val root = temporary.newFolder().toPath(); val process = FakeInstallerProcess()
+        val updater = updater(root, client { reply(it, body = if (it.url.host == "api.github.com") listing() else bytes) },
+            launch = { _, _ -> process })
+        updater.check(true); updater.download(); updater.launchInstaller(); updater.close()
+        assertFalse(process.destroyed)
+        process.finish(0)
+        assertEquals(DesktopUpdatePhase.INSTALLING, updater.state.value.phase)
     }
 
     @Test fun incompleteChangedOrForeignMsiIsNeverStaged() = runBlocking {
@@ -155,8 +255,9 @@ class DesktopUpdaterTest {
             listOf("EchoMusic", release.version, "other-guid", "x64"), listOf("EchoMusic", release.version, DESKTOP_UPGRADE_UUID, "Intel;1033"))
             .forEach { assertTrue(runCatching { validateDesktopMsiIdentity(it[0], it[1], it[2], it[3], release) }.isFailure) }
         if (System.getProperty("os.name").startsWith("Windows")) {
-            val command = desktopInstallerCommand(temporary.newFile("echo update.msi").toPath())
-            assertEquals("/i", command[1]); assertEquals("/norestart", command.last())
+            val command = desktopInstallerCommand(temporary.newFile("echo update.msi").toPath(), temporary.newFile("installer log.log").toPath())
+            assertEquals("/i", command[1]); assertTrue(command.contains("/norestart"))
+            assertTrue(command.contains("/L*v")); assertTrue(command.any { it.endsWith("installer log.log") })
             assertFalse(command.any { it == "/quiet" || it == "/passive" || it == "/qn" })
         }
     }

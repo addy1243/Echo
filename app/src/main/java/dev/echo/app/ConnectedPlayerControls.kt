@@ -23,6 +23,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,13 +49,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.echo.data.firebase.ConnectedDevice
+import dev.echo.data.firebase.GroupActionV2
 import dev.echo.core.Track
+import dev.echo.core.connected.MAX_CONNECTED_GROUP_MEMBERS
 import java.text.DateFormat
 import java.util.Date
 
 @Composable
 internal fun ConnectedPlayerControls(vm: EchoViewModel, compact: Boolean = false) {
     val state by vm.connectedPlaybackState.collectAsStateWithLifecycle()
+    val v2State by vm.connectedPlaybackV2State.collectAsStateWithLifecycle()
+    val displacedMoveOperationId by vm.displacedMoveOperationId.collectAsStateWithLifecycle()
     val selectedId by vm.selectedConnectedPlaybackTargetId.collectAsStateWithLifecycle()
     val rememberedRemote by vm.selectedConnectedPlaybackDevice.collectAsStateWithLifecycle()
     var devicesExpanded by remember(vm) { mutableStateOf(false) }
@@ -59,6 +67,9 @@ internal fun ConnectedPlayerControls(vm: EchoViewModel, compact: Boolean = false
     var dockExpanded by remember(vm) { mutableStateOf(false) }
     var deviceSectionPlaced by remember(vm) { mutableStateOf(false) }
     var actionSectionPlaced by remember(vm) { mutableStateOf(false) }
+    var confirmRestorePrevious by remember(vm) { mutableStateOf(false) }
+    var togetherDeviceSessions by remember(vm) { mutableStateOf(emptyMap<String, String>()) }
+    var confirmTogether by remember(vm) { mutableStateOf(false) }
     val devicesBringIntoView = remember { BringIntoViewRequester() }
     val actionBringIntoView = remember { BringIntoViewRequester() }
     val compactExpandedHeight = (LocalConfiguration.current.screenHeightDp * 0.4f).dp
@@ -67,6 +78,22 @@ internal fun ConnectedPlayerControls(vm: EchoViewModel, compact: Boolean = false
         else if (!compact && devicesExpanded && deviceSectionPlaced) devicesBringIntoView.bringIntoView()
     }
     val freshTarget = if (selectedId == null) null else state.devices.firstOrNull { it.id == selectedId }
+    val togetherCandidates = v2State.devices.filter { it.id != vm.connectedPlaybackDeviceIdForUi && "group" in it.capabilities }
+    val togetherDeviceIds = togetherDeviceSessions.keys
+    val selectedTogetherDevices = togetherDeviceSessions.mapNotNull { (id, sessionId) ->
+        togetherCandidates.firstOrNull { it.id == id && it.sessionId == sessionId }
+    }
+    val invalidTogetherSelection = togetherDeviceSessions.any { (id, sessionId) ->
+        togetherCandidates.none { it.id == id && it.sessionId == sessionId && it.enabled }
+    }
+    val readyToStartTogether = togetherDeviceIds.size in 1 until MAX_CONNECTED_GROUP_MEMBERS &&
+        !invalidTogetherSelection && selectedTogetherDevices.size == togetherDeviceIds.size
+    LaunchedEffect(v2State.group?.ref, v2State.group?.status) {
+        if (v2State.group?.status == dev.echo.data.firebase.GroupV2Status.ACTIVE) {
+            togetherDeviceSessions = emptyMap()
+            confirmTogether = false
+        }
+    }
     val target = freshTarget ?: rememberedRemote
     val targetLabel = target?.label ?: if (selectedId == null) "This phone" else "selected player"
     val status = when {
@@ -123,11 +150,153 @@ internal fun ConnectedPlayerControls(vm: EchoViewModel, compact: Boolean = false
         when (actionExpanded) {
             "move" -> Column(Modifier.fillMaxWidth().bringIntoViewRequester(actionBringIntoView)
                 .onGloballyPositioned { if (!actionSectionPlaced) actionSectionPlaced = true }) {
-                ConnectedUnavailable("Moving this song between devices is not supported yet.")
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                if (displacedMoveOperationId != null && selectedId == null && v2State.group == null) {
+                    if (v2State.reconcilingMove) {
+                        ConnectedUnavailable("A Move is still being reconciled. Wait for its outcome before restoring the previous queue.")
+                    } else if (!confirmRestorePrevious) {
+                        OutlinedButton(enabled = !v2State.pending, onClick = { confirmRestorePrevious = true },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("connected-restore-previous")) {
+                            Text("Restore previous queue paused")
+                        }
+                    } else {
+                        Text("This replaces the current queue and restores the previous one paused.",
+                            Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall)
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(enabled = !v2State.pending, onClick = {
+                                confirmRestorePrevious = false
+                                vm.restorePreviousConnectedQueue()
+                            }, modifier = Modifier.weight(1f).testTag("connected-restore-previous-confirm")) {
+                                Text("Confirm restore")
+                            }
+                            OutlinedButton(onClick = { confirmRestorePrevious = false }, modifier = Modifier.weight(1f)) {
+                                Text("Cancel")
+                            }
+                        }
+                    }
+                }
+                if (v2State.group != null) {
+                    ConnectedUnavailable("Leave Play together before moving this queue.")
+                } else if (selectedId != null) {
+                    ConnectedUnavailable("Choose This phone as the source before moving. The selected remote player's queue is not moved by this action.")
+                } else if (vm.current == null) {
+                    ConnectedUnavailable("Start a song on this player before moving the queue.")
+                } else if (v2State.devices.none { it.id != vm.connectedPlaybackDeviceIdForUi && it.enabled && "move" in it.capabilities }) {
+                    ConnectedUnavailable(v2State.message ?: "No ready Echo player can receive this queue.")
+                } else {
+                    Text("Move the current song and remaining queue. The destination's independent queue will be saved for paused recovery.",
+                        Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
+                    v2State.devices.filter { it.id != vm.connectedPlaybackDeviceIdForUi && it.enabled && "move" in it.capabilities }
+                        .forEach { device ->
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(device.label, style = MaterialTheme.typography.labelLarge)
+                                Text(if (device.snapshot.playing) "Playing · ${device.snapshot.title.orEmpty()}" else "Paused · ${device.snapshot.title ?: "ready"}",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Button(enabled = !v2State.pending, onClick = { vm.moveConnectedPlayback(device.id, true) },
+                                    modifier = Modifier.testTag("connected-move-confirm-${device.id}")) {
+                                    Text("Replace destination queue and Move")
+                                }
+                            }
+                        }
+                }
             }
             "together" -> Column(Modifier.fillMaxWidth().bringIntoViewRequester(actionBringIntoView)
                 .onGloballyPositioned { if (!actionSectionPlaced) actionSectionPlaced = true }) {
-                ConnectedUnavailable("Playing together is not supported yet.")
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                val group = v2State.group
+                if (group != null) {
+                    Text("Together · ${group.status.name.lowercase()} · song ${((group.timeline?.cursor ?: 0) + 1)}",
+                        Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
+                    group.members.forEach { member ->
+                        val memberName = if (member.deviceId == vm.connectedPlaybackDeviceIdForUi) "This phone" else
+                            v2State.devices.firstOrNull { it.id == member.deviceId }?.label ?: member.deviceId.takeLast(8)
+                        val memberStatus = when (member.status) {
+                            dev.echo.data.firebase.GroupMemberV2Status.BUFFERING -> "Buffering"
+                            dev.echo.data.firebase.GroupMemberV2Status.DISCONNECTED -> "Reconnecting"
+                            dev.echo.data.firebase.GroupMemberV2Status.LEFT -> "Left"
+                            else -> member.status.name.lowercase().replaceFirstChar(Char::uppercase)
+                        }
+                        Text("$memberName · $memberStatus", Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    group.timeline?.let { timeline ->
+                        Text("Shared queue · ${timeline.queue.entries.size} songs", Modifier.padding(horizontal = 12.dp, vertical = 3.dp),
+                            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        val preview = timeline.queue.entries.drop(timeline.cursor).take(12)
+                        preview.forEachIndexed { offset, occurrence ->
+                            val index = timeline.cursor + offset
+                            Text("${if (offset == 0) "Now · " else "${index + 1}. "}${occurrence.recording.title} · ${occurrence.recording.artist}",
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
+                                style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                color = if (offset == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        val remaining = timeline.queue.entries.size - timeline.cursor - preview.size
+                        if (remaining > 0) Text("+$remaining more songs", Modifier.padding(horizontal = 16.dp, vertical = 3.dp),
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        OutlinedButton(enabled = !v2State.pending, onClick = { vm.controlTogether(GroupActionV2.PREVIOUS) }) { Text("Previous") }
+                        OutlinedButton(enabled = !v2State.pending, onClick = {
+                            vm.controlTogether(if (group.timeline?.playing == true) GroupActionV2.PAUSE else GroupActionV2.PLAY)
+                        }) { Text(if (group.timeline?.playing == true) "Pause all" else "Play all") }
+                        OutlinedButton(enabled = !v2State.pending, onClick = { vm.controlTogether(GroupActionV2.NEXT) }) { Text("Next") }
+                    }
+                    OutlinedButton(enabled = !v2State.pending, onClick = { vm.controlTogether(GroupActionV2.LEAVE) },
+                        modifier = Modifier.padding(horizontal = 12.dp).testTag("connected-together-leave")) {
+                        Text(if (group.coordinatorDeviceId == vm.connectedPlaybackDeviceIdForUi)
+                            "End for everyone · restore this queue paused" else "Leave group · restore this queue paused")
+                    }
+                } else if (selectedId != null) {
+                    ConnectedUnavailable("Choose This phone as the source before creating a shared queue.")
+                } else if (vm.current == null) {
+                    ConnectedUnavailable("Start a song on this player before creating a shared queue.")
+                } else {
+                    Text("Share this queue with up to ${MAX_CONNECTED_GROUP_MEMBERS - 1} other Echo players. Each device's independent queue remains available for paused recovery.",
+                        Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
+                    Text("${togetherDeviceIds.size} of ${MAX_CONNECTED_GROUP_MEMBERS - 1} other players selected",
+                        Modifier.padding(horizontal = 12.dp, vertical = 3.dp), style = MaterialTheme.typography.labelMedium)
+                    togetherCandidates.forEach { device ->
+                        val selected = device.id in togetherDeviceIds
+                        val expectedSession = togetherDeviceSessions[device.id]
+                        val changedSession = selected && expectedSession != device.sessionId
+                        val ready = device.enabled && !changedSession
+                        Row(Modifier.fillMaxWidth().clickable(enabled = ready || selected) {
+                            togetherDeviceSessions = if (selected) togetherDeviceSessions - device.id else
+                                if (togetherDeviceSessions.size < MAX_CONNECTED_GROUP_MEMBERS - 1) togetherDeviceSessions + (device.id to device.sessionId) else togetherDeviceSessions
+                        }.padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = selected, enabled = ready || selected, onCheckedChange = { checked ->
+                                togetherDeviceSessions = if (checked && !selected && togetherDeviceSessions.size < MAX_CONNECTED_GROUP_MEMBERS - 1)
+                                    togetherDeviceSessions + (device.id to device.sessionId)
+                                    else if (!checked) togetherDeviceSessions - device.id else togetherDeviceSessions
+                            }, modifier = Modifier.testTag("connected-together-select-${device.id}"))
+                            Column(Modifier.weight(1f).padding(vertical = 5.dp)) {
+                                Text(device.label, style = MaterialTheme.typography.labelLarge)
+                                Text(if (changedSession) "Session changed · remove and select again" else if (!device.enabled) "Offline or unavailable" else if (device.snapshot.playing)
+                                    "Playing · ${device.snapshot.title.orEmpty()}" else "Paused · ${device.snapshot.title ?: "ready"}",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    togetherDeviceIds.filter { id -> togetherCandidates.none { it.id == id } }.forEach { id ->
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Selected player ${id.takeLast(8)} is no longer available. Remove it to continue.",
+                                Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                            OutlinedButton(onClick = { togetherDeviceSessions = togetherDeviceSessions - id }) { Text("Remove") }
+                        }
+                    }
+                    if (togetherCandidates.none { it.enabled })
+                        ConnectedUnavailable(v2State.message ?: "No ready Echo player can join this shared queue.")
+                    if (invalidTogetherSelection) ConnectedUnavailable("A selected player is offline, unavailable, or its session changed. Remove it or wait until it is ready; no selected players will be skipped.")
+                    Button(enabled = readyToStartTogether && !v2State.pending, onClick = {
+                        if (selectedTogetherDevices.any { it.snapshot.playing }) confirmTogether = true
+                        else {
+                            vm.startTogether(togetherDeviceIds.toList(), togetherDeviceSessions, false)
+                        }
+                    }, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("connected-together-start")) {
+                        Text("Start Play together")
+                    }
+                }
             }
         }
     }
@@ -159,6 +328,14 @@ internal fun ConnectedPlayerControls(vm: EchoViewModel, compact: Boolean = false
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         else state.message?.let { Text(it, Modifier.fillMaxWidth().padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
+    if (confirmTogether) AlertDialog(onDismissRequest = { confirmTogether = false },
+        title = { Text("Replace playing devices?") },
+        text = { Text("At least one selected player is currently playing. Play together will replace its current playback and queue.") },
+        confirmButton = { Button(enabled = !v2State.pending && readyToStartTogether, onClick = {
+            confirmTogether = false
+            vm.startTogether(togetherDeviceIds.toList(), togetherDeviceSessions, true)
+        }, modifier = Modifier.testTag("connected-together-confirm")) { Text("Replace and start") } },
+        dismissButton = { OutlinedButton(onClick = { confirmTogether = false }) { Text("Cancel") } })
 }
 
 @Composable

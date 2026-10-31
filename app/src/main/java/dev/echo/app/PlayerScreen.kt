@@ -43,6 +43,8 @@ import dev.echo.core.Playlist
     var seekTarget by remember { mutableStateOf<dev.echo.data.firebase.ConnectedDevice?>(null) }
     val targetId by vm.selectedConnectedPlaybackTargetId.collectAsStateWithLifecycle()
     val connectedState by vm.connectedPlaybackState.collectAsStateWithLifecycle()
+    val connectedV2 by vm.connectedPlaybackV2State.collectAsStateWithLifecycle()
+    val localGroup = connectedV2.group
     val cachedTarget by vm.selectedConnectedPlaybackDevice.collectAsStateWithLifecycle()
     val remote = if (targetId == null) null else connectedState.devices.firstOrNull { it.id == targetId } ?: cachedTarget
     val remoteSelected = targetId != null
@@ -64,7 +66,7 @@ import dev.echo.core.Playlist
     val displayedTitle = if (remoteSelected) remote?.player?.title ?: if (liveRemote != null) "Ready for playback" else "Reconnecting to player" else vm.current?.mediaMetadata?.title?.toString() ?: "Choose a song"
     val displayedArtist = if (remoteSelected) remote?.player?.artist.orEmpty() else vm.current?.mediaMetadata?.artist?.toString().orEmpty()
     val artworkUri = if (remoteSelected) connectedArtworkUri(remote?.player?.trackId, tracks) else vm.current?.mediaMetadata?.artworkUri?.toString()
-    val displayedPlaying = if (remoteSelected) remote?.player?.isPlaying == true else vm.playing
+    val displayedPlaying = if (remoteSelected) remote?.player?.isPlaying == true else localGroup?.timeline?.playing ?: vm.playing
     BoxWithConstraints(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF342742), Color(0xFF141318), Color(0xFF101014)))).testTag("player-screen")) {
         val artSize = minOf(maxWidth - 56.dp, maxHeight * .38f).coerceIn(140.dp, 340.dp)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 26.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -74,7 +76,7 @@ import dev.echo.core.Playlist
                     Text("NOW PLAYING", style = MaterialTheme.typography.labelSmall, letterSpacing = 2.sp, color = accent)
                     Text(if (!remoteSelected && vm.recommendedIds.contains(vm.current?.mediaId)) "Recommended for this session" else "Your music, in the moment", style = MaterialTheme.typography.bodySmall)
                 }
-                if (!remoteSelected) IconButton(onClick = { showQueue = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Open queue") }
+                if (!remoteSelected && localGroup == null) IconButton(onClick = { showQueue = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Open queue") }
                 else Spacer(Modifier.size(48.dp))
             }
             Spacer(Modifier.height(14.dp))
@@ -92,7 +94,7 @@ import dev.echo.core.Playlist
             Spacer(Modifier.height(18.dp))
             if (!remoteSelected) {
                 current?.let { DownloadTrackAction(vm, it) }
-                SleepTimerControls(vm)
+                if (localGroup == null) SleepTimerControls(vm)
             }
             Slider(progress, { value ->
                 if (seekTarget == null && remoteSelected) seekTarget = remote
@@ -106,6 +108,7 @@ import dev.echo.core.Playlist
                     val captured = seekTarget
                     if (value != null) {
                         if (captured != null) vm.sendConnectedPlaybackCommand(captured, dev.echo.data.firebase.ConnectedPlaybackAction.SEEK, value.toLong())
+                        else if (localGroup != null) vm.controlTogether(dev.echo.data.firebase.GroupActionV2.SEEK, value.toLong())
                         else player?.seekTo(value.toLong())
                     }
                     seeking = null
@@ -120,6 +123,15 @@ import dev.echo.core.Playlist
                         Icon(if (displayedPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, "${if (displayedPlaying) "Pause" else "Play"} on ${remote?.label ?: "selected player"}", modifier = Modifier.size(42.dp))
                     }
                     IconButton(enabled = canControlRemote && !connectedState.pending, onClick = { remote?.let { vm.sendConnectedPlaybackCommand(it, dev.echo.data.firebase.ConnectedPlaybackAction.NEXT) } }) { Icon(Icons.Default.SkipNext, "Next on ${remote?.label ?: "selected player"}", modifier = Modifier.size(34.dp)) }
+                } else if (localGroup != null) {
+                    IconButton(enabled = !connectedV2.pending, onClick = { vm.controlTogether(dev.echo.data.firebase.GroupActionV2.PREVIOUS) }) { Icon(Icons.Default.SkipPrevious, "Previous for everyone", modifier = Modifier.size(34.dp)) }
+                    FilledIconButton(enabled = !connectedV2.pending, onClick = {
+                        vm.controlTogether(if (localGroup.timeline?.playing == true) dev.echo.data.firebase.GroupActionV2.PAUSE else dev.echo.data.firebase.GroupActionV2.PLAY)
+                    }, modifier = Modifier.size(80.dp)) {
+                        Icon(if (localGroup.timeline?.playing == true) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            if (localGroup.timeline?.playing == true) "Pause for everyone" else "Play for everyone", modifier = Modifier.size(42.dp))
+                    }
+                    IconButton(enabled = !connectedV2.pending, onClick = { vm.controlTogether(dev.echo.data.firebase.GroupActionV2.NEXT) }) { Icon(Icons.Default.SkipNext, "Next for everyone", modifier = Modifier.size(34.dp)) }
                 } else {
                     IconButton(onClick = { player?.shuffleModeEnabled = player?.shuffleModeEnabled != true }) { Icon(Icons.Default.Shuffle, "Shuffle", tint = if (player?.shuffleModeEnabled == true && revision >= 0) accent else Color(0xFFA29BAA)) }
                     IconButton(enabled = player != null, onClick = { player?.seekToPrevious() }) { Icon(Icons.Default.SkipPrevious, "Previous", modifier = Modifier.size(34.dp)) }
@@ -135,7 +147,7 @@ import dev.echo.core.Playlist
             }
             ConnectedPlayerControls(vm)
             Spacer(Modifier.height(24.dp))
-            if (!remoteSelected) {
+            if (!remoteSelected && localGroup == null) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { showQueue = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, null); Spacer(Modifier.width(8.dp)); Text("Up next · ${vm.queueItems.drop(1).size}") }
                     if (current?.attribution != null) TextButton(onClick = { credits = true }) { Text("Credits") }
@@ -147,7 +159,7 @@ import dev.echo.core.Playlist
             Spacer(Modifier.height(16.dp))
         }
     }
-    if (showQueue && !remoteSelected) QueueSheet(vm, tracks, onAdd = { add = it }) { showQueue = false }
+    if (showQueue && !remoteSelected && localGroup == null) QueueSheet(vm, tracks, onAdd = { add = it }) { showQueue = false }
     add?.let { track -> AddToPlaylistDialog(track, vm, playlists) { add = null } }
     if (credits && current != null) Credits(current) { credits = false }
 }

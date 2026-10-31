@@ -1,5 +1,17 @@
 # Connected playback (0.2.2)
 
+## Unreleased 0.2.3 work — verification in progress
+
+The working tree implements a separate `playbackV2` RTDB channel for Move and Play together. It does not alter the Firestore saved-playlist/favorites/history sync schema. Public 0.2.2 does not contain these features. V2 production rules have been deployed, preserving the existing v1 rules; the client release remains unreleased.
+
+Move captures the current recording, position and actual remaining queue traversal, including duplicate occurrences. The destination prepares silently; the source pauses only after an observed target start. Both native engines independently resolve canonical public YouTube recordings. Unsupported queue entries reject the transfer explicitly; local files, audio, credentials and temporary stream URLs are not transferred.
+
+Play together coordinates a shared queue, occurrence cursor and transport timeline for 2–8 devices on one account, including the coordinator. Every selected device must reach READY before activation. A follower can leave while at least two fresh members remain; coordinator leave closes the group. Takeover excludes LEFT and stale members, and an invite cannot evict a device already in a different group. Firebase client code enforces the 2–8 cohort bound; Realtime Database rules validate member rows but do not impose a count limit. It does not promise acoustic synchronization, audio relay or OS output routing. Preserve the compact multi-select picker and inline connected actions.
+
+The 2–8 member implementation passed 95 data tests, other module unit tests, Android main/test APK compilation and lint, and local rules tests. The seven-remote-device compact picker instrumentation passed on the clean second emulator. The corrected Windows VLC + two Android Media3 run passed both Moves, shared Play/Next/Pause/Seek, follower leave with two active survivors, three-device rejoin, coordinator loss and paused private-queue recovery. Both Android fixtures verified final queue/history/preferences cleanup. Evidence: `build/connected-v2-durable-native-{windows,primary,secondary}.log`. The production-account Windows/primary-emulator pair also passed transport, recovery, state preservation and scoped temporary-record cleanup (`build/connected-v2-production-final-{windows,android}.log`). Eight native outputs have not been tested. See [session handoff](NEXT_SESSION_HANDOFF.md) for the latest release gates.
+
+## Published 0.2.2
+
 Published 0.2.2 adds a unified player interface for account-scoped current-song visibility and remote **play, pause, previous, next and absolute seek**. Android and Windows retain independent players and queues. This does not transfer audio or start synchronized listening, output groups or mixing. Install the [published 0.2.2 release](https://github.com/addy1243/Echo/releases/tag/v0.2.2) on both clients.
 
 ## Published unified player — 2026-10-29

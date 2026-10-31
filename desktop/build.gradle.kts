@@ -45,7 +45,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi)
             packageName = "EchoMusic"
-            packageVersion = "0.2.2"
+            packageVersion = "0.2.3"
             windows {
                 iconFile.set(project.file("resources/echo.ico"))
                 installationPath = "EchoMusicDesktop"
@@ -102,6 +102,21 @@ tasks.register<JavaExec>("connectedPlaybackLiveCheck") {
     else if (providers.gradleProperty("echoConnectedAndroidPeer").orNull == "true") args("--android-peer")
 }
 
+tasks.register<JavaExec>("connectedPlaybackV2NativeLiveCheck") {
+    group = "verification"
+    description = "Opt-in real Windows VLC and Android Media3 Move/Together acceptance against the local demo RTDB emulator; optionally add a second Android peer."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.echo.desktop.ConnectedPlaybackV2NativeLiveCheckKt")
+    jvmArgs("--add-modules=jdk.httpserver")
+    systemProperty("echo.connected.v2.live", providers.gradleProperty("echoConnectedV2Live").orNull ?: "false")
+    systemProperty("echo.connected.v2.secondaryAndroidId", providers.gradleProperty("echoConnectedV2SecondaryAndroidId").orNull.orEmpty())
+    systemProperty("echo.connected.v2.production", providers.gradleProperty("echoConnectedV2Production").orNull ?: "false")
+    providers.gradleProperty("echoConnectedV2AcceptanceRun").orNull?.let {
+        systemProperty("echo.connected.v2.acceptanceRun", it)
+    }
+}
+
 tasks.register<JavaExec>("cloudSyncCheck") {
     group = "verification"
     description = "Explicit real-account sync acceptance; may upload/apply library changes."
@@ -122,8 +137,8 @@ tasks.register<JavaExec>("msiCheck") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("dev.echo.desktop.DesktopMsiCheckKt")
-    args(providers.gradleProperty("echoMsiPath").getOrElse(layout.buildDirectory.file("compose/binaries/main/msi/EchoMusic-0.2.2.msi").get().asFile.absolutePath),
-        providers.gradleProperty("echoMsiVersion").getOrElse("0.2.2"))
+    args(providers.gradleProperty("echoMsiPath").getOrElse(layout.buildDirectory.file("compose/binaries/main/msi/EchoMusic-0.2.3.msi").get().asFile.absolutePath),
+        providers.gradleProperty("echoMsiVersion").getOrElse("0.2.3"))
 }
 
 tasks.register<JavaExec>("publishedWindowsUpdateCheck") {

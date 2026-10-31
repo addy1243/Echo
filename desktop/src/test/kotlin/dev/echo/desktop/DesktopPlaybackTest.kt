@@ -2,6 +2,7 @@ package dev.echo.desktop
 
 import dev.echo.core.PlayableSource
 import dev.echo.core.Track
+import dev.echo.core.connected.RepeatModeV2
 import java.nio.file.Files
 import org.junit.Assert.*
 import org.junit.Test
@@ -70,6 +71,21 @@ class DesktopPlaybackTest {
         val state = DesktopPlaybackState(listOf(a, b, a, c), index = 2, repeatMode = DesktopRepeatMode.ALL)
         assertEquals(listOf(c, a, b), upcomingDesktopTracks(state))
         assertEquals(listOf(c), upcomingDesktopTracks(state.copy(repeatMode = DesktopRepeatMode.OFF)))
+    }
+    @Test fun transferCaptureUsesCurrentFirstRepeatWrapAndDistinctDuplicateOccurrences() {
+        val a = song("aaaaaaaaaaa"); val b = song("bbbbbbbbbbb")
+        val state = DesktopPlaybackState(listOf(a, b, a), index = 1, repeatMode = DesktopRepeatMode.ALL)
+        val transfer = transferQueueForDesktop(state)
+        assertEquals(listOf(b.id, a.id, a.id), transfer.entries.map { it.recording.id })
+        assertEquals(RepeatModeV2.ALL, transfer.repeatMode)
+        assertEquals(3, transfer.entries.map { it.id }.toSet().size)
+    }
+    @Test fun transferCaptureRejectsTheSpecificUnportableQueuePosition() {
+        val youtube = song("aaaaaaaaaaa")
+        val local = Track("local:secret", "Private recording", "Artist", durationMs = 10_000,
+            sourceUri = "file:///private/song.wav", provider = "local")
+        val error = runCatching { transferQueueForDesktop(DesktopPlaybackState(listOf(youtube, local), index = 0)) }.exceptionOrNull()
+        assertTrue(error?.message.orEmpty().contains("Queue position 2 (Private recording)"))
     }
     @Test fun queueEditsGuardCurrentAndStaleDuplicateRows() {
         val a = song("aaaaaaaaaaa"); val b = song("bbbbbbbbbbb"); val c = song("ccccccccccc")

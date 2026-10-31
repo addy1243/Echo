@@ -22,6 +22,7 @@ dependencies {
     kapt(libs.hilt.compiler)
     implementation(libs.coroutines.android)
     implementation(libs.coroutines.guava)
+    implementation(libs.okhttp)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test)
     androidTestImplementation(libs.androidx.runner)

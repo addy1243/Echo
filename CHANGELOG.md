@@ -1,5 +1,12 @@
 # Release history
 
+## 0.2.3 / Android code14 and Windows 0.2.3 — release candidate
+
+- Move the current recording, position and remaining playback queue between connected devices, preserving duplicate occurrences and pausing the source after confirmed destination playback.
+- Play together shares a queue and transport timeline across two to eight devices on the same account, with compact multi-selection, readiness checks, follower leave and safe coordinator-loss recovery. Each device resolves its own stream; acoustic synchronization and cross-account rooms are unavailable.
+- Preserve saved-playlist sync and add Windows installer logs, exit reporting and an explicit verified-copy fallback after installation problems.
+- Real Windows plus two-emulator playback and recovery checks passed. Candidate artifacts, production verification and publication status are recorded in [the release record](docs/releases/0.2.3.md).
+
 ## 0.2.2 / Android code13 and Windows 0.2.2 — published 2026-10-29
 
 [Published combined release](https://github.com/addy1243/Echo/releases/tag/v0.2.2); see [the complete release record](docs/releases/0.2.2.md).

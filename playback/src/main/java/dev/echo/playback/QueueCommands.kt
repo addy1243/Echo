@@ -21,6 +21,23 @@ object QueueCommands {
     const val START_SHUFFLED = "dev.echo.queue.START_SHUFFLED"
     const val TRACK_IDS = "trackIds"
     const val START_INDEX = "startIndex"
+    const val CONNECTED_START = "dev.echo.connected.START"
+    const val CONNECTED_STOP = "dev.echo.connected.STOP"
+    const val CONNECTED_MOVE = "dev.echo.connected.MOVE"
+    const val CONNECTED_TOGETHER = "dev.echo.connected.TOGETHER"
+    const val CONNECTED_GROUP_ACTION = "dev.echo.connected.GROUP_ACTION"
+    const val CONNECTED_RESTORE_PREVIOUS = "dev.echo.connected.RESTORE_PREVIOUS"
+    const val CONNECTED_TARGET_ID = "targetDeviceId"
+    const val CONNECTED_TARGET_IDS = "targetDeviceIds"
+    const val CONNECTED_TARGET_SESSIONS = "targetDeviceSessions"
+    const val CONNECTED_REPLACE = "replacePlaying"
+    const val CONNECTED_ACTION = "groupAction"
+    const val CONNECTED_POSITION = "positionMs"
+    const val CONNECTED_REMOTE_COMMAND = "dev.echo.connected.REMOTE_COMMAND"
+    const val CONNECTED_REMOTE_ACTION = "remoteAction"
+    const val CONNECTED_TARGET_SESSION = "targetSessionId"
+    const val CONNECTED_TRACK_REVISION = "trackRevision"
+    const val CONNECTED_QUEUE_REVISION = "queueRevision"
 }
 
 @UnstableApi
@@ -97,7 +114,7 @@ internal suspend fun editQueue(player: ExoPlayer, library: LibraryRepository, ac
     }
 }
 
-@UnstableApi private fun fullShuffleOrder(player: ExoPlayer): List<Int> {
+@UnstableApi internal fun fullShuffleOrder(player: ExoPlayer): List<Int> {
     val timeline = player.currentTimeline
     val result = mutableListOf<Int>()
     val visited = mutableSetOf<Int>()

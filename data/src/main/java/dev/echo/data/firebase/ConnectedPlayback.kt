@@ -72,6 +72,8 @@ class ConnectedPlaybackClient(
     private val snapshot: suspend () -> ConnectedPlayerSnapshot,
     private val executeCommand: suspend (ConnectedPlaybackCommand) -> Unit,
     httpClient: OkHttpClient = defaultConnectedPlaybackHttpClient(),
+    private val v2Participation: () -> Boolean = { false },
+    private val controlEnabled: () -> Boolean = { true },
 ) {
     private val root = validateDatabaseUrl(databaseUrl)
     private val safeLabel = safeText(label, 48, "device")
@@ -191,7 +193,7 @@ class ConnectedPlaybackClient(
 
     private suspend fun writeDevice(session: FirebaseSession, player: ConnectedPlayerSnapshot, enabled: Boolean = true) {
         val body = JSONObject().put("label", safeLabel).put("sessionId", activeSessionId)
-            .put("updatedAt", JSONObject().put(".sv", "timestamp")).put("controlEnabled", enabled)
+            .put("updatedAt", JSONObject().put(".sv", "timestamp")).put("controlEnabled", enabled && controlEnabled())
             .put("player", playerJson(player))
         lastAck?.let { body.put("ack", ackJson(it)) }
         requestJson(session, "users/${session.uid}/playback/devices/$deviceId.json", "PUT", body)
@@ -241,6 +243,11 @@ class ConnectedPlaybackClient(
                 System.currentTimeMillis() + serverOffsetMs)
             if (staleReason != null) {
                 writeAck(session, id, ConnectedPlaybackAck(id, "rejected", System.currentTimeMillis() + serverOffsetMs, staleReason))
+                seenCommandIds += id
+                continue
+            }
+            if (v2Participation()) {
+                writeAck(session, id, ConnectedPlaybackAck(id, "rejected", System.currentTimeMillis() + serverOffsetMs, "controls_disabled"))
                 seenCommandIds += id
                 continue
             }

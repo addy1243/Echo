@@ -9,6 +9,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +28,7 @@ import dev.echo.desktop.DesktopLibrary.Companion.localTrack
 import dev.echo.data.provider.YouTubeProvider
 import dev.echo.data.firebase.ConnectedDevice
 import dev.echo.data.firebase.ConnectedPlaybackAction
+import dev.echo.core.connected.MAX_CONNECTED_GROUP_MEMBERS
 import kotlinx.coroutines.*
 import java.awt.Dimension
 import java.io.File
@@ -46,7 +48,9 @@ fun main() = application {
     val store = startup.getOrNull()
     val provider = remember { YouTubeProvider() }
     val offline = remember { DesktopOfflineRepository(provider) }
-    val player = remember { store?.let { DesktopPlayback(provider, offline) { track, event, listened ->
+    val player = remember { store?.let { DesktopPlayback(provider, offline,
+        recoveryFile = it.file.resolveSibling("playback-v2-recovery.json").toFile(),
+        findLocalTrack = { key -> it.snapshot().tracks.firstOrNull { track -> safeEngineRecordingId(track) == key } }) { track, event, listened ->
         it.recordHistory(track, event, listened, track.durationMs)
     } } }
     Window(onCloseRequest = { player?.close(); offline.close(); exitApplication() }, title = "Echo Music", icon = painterResource("echo-icon.png"),
@@ -84,6 +88,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     val account by google.state.collectAsState()
     val connectedPlayback = remember { DesktopConnectedPlayback(store, google, player) }
     val connectedState by connectedPlayback.state.collectAsState()
+    val connectedV2 by connectedPlayback.v2State.collectAsState()
     var connectedPlaybackEnabled by remember { mutableStateOf(connectedPlayback.enabled()) }
     var selectedRemoteId by remember { mutableStateOf<String?>(null) }
     var lastSelectedRemote by remember { mutableStateOf<ConnectedDevice?>(null) }
@@ -92,14 +97,14 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         if (lastConnectedAccount != account.email) {
             lastConnectedAccount = account.email
             connectedPlaybackEnabled = false
+            connectedPlayback.stopGracefully()
             connectedPlayback.setEnabled(false)
-            connectedPlayback.stop()
         }
     }
     LaunchedEffect(account.email, connectedPlaybackEnabled, lastConnectedAccount) {
         if (account.email == null || account.email != lastConnectedAccount || !connectedPlaybackEnabled ||
             !dev.echo.data.firebase.EchoFirebaseProject.configured) {
-            connectedPlayback.stop()
+            connectedPlayback.stopGracefully()
             return@LaunchedEffect
         }
         withContext(Dispatchers.IO) { connectedPlayback.run() }
@@ -458,15 +463,23 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                 remoteEnabled = remoteLive, commandPending = connectedState.pending,
                 localAvailable = playback.current != null, localLoading = playback.loading,
                 localVolume = playback.volume, localRepeat = playback.repeatMode.name.lowercase(), localSleep = playback.sleepRemainingMs,
-                onLocalPrevious = { selectedRemoteId = null; player.previous() },
-                onLocalToggle = { selectedRemoteId = null; player.toggle() },
-                onLocalNext = { selectedRemoteId = null; player.next() },
-                onLocalSeek = { player.seek(it) }, onLocalVolume = { player.setVolume(it) },
-                onLocalRepeat = { player.setRepeatMode(DesktopRepeatMode.entries[(playback.repeatMode.ordinal + 1) % DesktopRepeatMode.entries.size]) },
-                onLocalShuffle = { selectedRemoteId = null; player.shuffleUpcoming() },
-                onLocalSleep = { player.setSleepTimer(it) }, onRemoteCommand = ::sendRemoteCommand,
+                onLocalPrevious = { selectedRemoteId = null; if (connectedV2.group != null) scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.PREVIOUS) } } else player.previous() },
+                onLocalToggle = { selectedRemoteId = null; if (connectedV2.group != null) scope.launch { runCatching { connectedPlayback.requestGroup(if (connectedV2.group?.timeline?.playing == true) dev.echo.data.firebase.GroupActionV2.PAUSE else dev.echo.data.firebase.GroupActionV2.PLAY) } } else player.toggle() },
+                onLocalNext = { selectedRemoteId = null; if (connectedV2.group != null) scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.NEXT) } } else player.next() },
+                onLocalSeek = { if (connectedV2.group != null) scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.SEEK, it) } } else player.seek(it) }, onLocalVolume = { player.setVolume(it) },
+                onLocalRepeat = { if (connectedV2.group == null) player.setRepeatMode(DesktopRepeatMode.entries[(playback.repeatMode.ordinal + 1) % DesktopRepeatMode.entries.size]) },
+                onLocalShuffle = { if (connectedV2.group == null) { selectedRemoteId = null; player.shuffleUpcoming() } },
+                onLocalSleep = { if (connectedV2.group == null) player.setSleepTimer(it) }, onRemoteCommand = ::sendRemoteCommand,
                 connected = connectedPlaybackEnabled && account.email != null,
                 connectedMessage = connectedState.message, otherPlayers = otherPlayers,
+                connectedV2 = connectedV2,
+                ownDeviceId = ownDeviceId,
+                onMoveV2 = { id -> scope.launch { runCatching { connectedPlayback.moveTo(id, true) }.onFailure { notice = it.message } } },
+                onTogetherV2 = { ids, sessions, replace -> scope.launch { runCatching {
+                    connectedPlayback.startTogether(ids, replacePlaying = replace, expectedTargetSessions = sessions)
+                }.onFailure { notice = it.message } } },
+                onRestorePrevious = { scope.launch { runCatching { connectedPlayback.restoreLatestDisplacedPaused() }.onFailure { notice = it.message } } },
+                onGroupAction = { action -> scope.launch { runCatching { connectedPlayback.requestGroup(action) }.onFailure { notice = it.message } } },
                 onlinePlayers = onlinePlayers, offlinePlayers = offlinePlayers,
                 localStatus = when {
                     playback.current == null -> "Ready"
@@ -567,9 +580,14 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                 Text("Allow remote controls on this laptop", modifier = Modifier.weight(1f))
                 Switch(checked = connectedPlaybackEnabled, enabled = account.email != null &&
                     dev.echo.data.firebase.EchoFirebaseProject.configured, onCheckedChange = { enabled ->
-                    connectedPlayback.setEnabled(enabled)
-                    connectedPlaybackEnabled = enabled
-                    if (!enabled) connectedPlayback.stop()
+                    if (enabled) {
+                        connectedPlayback.setEnabled(true)
+                        connectedPlaybackEnabled = true
+                    } else scope.launch {
+                        connectedPlayback.stopGracefully()
+                        connectedPlayback.setEnabled(false)
+                        connectedPlaybackEnabled = false
+                    }
                 })
             }
             if (account.email == null) Text("Sign in first. Connected playback uses the signed-in Firebase account.", color = Muted, fontSize = 12.sp)
@@ -598,7 +616,12 @@ private fun DesktopPlayerBar(
     onLocalPrevious: () -> Unit, onLocalToggle: () -> Unit, onLocalNext: () -> Unit, onLocalSeek: (Long) -> Unit,
     onLocalVolume: (Float) -> Unit, onLocalRepeat: () -> Unit, onLocalShuffle: () -> Unit, onLocalSleep: (Int?) -> Unit,
     onRemoteCommand: (ConnectedDevice, ConnectedPlaybackAction, Long) -> Unit,
-    connected: Boolean, connectedMessage: String?, otherPlayers: List<ConnectedDevice>, onlinePlayers: List<ConnectedDevice>,
+    connected: Boolean, connectedMessage: String?, otherPlayers: List<ConnectedDevice>,
+    connectedV2: dev.echo.data.firebase.ConnectedPlaybackV2State,
+    ownDeviceId: String,
+    onMoveV2: (String) -> Unit, onTogetherV2: (List<String>, Map<String, String>, Boolean) -> Unit, onRestorePrevious: () -> Unit,
+    onGroupAction: (dev.echo.data.firebase.GroupActionV2) -> Unit,
+    onlinePlayers: List<ConnectedDevice>,
     offlinePlayers: List<ConnectedDevice>, localStatus: String, selectedRemoteId: String?, reconnecting: Boolean,
     onSelectLocal: () -> Unit, onSelectRemote: (ConnectedDevice) -> Unit,
     upcomingIndexes: List<Int>, playback: DesktopPlaybackState, recommendedIds: Set<String>,
@@ -626,7 +649,9 @@ private fun DesktopPlayerBar(
         }
         val pick: @Composable () -> Unit = {
             DesktopPlayerPicker(deviceLabel, stateName, remoteMode, selectedRemoteId, connected,
-                connectedMessage, otherPlayers, onlinePlayers, offlinePlayers, localVolume, localRepeat, localSleep,
+                connectedMessage, otherPlayers, connectedV2, ownDeviceId, playback.displacedMoveOperationId,
+                onMoveV2, onTogetherV2, onRestorePrevious, onGroupAction,
+                onlinePlayers, offlinePlayers, localVolume, localRepeat, localSleep,
                 localStatus, commandPending, remoteDevice, onSelectLocal, onSelectRemote,
                 onLocalVolume, onLocalRepeat, onLocalShuffle, onLocalSleep)
         }
@@ -649,7 +674,7 @@ private fun DesktopPlayerBar(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 transport(Modifier.weight(1f))
                 pick()
-                if (!remoteMode && playback.current != null) QueuePicker(playback, upcomingIndexes, recommendedIds,
+                if (!remoteMode && connectedV2.group == null && playback.current != null) QueuePicker(playback, upcomingIndexes, recommendedIds,
                     onClearQueue, onJump, onMove, onRemove)
             }
         } else Row(Modifier.fillMaxWidth().height(108.dp).padding(horizontal = 24.dp),
@@ -667,7 +692,7 @@ private fun DesktopPlayerBar(
                     Text("Volume", fontSize = 11.sp, color = Muted)
                     Slider(localVolume, onLocalVolume)
                 }
-                if (playback.current != null) QueuePicker(playback, upcomingIndexes, recommendedIds,
+                if (connectedV2.group == null && playback.current != null) QueuePicker(playback, upcomingIndexes, recommendedIds,
                     onClearQueue, onJump, onMove, onRemove)
             }
             pick()
@@ -728,17 +753,43 @@ private fun PlayerTransport(
 @Composable
 private fun DesktopPlayerPicker(
     buttonLabel: String, accessibleLabel: String, remoteMode: Boolean, selectedRemoteId: String?,
-    connected: Boolean, connectedMessage: String?, devices: List<ConnectedDevice>, online: List<ConnectedDevice>,
+    connected: Boolean, connectedMessage: String?, devices: List<ConnectedDevice>,
+    connectedV2: dev.echo.data.firebase.ConnectedPlaybackV2State,
+    ownDeviceId: String,
+    displacedMoveOperationId: String?,
+    onMoveV2: (String) -> Unit, onTogetherV2: (List<String>, Map<String, String>, Boolean) -> Unit, onRestorePrevious: () -> Unit,
+    onGroupAction: (dev.echo.data.firebase.GroupActionV2) -> Unit,
+    online: List<ConnectedDevice>,
     offline: List<ConnectedDevice>, volume: Float, repeat: String, sleep: Long?, localStatus: String,
     commandPending: Boolean, selectedDevice: ConnectedDevice?, onSelectLocal: () -> Unit,
     onSelectRemote: (ConnectedDevice) -> Unit, onVolume: (Float) -> Unit, onRepeat: () -> Unit,
     onShuffle: () -> Unit, onSleep: (Int?) -> Unit,
 ) {
+    val group = connectedV2.group
     var expanded by remember { mutableStateOf(false) }
     var otherOpen by remember { mutableStateOf(false) }
     var moveOpen by remember { mutableStateOf(false) }
     var togetherOpen by remember { mutableStateOf(false) }
     var sleepOpen by remember { mutableStateOf(false) }
+    var confirmRestorePrevious by remember { mutableStateOf(false) }
+    var togetherDeviceSessions by remember { mutableStateOf(emptyMap<String, String>()) }
+    var confirmTogether by remember { mutableStateOf(false) }
+    val togetherCandidates = connectedV2.devices.filter { it.id != ownDeviceId && "group" in it.capabilities }
+    val togetherDeviceIds = togetherDeviceSessions.keys
+    val selectedTogetherDevices = togetherDeviceSessions.mapNotNull { (id, sessionId) ->
+        togetherCandidates.firstOrNull { it.id == id && it.sessionId == sessionId }
+    }
+    val invalidTogetherSelection = togetherDeviceSessions.any { (id, sessionId) ->
+        togetherCandidates.none { it.id == id && it.sessionId == sessionId && it.enabled }
+    }
+    val readyToStartTogether = togetherDeviceIds.size in 1 until MAX_CONNECTED_GROUP_MEMBERS &&
+        !invalidTogetherSelection && selectedTogetherDevices.size == togetherDeviceIds.size
+    LaunchedEffect(connectedV2.group?.ref, connectedV2.group?.status) {
+        if (connectedV2.group?.status == dev.echo.data.firebase.GroupV2Status.ACTIVE) {
+            togetherDeviceSessions = emptyMap()
+            confirmTogether = false
+        }
+    }
     Box {
         OutlinedButton(onClick = { expanded = true }, modifier = Modifier.semantics { contentDescription = accessibleLabel }) {
             Text(buttonLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -794,30 +845,154 @@ private fun DesktopPlayerPicker(
                 if (!remoteMode) {
                     Text("Volume", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp))
                     Slider(volume, onVolume, modifier = Modifier.padding(horizontal = 12.dp))
-                    TextButton(onClick = onRepeat, modifier = Modifier.fillMaxWidth()) { Text("Repeat: $repeat", modifier = Modifier.fillMaxWidth()) }
-                    TextButton(onClick = onShuffle, modifier = Modifier.fillMaxWidth()) { Text("Shuffle upcoming", modifier = Modifier.fillMaxWidth()) }
-                    Box {
-                        TextButton(onClick = { sleepOpen = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text(sleep?.let { "Sleep timer · ${clock(it)}" } ?: "Sleep timer", modifier = Modifier.fillMaxWidth())
-                        }
-                        DropdownMenu(sleepOpen, onDismissRequest = { sleepOpen = false }) {
-                            listOf(15, 30, 45, 60).forEach { minute -> DropdownMenuItem(text = { Text("$minute minutes") },
-                                onClick = { onSleep(minute); sleepOpen = false }) }
-                            DropdownMenuItem(text = { Text("Cancel timer") }, onClick = { onSleep(null); sleepOpen = false })
+                    if (group == null) {
+                        TextButton(onClick = onRepeat, modifier = Modifier.fillMaxWidth()) { Text("Repeat: $repeat", modifier = Modifier.fillMaxWidth()) }
+                        TextButton(onClick = onShuffle, modifier = Modifier.fillMaxWidth()) { Text("Shuffle upcoming", modifier = Modifier.fillMaxWidth()) }
+                        Box {
+                            TextButton(onClick = { sleepOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text(sleep?.let { "Sleep timer · ${clock(it)}" } ?: "Sleep timer", modifier = Modifier.fillMaxWidth())
+                            }
+                            DropdownMenu(sleepOpen, onDismissRequest = { sleepOpen = false }) {
+                                listOf(15, 30, 45, 60).forEach { minute -> DropdownMenuItem(text = { Text("$minute minutes") },
+                                    onClick = { onSleep(minute); sleepOpen = false }) }
+                                DropdownMenuItem(text = { Text("Cancel timer") }, onClick = { onSleep(null); sleepOpen = false })
+                            }
                         }
                     }
                 }
                 TextButton(onClick = { moveOpen = !moveOpen }, modifier = Modifier.fillMaxWidth()) { Text("Move this song…", modifier = Modifier.fillMaxWidth()) }
-                if (moveOpen) Text("Moving playback to another device is not available yet.", color = Muted, fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                if (moveOpen) {
+                    if (displacedMoveOperationId != null && !remoteMode && group == null) {
+                        if (connectedV2.reconcilingMove) {
+                            Text("A Move is still being reconciled. Wait for its outcome before restoring the previous queue.",
+                                color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                        } else if (!confirmRestorePrevious) {
+                            TextButton(enabled = !connectedV2.pending, onClick = { confirmRestorePrevious = true },
+                                modifier = Modifier.fillMaxWidth().testTag("connected-restore-previous")) {
+                                Text("Restore previous queue paused")
+                            }
+                        } else {
+                            Text("This replaces the current queue and restores the previous one paused.", color = Muted,
+                                fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            TextButton(enabled = !connectedV2.pending, onClick = {
+                                confirmRestorePrevious = false
+                                onRestorePrevious()
+                            }, modifier = Modifier.fillMaxWidth().testTag("connected-restore-previous-confirm")) {
+                                Text("Confirm restore previous queue")
+                            }
+                            TextButton(onClick = { confirmRestorePrevious = false }, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+                        }
+                    }
+                    when {
+                        remoteMode -> Text("Choose This laptop as the source before moving. A selected remote player is not moved by this action.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                        group != null -> Text("Leave Play together before moving this queue.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                        localStatus == "Ready" -> Text("Start a song on this laptop before moving the queue.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                        else -> {
+                            Text("The current song and remaining queue move together. The destination queue is saved for paused recovery.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            connectedV2.devices.filter { it.enabled && it.id != ownDeviceId && "move" in it.capabilities }.forEach { device ->
+                                TextButton(enabled = !connectedV2.pending, onClick = { onMoveV2(device.id) }, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Replace ${device.label}'s queue and Move", maxLines = 2)
+                                }
+                            }
+                        }
+                    }
+                }
                 TextButton(onClick = { togetherOpen = !togetherOpen }, modifier = Modifier.fillMaxWidth()) { Text("Play together…", modifier = Modifier.fillMaxWidth()) }
-                if (togetherOpen) Text("Shared playback is not available yet.", color = Muted, fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                if (togetherOpen) {
+                    if (remoteMode && group == null) {
+                        Text("Choose This laptop as the source before creating a shared queue.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                    } else if (group != null) {
+                        Text("Together · ${group.status.name.lowercase()}", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                        group.members.forEach { member ->
+                            val memberName = if (member.deviceId == ownDeviceId) "This laptop" else
+                                connectedV2.devices.firstOrNull { it.id == member.deviceId }?.label ?: member.deviceId.takeLast(8)
+                            val memberStatus = when (member.status) {
+                                dev.echo.data.firebase.GroupMemberV2Status.BUFFERING -> "Buffering"
+                                dev.echo.data.firebase.GroupMemberV2Status.DISCONNECTED -> "Reconnecting"
+                                dev.echo.data.firebase.GroupMemberV2Status.LEFT -> "Left"
+                                else -> member.status.name.lowercase().replaceFirstChar(Char::uppercase)
+                            }
+                            Text("$memberName · $memberStatus", color = Muted, fontSize = 11.sp, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
+                        }
+                        group.timeline?.let { timeline ->
+                            Text("Shared queue · ${timeline.queue.entries.size} songs", color = Accent, fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            val preview = timeline.queue.entries.drop(timeline.cursor).take(12)
+                            preview.forEachIndexed { offset, occurrence ->
+                                val index = timeline.cursor + offset
+                                Text("${if (offset == 0) "Now · " else "${index + 1}. "}${occurrence.recording.title} · ${occurrence.recording.artist}",
+                                    color = if (index == timeline.cursor) Accent else Muted, fontSize = 11.sp, maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
+                            }
+                            val remaining = timeline.queue.entries.size - timeline.cursor - preview.size
+                            if (remaining > 0) Text("+$remaining more songs", color = Muted, fontSize = 10.sp,
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
+                        }
+                        TextButton(enabled = !connectedV2.pending, onClick = { onGroupAction(dev.echo.data.firebase.GroupActionV2.PREVIOUS) }, modifier = Modifier.fillMaxWidth()) { Text("Previous for everyone") }
+                        TextButton(enabled = !connectedV2.pending, onClick = { onGroupAction(if (group.timeline?.playing == true) dev.echo.data.firebase.GroupActionV2.PAUSE else dev.echo.data.firebase.GroupActionV2.PLAY) }, modifier = Modifier.fillMaxWidth()) { Text(if (group.timeline?.playing == true) "Pause everyone" else "Play for everyone") }
+                        TextButton(enabled = !connectedV2.pending, onClick = { onGroupAction(dev.echo.data.firebase.GroupActionV2.NEXT) }, modifier = Modifier.fillMaxWidth()) { Text("Next for everyone") }
+                        TextButton(enabled = !connectedV2.pending, onClick = { onGroupAction(dev.echo.data.firebase.GroupActionV2.LEAVE) }, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (group.coordinatorDeviceId == ownDeviceId) "End for everyone and restore queue paused"
+                                else "Leave group and restore queue paused")
+                        }
+                    } else {
+                        Text("Share this queue with up to ${MAX_CONNECTED_GROUP_MEMBERS - 1} other Echo players. Each device's independent queue remains available for paused recovery.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                        Text("${togetherDeviceIds.size} of ${MAX_CONNECTED_GROUP_MEMBERS - 1} other players selected", color = Muted,
+                            fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 3.dp))
+                        togetherCandidates.forEach { device ->
+                            val selected = device.id in togetherDeviceIds
+                            val expectedSession = togetherDeviceSessions[device.id]
+                            val changedSession = selected && expectedSession != device.sessionId
+                            val ready = device.enabled && !changedSession
+                            Row(Modifier.fillMaxWidth().clickable(enabled = ready || selected) {
+                                togetherDeviceSessions = if (selected) togetherDeviceSessions - device.id else
+                                    if (togetherDeviceSessions.size < MAX_CONNECTED_GROUP_MEMBERS - 1) togetherDeviceSessions + (device.id to device.sessionId) else togetherDeviceSessions
+                            }.padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = selected, enabled = ready || selected, onCheckedChange = { checked ->
+                                    togetherDeviceSessions = if (checked && !selected && togetherDeviceSessions.size < MAX_CONNECTED_GROUP_MEMBERS - 1)
+                                        togetherDeviceSessions + (device.id to device.sessionId)
+                                        else if (!checked) togetherDeviceSessions - device.id else togetherDeviceSessions
+                                })
+                                Column(Modifier.weight(1f).padding(vertical = 5.dp)) {
+                                    Text(device.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(if (changedSession) "Session changed · remove and select again" else if (!device.enabled) "Offline or unavailable" else if (device.snapshot.playing)
+                                        "Playing · ${device.snapshot.title.orEmpty()}" else "Paused · ${device.snapshot.title ?: "ready"}",
+                                        color = Muted, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                        togetherDeviceIds.filter { id -> togetherCandidates.none { it.id == id } }.forEach { id ->
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Selected player ${id.takeLast(8)} is no longer available. Remove it to continue.",
+                                    color = Color(0xFFFFB7AC), fontSize = 11.sp, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { togetherDeviceSessions = togetherDeviceSessions - id }) { Text("Remove") }
+                            }
+                        }
+                        if (invalidTogetherSelection) Text("A selected player is offline, unavailable, or its session changed. Remove it or wait until it is ready; no selected players will be skipped.",
+                            color = Color(0xFFFFB7AC), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                        TextButton(enabled = readyToStartTogether && !connectedV2.pending, onClick = {
+                            if (selectedTogetherDevices.any { it.snapshot.playing }) confirmTogether = true
+                            else onTogetherV2(togetherDeviceIds.toList(), togetherDeviceSessions, false)
+                        }, modifier = Modifier.fillMaxWidth().testTag("connected-together-start")) {
+                            Text("Start Play together")
+                        }
+                    }
+                    connectedV2.message?.let { Text(it, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
+                }
                 Text("Audio outputs", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
                 Text("Output selection is not available yet.", color = Muted, fontSize = 12.sp,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             }
         }
+        if (confirmTogether) AlertDialog(onDismissRequest = { confirmTogether = false },
+            title = { Text("Replace playing devices?") },
+            text = { Text("At least one selected player is currently playing. Play together will replace its current playback and queue.") },
+            confirmButton = { TextButton(enabled = !connectedV2.pending && readyToStartTogether, onClick = {
+                confirmTogether = false
+                onTogetherV2(togetherDeviceIds.toList(), togetherDeviceSessions, true)
+            }, modifier = Modifier.testTag("connected-together-confirm")) { Text("Replace and start") } },
+            dismissButton = { TextButton(onClick = { confirmTogether = false }) { Text("Cancel") } })
     }
 }
 

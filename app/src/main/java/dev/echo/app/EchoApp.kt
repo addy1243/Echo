@@ -524,6 +524,8 @@ fun EchoApp(vm: EchoViewModel) {
 
 @Composable internal fun MiniPlayer(vm: EchoViewModel, tracks: List<Track>, open: () -> Unit) {
     val state by vm.connectedPlaybackState.collectAsStateWithLifecycle()
+    val connectedV2 by vm.connectedPlaybackV2State.collectAsStateWithLifecycle()
+    val group = connectedV2.group
     val selectedId by vm.selectedConnectedPlaybackTargetId.collectAsStateWithLifecycle()
     val cachedRemote by vm.selectedConnectedPlaybackDevice.collectAsStateWithLifecycle()
     val remote = if (selectedId == null) null else state.devices.firstOrNull { it.id == selectedId } ?: cachedRemote
@@ -533,7 +535,7 @@ fun EchoApp(vm: EchoViewModel) {
     val title = if (remoteSelected) remote?.player?.title ?: if (liveRemote != null) "Ready for playback" else "Reconnecting to player" else vm.current?.mediaMetadata?.title?.toString().orEmpty()
     val artist = if (remoteSelected) remote?.player?.artist.orEmpty() else vm.current?.mediaMetadata?.artist?.toString().orEmpty()
     val artwork = if (remoteSelected) connectedArtworkUri(remote?.player?.trackId, tracks) else vm.current?.mediaMetadata?.artworkUri?.toString()
-    val playing = if (remoteSelected) remote?.player?.isPlaying == true else vm.playing
+    val playing = if (remoteSelected) remote?.player?.isPlaying == true else group?.timeline?.playing ?: vm.playing
     val position = if (remoteSelected) remote?.player?.positionMs ?: 0L else vm.position
     val duration = if (remoteSelected) remote?.player?.durationMs ?: 0L else vm.duration
     Surface(Modifier.fillMaxWidth().padding(horizontal = 8.dp).testTag("mini-player").clickable(onClick = open), shape = RoundedCornerShape(12.dp), color = Color(0xFF302B3D)) {
@@ -546,8 +548,9 @@ fun EchoApp(vm: EchoViewModel) {
                     else vm.toggle()
                 }) { if (!remoteSelected && vm.buffering) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) else Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                     if (remoteSelected) "${if (playing) "Pause" else "Play"} on ${remote?.label ?: "selected player"}" else if (playing) "Pause" else "Play") }
-                IconButton(enabled = if (remoteSelected) canControl else vm.controller?.hasNextMediaItem() == true, onClick = {
+                IconButton(enabled = if (remoteSelected) canControl else group != null || vm.controller?.hasNextMediaItem() == true, onClick = {
                     if (remoteSelected) remote?.let { vm.sendConnectedPlaybackCommand(it, dev.echo.data.firebase.ConnectedPlaybackAction.NEXT) }
+                    else if (group != null) vm.controlTogether(dev.echo.data.firebase.GroupActionV2.NEXT)
                     else vm.controller?.seekToNextMediaItem()
                 }) { Icon(Icons.Default.SkipNext, if (remoteSelected) "Next on ${remote?.label ?: "selected player"}" else "Next") }
             }
