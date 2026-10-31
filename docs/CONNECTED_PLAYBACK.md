@@ -1,8 +1,8 @@
-# Connected playback (0.2.2)
+# Connected playback (0.2.3)
 
-## Unreleased 0.2.3 work — verification in progress
+## Published 0.2.3 — Move and Play together
 
-The working tree implements a separate `playbackV2` RTDB channel for Move and Play together. It does not alter the Firestore saved-playlist/favorites/history sync schema. Public 0.2.2 does not contain these features. V2 production rules have been deployed, preserving the existing v1 rules; the client release remains unreleased.
+Published0.2.3 implements a separate `playbackV2` RTDB channel for Move and Play together. It does not alter the Firestore saved-playlist/favorites/history sync schema. The previous0.2.2 release does not contain these features. V2 production rules are deployed, preserving the existing v1 rules.
 
 Move captures the current recording, position and actual remaining queue traversal, including duplicate occurrences. The destination prepares silently; the source pauses only after an observed target start. Both native engines independently resolve canonical public YouTube recordings. Unsupported queue entries reject the transfer explicitly; local files, audio, credentials and temporary stream URLs are not transferred.
 

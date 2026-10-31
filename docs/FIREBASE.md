@@ -1,5 +1,15 @@
 # Firebase library sync
 
+## Client API-key hardening — 2026-11-01
+
+The configured key is the Firebase-generated Browser client key. It is a project identifier used by the two REST Authentication calls, not a service-account credential. Its server-side API allowlist is now restricted to `identitytoolkit.googleapis.com` and `securetoken.googleapis.com`. The shared Android/Desktop key has no Android-only, IP or HTTP-referrer binding; those restrictions would require a different client setup and can break the Desktop REST client.
+
+The existing key was retained so older installed releases continue to sign in and refresh tokens. After hardening, a real saved-account token refresh, verified identity lookup and authenticated metadata-only Firestore read passed. The unrelated Generative Language API rejected the key with `API_KEY_SERVICE_BLOCKED` (HTTP403), and anonymous RTDB access was denied (HTTP401). No credentials were printed or changed. Historical quota/usage was not audited.
+
+A pattern scan across26 reachable Git revisions found one distinct Google API-key value, matching that hardened Firebase client key, and no private-key/GitHub-token pattern matches. Tracked current and historical credential-like filenames were absent. This bounded pattern check does not establish that no other secret or misuse has ever existed.
+
+Firebase client keys remain visible in compiled apps and may be checked into source; security depends on the API allowlist, authenticated owner-only data rules and appropriate quotas/monitoring. Rotation alone cannot make an embedded client key secret. Do not replace or disable this key without planning for immutable older clients. See [Firebase API-key guidance](https://firebase.google.com/docs/projects/api-keys).
+
 Published 0.2.1 adds a separate, opt-in RTDB channel for live player snapshots and remote controls. It uses the same Firebase identity and project; Firestore remains the library backend. See [connected playback setup, tested rules and limits](CONNECTED_PLAYBACK.md). The owner supplied the RTDB URL and published its tested rules. Live native-player control and anonymous denial pass; final cross-platform acceptance is recorded in the connected-playback document.
 
 Firebase is Echo's primary optional account-sync backend in the published Android/Windows 0.2.0 release. Normal Android-emulator Google/Firebase sign-in and canonical Android/desktop/Firestore library equality passed; automatic sync is enabled while both apps are open. Existing local libraries and legacy Drive snapshots remain intact. No physical phone was accessed. Historical setup/check results below are labeled by their stage.

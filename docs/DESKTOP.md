@@ -1,18 +1,18 @@
 # Echo for Windows
 
-Windows **0.2.2** and Android **0.2.2/code13** are [published](https://github.com/addy1243/Echo/releases/tag/v0.2.2). The unified player UI selects and controls an existing local or reachable remote session; moving playback, groups and output routing remain unavailable. Earlier release tags/assets remain immutable.
+Windows **0.2.3** and Android **0.2.3/code14** are [published](https://github.com/addy1243/Echo/releases/tag/v0.2.3). The compact player supports Move of the current song/position/remaining queue and Play together across two to eight devices on one account. Streams resolve independently; acoustic synchronization, cross-account rooms and OS output routing are unavailable. Earlier release tags/assets remain immutable.
 
 ## Run or install
 
 Current laptop executable:
 
 ```text
-C:\Users\adars\OneDrive\Documents\Autos\Echo\build\player-release\compose\binaries\main\app\EchoMusic\EchoMusic.exe
+C:\Users\adars\OneDrive\Documents\Autos\Echo\desktop\build\compose\binaries\main\app\EchoMusic\EchoMusic.exe
 ```
 
-Keep the whole `EchoMusic` directory together, including `app` and `runtime`; Java is bundled. Release installer: `build/releases/0.2.2/EchoMusic-Windows-x64-0.2.2.msi`; checksums and matching source accompany the release. The earlier `build/distributions` 0.1.0 installer is a development preview, not the published release.
+Keep the whole `EchoMusic` directory together, including `app` and `runtime`; Java is bundled. Release installer: `build/releases/0.2.3/EchoMusic-Windows-x64-0.2.3.msi`; checksums and matching source accompany the release. The earlier `build/distributions` 0.1.0 installer is a development preview, not the published release.
 
-**64-bit VLC 3 is required separately.** Echo uses LibVLC without opening VLC's window. VLC is not bundled or installed silently. The MSI is unsigned; actual Windows installation/upgrade acceptance remains unperformed.
+**64-bit VLC 3 is required separately.** Echo uses LibVLC without opening VLC's window. VLC is not bundled or installed silently. The MSI is unsigned. The existing Start-menu installation upgraded to0.2.3 successfully; library and DPAPI credential hashes were unchanged, and the owner confirmed the running version after restarting Echo.
 
 The per-user MSI installs program files under `%LOCALAPPDATA%\EchoMusicDesktop`, separate from `%LOCALAPPDATA%\EchoMusic` data. The portable development EXE and installed copy are separate; use the installed shortcut after installing the MSI for later MSI upgrades.
 
@@ -28,7 +28,7 @@ The per-user MSI installs program files under `%LOCALAPPDATA%\EchoMusicDesktop`,
 
 ## Connected playback
 
-Published 0.2.2 adds a unified player interface for opt-in current-song visibility and existing remote controls through Realtime Database while Echo is open. Audio transfer, synchronized listening and multi-output playback remain unavailable; see [setup and executed checks](CONNECTED_PLAYBACK.md).
+Published0.2.3 adds functional Move and Play together to the unified player. Actual Windows/Android native playback, queue preservation, shared transport and failure recovery passed against the local demo and production Firebase backend. Saved playlists keep their existing Firestore sync. See [setup, limits and executed checks](CONNECTED_PLAYBACK.md).
 
 ## Accounts and sync
 

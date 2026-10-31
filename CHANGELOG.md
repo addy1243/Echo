@@ -1,6 +1,6 @@
 # Release history
 
-## 0.2.3 / Android code14 and Windows 0.2.3 — release candidate
+## 0.2.3 / Android code14 and Windows 0.2.3 — published 2026-11-01
 
 - Move the current recording, position and remaining playback queue between connected devices, preserving duplicate occurrences and pausing the source after confirmed destination playback.
 - Play together shares a queue and transport timeline across two to eight devices on the same account, with compact multi-selection, readiness checks, follower leave and safe coordinator-loss recovery. Each device resolves its own stream; acoustic synchronization and cross-account rooms are unavailable.

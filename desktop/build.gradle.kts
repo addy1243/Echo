@@ -147,5 +147,6 @@ tasks.register<JavaExec>("publishedWindowsUpdateCheck") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("dev.echo.desktop.DesktopUpdateCheckKt")
-    providers.gradleProperty("echoPublishedWindowsBaseline").orNull?.let { args("--download-from-version", it) }
+    providers.gradleProperty("echoDiagnoseWindowsBaseline").orNull?.let { args("--diagnose-from-version", it) }
+        ?: providers.gradleProperty("echoPublishedWindowsBaseline").orNull?.let { args("--download-from-version", it) }
 }
