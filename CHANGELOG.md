@@ -1,12 +1,14 @@
 # Release history
 
-## 0.2.4 / Android code15 and Windows 0.2.4 — release candidate
+## 0.2.4 / Android code15 and Windows 0.2.4 — published 2026-11-03
+
+[Published combined release](https://github.com/addy1243/Echo/releases/tag/v0.2.4); see [the complete release record](docs/releases/0.2.4.md).
 
 - Add public YouTube playlist-title search to Android and Windows. Choosing a result opens the existing preview-and-confirm import flow.
 - Import public YouTube playlist links with bounded continuation paging, preserving playlist order and duplicate entries. Counts and capped or unavailable previews remain explicit before import.
 - Keep Spotify public playlist imports link/file based; this release does not add Spotify title search, audio playback, or automatic playlist sync.
 - Keep long Windows upcoming-queue lists scrollable inside the compact queue picker.
-- Build and publication checks are pending; see [the release record](docs/releases/0.2.4.md).
+- All 249 JVM tests and the release build/lint/MSI identity checks passed. Emulator UI, live YouTube playlist search/import and large-queue Windows UI performance were not verified; see the release record.
 
 ## 0.2.3 / Android code14 and Windows 0.2.3 — published 2026-11-01
 

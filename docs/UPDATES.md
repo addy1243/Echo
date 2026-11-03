@@ -1,6 +1,6 @@
 # GitHub updates
 
-The current release candidate is Android **0.2.4/code15** and Windows **0.2.4**. Publication and artifact verification are pending; see [the release record](releases/0.2.4.md). The previous stable release is [0.2.3](https://github.com/addy1243/Echo/releases/tag/v0.2.3), from code14; see [its release record](releases/0.2.3.md) and the [Windows update contract](DESKTOP_UPDATES.md).
+The current public release is Android **0.2.4/code15** and Windows **0.2.4**. Anonymous release metadata and all four asset sizes/SHA-256 digests were verified; see [the release record](releases/0.2.4.md). The previous release is [0.2.3](https://github.com/addy1243/Echo/releases/tag/v0.2.3), from code14; see [its release record](releases/0.2.3.md) and the [Windows update contract](DESKTOP_UPDATES.md).
 
 
 Previous stable release: [Echo Music 0.2.3 / code14](https://github.com/addy1243/Echo/releases/tag/v0.2.3), with same-key `EchoMusic-14.apk` and exact corresponding source at commit `8e114f7738f43ba6fe31f06bd11493a406b354bf`. See [the 0.2.3 release record](releases/0.2.3.md).

@@ -1,4 +1,23 @@
-# Next session handoff — 2026-10-29
+# Next session handoff — 2026-11-03
+
+## Current release — Echo 0.2.4
+
+Release [`v0.2.4`](https://github.com/addy1243/Echo/releases/tag/v0.2.4) is public/stable (release ID `432406198`). Its immutable source tag points to commit `0962c97a9d648fcbdcc92a5703d278c8bac601d3`. A post-release documentation commit updates current status and hashes; do not move the tag or replace the assets.
+
+The release adds public YouTube playlist-title search and public playlist preview/import on Android and Windows, plus the requested Windows upcoming-queue scroll change. Spotify import remains public-link/file based; Spotify title search, Spotify audio and automatic playlist synchronization are not included.
+
+Assets were anonymously verified with HTTP200 and matching lengths/digests:
+
+- `EchoMusic-15.apk`: 4,257,885 bytes; SHA-256 `8394193ecf7f59c7c6d835089da0fdf2e4c370e6729f200647c42b2fc6ad6dbd`.
+- `EchoMusic-Windows-x64-0.2.4.msi`: 68,594,902 bytes; SHA-256 `0d97ce61cc588b8100ea8e85e9c1053e95b0cd0b165108e52856edd430d11154`.
+- `EchoMusic-15-source.zip`: 535,659,752 bytes; SHA-256 `e326d348e9688e0a22804b78e851fece8b1f2db662ad54e47c9b94139aabac11`. Its 600 entries passed CRC verification; manifest contains 185 pinned dependency/runtime source records.
+- `SHA256SUMS`: 274 bytes; SHA-256 `b778a4294cabc9c959b5ce26eca89834790062a2afd5b78cfbce6705fb991e15`.
+
+All 249 JVM tests passed with zero failures/errors; Android release build and lint passed; Windows MSI packaging and identity inspection passed. Android/desktop license inventories match their committed 135/49-component records. No emulator was attached, so UI and live YouTube playlist search/import were not exercised; no physical phone was accessed. The Windows MSI was not installed. The requested queue picker uses an eager `Column`; responsiveness near the 10,000-item queue limit is unverified.
+
+Per root `AGENTS.md`, the next scope remains connected-playback diagnostics and automatic signed-in participation. Do not restart unrelated passing suites.
+
+## Historical 0.2.3 release work — 2026-10-31
 
 ## Resumed with fresh agents — 2026-10-31
 

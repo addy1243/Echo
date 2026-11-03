@@ -1,6 +1,6 @@
 # Tasks
 
-Latest: Android 0.2.4/code15 and Windows 0.2.4 are release candidates with public YouTube playlist-title search and public playlist preview/import. Build, runtime, signing, packaging and publication checks are pending; see [the release record](releases/0.2.4.md). The last published release remains [0.2.3](releases/0.2.3.md). The 0.2.3 tag and assets are unchanged.
+Latest: Android 0.2.4/code15 and Windows 0.2.4 are [published](https://github.com/addy1243/Echo/releases/tag/v0.2.4) from exact source tag `v0.2.4` at commit `0962c97a9d648fcbdcc92a5703d278c8bac601d3`. The release adds public YouTube playlist-title search/import and the requested Windows queue-picker scroll change. All 249 JVM tests, Android release build/lint and Windows MSI identity checks passed; no emulator was attached and live YouTube UI was not tested. See [the release record](releases/0.2.4.md). The 0.2.3 tag/assets remain unchanged.
 
 Prior public release: combined Android 0.2.0/code11 and Windows 0.2.0 are [published](releases/0.2.0.md). Public updater-download checks pass on both platforms; the installed emulator preserves sync state. No phone access or Windows installer acceptance occurred. Earlier preparation entries below are historical.
 

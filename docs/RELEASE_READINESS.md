@@ -1,8 +1,8 @@
 # Release status
 
-## Current release candidate: Android 0.2.4/code15 and Windows 0.2.4
+## Current release: Android 0.2.4/code15 and Windows 0.2.4
 
-The candidate adds public YouTube playlist-title search and public playlist preview/import on Android and Windows. Build, runtime, signing, packaging and publication checks are pending; see [the 0.2.4 release record](releases/0.2.4.md). The latest published release is [v0.2.3](https://github.com/addy1243/Echo/releases/tag/v0.2.3), from exact source `8e114f7738f43ba6fe31f06bd11493a406b354bf`; its tag/assets remain unchanged.
+The public [v0.2.4 release](https://github.com/addy1243/Echo/releases/tag/v0.2.4) adds public YouTube playlist-title search/import and the Windows queue-picker scroll change. The exact release source is commit `0962c97a9d648fcbdcc92a5703d278c8bac601d3`; all four public asset sizes and SHA-256 digests match the local verified files. All 249 JVM tests, Android release build/lint and Windows MSI identity checks passed. UI/live YouTube checks and large-queue Windows responsiveness remain unverified; see [the 0.2.4 release record](releases/0.2.4.md).
 
 ## Previous published release: Android 0.2.3/code14 and Windows 0.2.3
 

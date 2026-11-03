@@ -1,8 +1,8 @@
 # Integration status
 
-Current release candidate: Android **0.2.4/code15** and Windows **0.2.4**, adding public YouTube playlist-title search and public playlist preview/import. Build, runtime and publication checks are pending; use [the release record](releases/0.2.4.md) for current evidence. The previous published version is [0.2.3](https://github.com/addy1243/Echo/releases/tag/v0.2.3); its release artifacts remain unchanged.
+Current release: [Android 0.2.4/code15 and Windows 0.2.4](https://github.com/addy1243/Echo/releases/tag/v0.2.4), published 2026-11-03 from source commit `0962c97a9d648fcbdcc92a5703d278c8bac601d3`. All 249 JVM tests, Android release build/lint, Windows MSI identity, dependency inventories and anonymous public asset metadata checks passed. No emulator was attached; live YouTube search/import and large-queue Windows UI performance were not verified. See [the release record](releases/0.2.4.md). The 0.2.3 tag/assets remain unchanged.
 
-Latest published release: **[0.2.3 - Android code14 and Windows 0.2.3](releases/0.2.3.md)**, published 2026-11-01 from exact source `8e114f7738f43ba6fe31f06bd11493a406b354bf`. The current 0.2.4 candidate adds YouTube playlist-title search and public playlist preview/import; its build, runtime, signing, packaging and publication checks are pending above. Earlier release evidence remains dated.
+Previous published release: **[0.2.3 - Android code14 and Windows 0.2.3](releases/0.2.3.md)**, published 2026-11-01 from exact source `8e114f7738f43ba6fe31f06bd11493a406b354bf`. Earlier release evidence remains dated.
 
 ## Published unified player UI — 2026-10-29
 
