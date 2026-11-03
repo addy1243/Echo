@@ -1,12 +1,12 @@
 # Release status
 
-## Current release: Android 0.2.2/code13 and Windows 0.2.2
+## Current release candidate: Android 0.2.4/code15 and Windows 0.2.4
 
-The combined [v0.2.2 release](https://github.com/addy1243/Echo/releases/tag/v0.2.2) is public from exact source `3d143945750932681249041a31da64de38dc9332`. The unified player UI is published; transfer, groups and output routing remain unavailable. Public Android and Windows updater checks passed from 0.2.1, including complete download and identity verification; system installation was not accepted. See the release record. See [the complete 0.2.2 record](releases/0.2.2.md).
+The candidate adds public YouTube playlist-title search and public playlist preview/import on Android and Windows. Build, runtime, signing, packaging and publication checks are pending; see [the 0.2.4 release record](releases/0.2.4.md). The latest published release is [v0.2.3](https://github.com/addy1243/Echo/releases/tag/v0.2.3), from exact source `8e114f7738f43ba6fe31f06bd11493a406b354bf`; its tag/assets remain unchanged.
 
-## Previous published release: Android 0.2.0/code11 and Windows 0.2.0
+## Previous published release: Android 0.2.3/code14 and Windows 0.2.3
 
-The combined [v0.2.0 release](https://github.com/addy1243/Echo/releases/tag/v0.2.0) is public/stable with both binaries, matching complete source and SHA256SUMS. Public asset sizes/digests match the reviewed files. All 197 JVM tests, Android build/lint/shrinking, 16 Room checks, seven candidate/platform checks and native packaged-module playback/MSI checks pass. No physical phone was accessed or Windows installer accepted. See [the complete 0.2.0 record](releases/0.2.0.md); older records below remain unchanged.
+The combined [v0.2.3 release](https://github.com/addy1243/Echo/releases/tag/v0.2.3) is public/stable with Android and Windows binaries, matching source and SHA256SUMS. See [the complete 0.2.3 record](releases/0.2.3.md); older records below remain unchanged.
 
 ## Published: 0.1.9 / code10
 

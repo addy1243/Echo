@@ -26,6 +26,7 @@ import androidx.compose.ui.window.rememberWindowState
 import dev.echo.core.Track
 import dev.echo.desktop.DesktopLibrary.Companion.localTrack
 import dev.echo.data.provider.YouTubeProvider
+import dev.echo.data.provider.YouTubePlaylistSearchResult
 import dev.echo.data.firebase.ConnectedDevice
 import dev.echo.data.firebase.ConnectedPlaybackAction
 import dev.echo.core.connected.MAX_CONNECTED_GROUP_MEMBERS
@@ -130,6 +131,9 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     var page by remember { mutableStateOf("Home") }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf(emptyList<Track>()) }
+    var playlistResults by remember { mutableStateOf(emptyList<YouTubePlaylistSearchResult>()) }
+    var playlistSearch by remember { mutableStateOf(false) }
+    var importInitialLink by remember { mutableStateOf<String?>(null) }
     var searching by remember { mutableStateOf(false) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
     var searchGeneration by remember { mutableStateOf(0) }
@@ -176,17 +180,28 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             delay(60_000)
         }
     }
-    fun search() {
+    fun search(forceSongs: Boolean = false) {
         if (query.isBlank()) return
         val term = query.trim()
+        val searchPlaylists = playlistSearch && !forceSongs
         page = "Search"
         searchJob?.cancel()
         val ticket = ++searchGeneration
+        results = emptyList()
+        playlistResults = emptyList()
         searchJob = scope.launch {
             searching = true
-            try { val found = provider.search(term); if (ticket == searchGeneration) results = found }
+            try {
+                if (searchPlaylists) {
+                    val found = provider.searchPlaylists(term)
+                    if (ticket == searchGeneration) playlistResults = found
+                } else {
+                    val found = provider.search(term)
+                    if (ticket == searchGeneration) results = found
+                }
+            }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { if (ticket == searchGeneration) { notice = e.message ?: "Search failed"; results = emptyList() } }
+            catch (e: Exception) { if (ticket == searchGeneration) { notice = e.message ?: "Search failed"; results = emptyList(); playlistResults = emptyList() } }
             finally { if (ticket == searchGeneration) searching = false }
         }
     }
@@ -320,15 +335,25 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                 Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 30.dp, vertical = 24.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedTextField(query, { query = it }, modifier = Modifier.weight(1f),
-                            placeholder = { Text("Search songs and artists") }, singleLine = true,
+                            placeholder = { Text("Search songs, artists or playlists") }, singleLine = true,
                             shape = RoundedCornerShape(28.dp), keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                                 imeAction = androidx.compose.ui.text.input.ImeAction.Search),
                             keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { search() }))
-                        Button(onClick = { search() }, enabled = query.isNotBlank()) { Text("Search") }
+                        Button(onClick = { search() }, enabled = query.isNotBlank()) { Text(if (playlistSearch) "Search playlists" else "Search songs") }
                         OutlinedButton(onClick = { scope.launch {
                             val files = chooseFiles(false)
                             if (files.isNotEmpty()) disk { files.forEach { store.saveTrack(localTrack(it)) } }
                         } }) { Text("Open music") }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                        FilterChip(selected = !playlistSearch, onClick = {
+                            playlistSearch = false
+                            if (page == "Search" && query.isNotBlank()) search(forceSongs = true)
+                        }, label = { Text("Songs") })
+                        FilterChip(selected = playlistSearch, onClick = {
+                            playlistSearch = true
+                            if (page == "Search" && query.isNotBlank()) search()
+                        }, label = { Text("Playlists") })
                     }
                     Spacer(Modifier.height(26.dp))
                     if (page == "Downloads") {
@@ -344,8 +369,9 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                         Column(Modifier.weight(1f)) {
                             Text(if (page == "Home") "Your collection" else title, fontSize = 25.sp, fontWeight = FontWeight.Bold)
                             Text(when {
-                                searching -> "Searching YouTube Music…"
+                                searching -> if (playlistSearch) "Searching YouTube playlists…" else "Searching YouTube Music…"
                                 page == "History" -> "Listening history · ${tracks.size} events"
+                                page == "Search" && playlistSearch -> "${playlistResults.size} playlists · YouTube"
                                 else -> "${tracks.size} songs · ${if (page == "Search") "YouTube Music" else "On this laptop"}"
                             }, fontSize = 12.sp, color = Muted, modifier = Modifier.padding(top = 5.dp))
                         }
@@ -402,7 +428,26 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                         Text("TIME", Modifier.width(125.dp), color = Muted, fontSize = 11.sp)
                     }
                     HorizontalDivider(Modifier.padding(top = 12.dp), color = Color(0xFF28303C))
-                    if (tracks.isEmpty() && !searching) {
+                    if (page == "Search" && playlistSearch) {
+                        if (playlistResults.isEmpty() && !searching) {
+                            Column(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("No playlists found.", fontSize = 22.sp)
+                                Text("Search for a public playlist title, then choose one to preview and import.",
+                                    color = Muted, modifier = Modifier.padding(top = 10.dp))
+                            }
+                        } else LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                            items(playlistResults.size, key = { index -> playlistResults[index].id }) { index ->
+                                val result = playlistResults[index]
+                                ListItem(headlineContent = { Text(result.title) }, supportingContent = {
+                                    Text(listOf(result.uploader, result.total?.let { "$it songs" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · "))
+                                }, trailingContent = { Text("Preview") }, modifier = Modifier.fillMaxWidth().clickable {
+                                    importInitialLink = result.url
+                                    showImport = true
+                                })
+                            }
+                        }
+                    } else if (tracks.isEmpty() && !searching) {
                         Column(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.Center,
                             horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(if (page == "Search") "Find something you love." else "A little quiet here.", fontSize = 22.sp)
@@ -422,7 +467,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                                 } },
                                 onFind = selectedPlaylist?.let { playlist -> {
                                     recordingTarget = Triple(playlist.id, index, playlist.trackIds.toList())
-                                    query = "${track.artist} ${track.title}".take(200); search()
+                                    playlistSearch = false
+                                    query = "${track.artist} ${track.title}".take(200); search(forceSongs = true)
                                 } },
                                 onReplace = recordingTarget?.takeIf { page == "Search" && desktopPlayable(track) }?.let { target -> { scope.launch {
                                     try {
@@ -498,7 +544,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                 onRemove = { index, occurrence, revision -> selectedRemoteId = null; scope.launch { player.removeUpcoming(index, occurrence, revision) } })
         }
     }
-    if (showImport) DesktopImportDialog(store, onChanged = { disk { } }, onError = { notice = it }, onDismiss = { showImport = false })
+    if (showImport) DesktopImportDialog(store, onChanged = { disk { } }, onError = { notice = it },
+        onDismiss = { showImport = false; importInitialLink = null }, initialLink = importInitialLink)
     if (showUpdates) DesktopUpdatesDialog(updater, scope, onDismiss = { showUpdates = false })
     notice?.let { message -> AlertDialog(onDismissRequest = { notice = null }, title = { Text("Echo") },
         text = { Text(message) }, confirmButton = { TextButton(onClick = { notice = null }) { Text("OK") } }) }
@@ -1010,8 +1057,8 @@ private fun QueuePicker(
                     Text("Up next", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     TextButton(onClick = { onClear(); expanded = false }) { Text("Clear") }
                 }
-                LazyColumn(Modifier.heightIn(max = 350.dp)) {
-                    itemsIndexed(upcoming, key = { _, absolute -> "${playback.queueRevision}:$absolute" }) { index, absolute ->
+                Column(Modifier.heightIn(max = 350.dp).verticalScroll(rememberScrollState())) {
+                    upcoming.forEachIndexed { index, absolute ->
                         val track = playback.queue[absolute]
                         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f).clickable { onJump(absolute, playback.queueRevision); expanded = false }.padding(vertical = 7.dp)) {

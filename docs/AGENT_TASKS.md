@@ -1,6 +1,6 @@
 # Tasks
 
-Latest: Android 0.2.2/code13 and Windows 0.2.2 are [published](releases/0.2.2.md) from exact source `3d143945750932681249041a31da64de38dc9332`. Unified-player UI and paired emulator/native-Windows controls pass. No physical phone was accessed; Public Android and Windows updater download/identity checks passed from 0.2.1; system installation was not accepted. Earlier preparation notes are historical.
+Latest: Android 0.2.4/code15 and Windows 0.2.4 are release candidates with public YouTube playlist-title search and public playlist preview/import. Build, runtime, signing, packaging and publication checks are pending; see [the release record](releases/0.2.4.md). The last published release remains [0.2.3](releases/0.2.3.md). The 0.2.3 tag and assets are unchanged.
 
 Prior public release: combined Android 0.2.0/code11 and Windows 0.2.0 are [published](releases/0.2.0.md). Public updater-download checks pass on both platforms; the installed emulator preserves sync state. No phone access or Windows installer acceptance occurred. Earlier preparation entries below are historical.
 

@@ -20,6 +20,8 @@ Playlist-file parsing (Spotify account JSON / Exportify CSV) stays in `data`; th
 
 Public Spotify share links are previewed through bounded, canonical-host HTML reads in `SpotifyPlaylistLinks`. Embed metadata and an independently declared public-page total produce a complete/partial/unknown preview. The UI requires confirmation before using the existing atomic playlist import; auth code and playback resolvers are unchanged.
 
+Public YouTube playlist title search and link import use the pinned NewPipeExtractor through `YouTubeProvider`, with bounded continuation traversal up to 50,000 entries. Available entries map to stable YouTube tracks, preserving order and duplicates; capped, repeated, or unavailable entries remain visibly partial or unknown before confirmation. They reuse the existing lazy playback resolver and need no storage migration. Spotify public imports remain link/file based.
+
 Canonical model: `dev.echo.core.Track`; URIs are strings at domain boundaries. Spotify metadata may have no audio URI. Duplicate playlist occurrences use independent positions. No destructive database migration or client secrets.
 
 Automatic recording matching uses conservative title/credited-artist/duration comparisons, preferring an unambiguous recording or consistent duplicate uploads. The ViewModel runs bounded per-playlist searches with progress/cancellation, then commits replacements only if the playlist's ordered IDs still match the captured snapshot. Duplicates and original metadata remain, and likes are copied to matched canonical IDs without removing old favorites. No database schema change.

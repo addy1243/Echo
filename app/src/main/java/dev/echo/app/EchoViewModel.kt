@@ -110,6 +110,7 @@ class EchoViewModel @Inject constructor(
     var busy by mutableStateOf(false); private set
     var onlineResults by mutableStateOf<List<Track>>(emptyList()); private set
     var youtubeResults by mutableStateOf<List<Track>>(emptyList()); private set
+    var youtubePlaylistResults by mutableStateOf<List<dev.echo.data.provider.YouTubePlaylistSearchResult>>(emptyList()); private set
     var isSearching by mutableStateOf(false); private set
     var searchedQuery by mutableStateOf(""); private set
     private var searchJob: Job? = null
@@ -487,6 +488,8 @@ class EchoViewModel @Inject constructor(
         message = library.importPlaylistFile(text, name)
     }
 
+    suspend fun previewYouTubePlaylist(link: String) = youtube.playlist(link)
+
     private suspend fun discover(seeds: List<Track>, known: List<Track>): List<Track> {
         // shortcut: artist searches seed discovery; use a richer recommendation provider when available.
         val artists = seeds.map { it.artist }.filter { it.isNotBlank() && it != "Unknown artist" }.distinct().take(3)
@@ -729,13 +732,15 @@ class EchoViewModel @Inject constructor(
     fun mutatePlaylist(id: String, action: suspend () -> Unit) = runAction { action(); val songs = library.playlistTracks(id); if (loadedPlaylistId == id) playlistItems = songs }
     fun searchOnline(query: String) = search(query, commons::search) { onlineResults = it }
     fun searchYouTube(query: String) = search(query, youtube::search) { youtubeResults = it }
-    private fun search(query: String, fetch: suspend (String) -> List<Track>, publish: (List<Track>) -> Unit) {
+    fun searchYouTubePlaylists(query: String) = search(query, youtube::searchPlaylists, "No playlists found") { youtubePlaylistResults = it }
+    private fun <T> search(query: String, fetch: suspend (String) -> List<T>, emptyMessage: String = "No music results found", publish: (List<T>) -> Unit) {
         if (offlineSettings.value.offlineOnly) { message = "Offline mode: search your saved library instead"; return }
         searchJob?.cancel()
         val request = ++searchRequest
         val submittedQuery = query.trim()
         onlineResults = emptyList()
         youtubeResults = emptyList()
+        youtubePlaylistResults = emptyList()
         searchedQuery = submittedQuery
         isSearching = true
         searchJob = viewModelScope.launch {
@@ -744,7 +749,7 @@ class EchoViewModel @Inject constructor(
                 settings.rememberSearch(submittedQuery)
                 publishSearchResult({ fetch(submittedQuery) }) {
                     publish(it)
-                    if (it.isEmpty()) message = "No music results found"
+                    if (it.isEmpty()) message = emptyMessage
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { if (request == searchRequest) message = error.message ?: "Search failed. Please retry." }

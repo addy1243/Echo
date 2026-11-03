@@ -1,9 +1,9 @@
 # GitHub updates
 
-Android **0.2.2/code13** and Windows **0.2.2** are [published](https://github.com/addy1243/Echo/releases/tag/v0.2.2); see [the release record](releases/0.2.2.md) and [Windows update contract](DESKTOP_UPDATES.md). Public Android and Windows updater download/identity checks passed from 0.2.1; system installation was not accepted. See the release record.
+The current release candidate is Android **0.2.4/code15** and Windows **0.2.4**. Publication and artifact verification are pending; see [the release record](releases/0.2.4.md). The previous stable release is [0.2.3](https://github.com/addy1243/Echo/releases/tag/v0.2.3), from code14; see [its release record](releases/0.2.3.md) and the [Windows update contract](DESKTOP_UPDATES.md).
 
 
-Previous stable release: [Echo Music 0.2.1 / code12](https://github.com/addy1243/Echo/releases/tag/v0.2.1), with same-key `EchoMusic-12.apk` and exact corresponding source at commit `30d94894f33555d46ad9a0619ec4798df58ad0b0`. See [the 0.2.1 release record](releases/0.2.1.md).
+Previous stable release: [Echo Music 0.2.3 / code14](https://github.com/addy1243/Echo/releases/tag/v0.2.3), with same-key `EchoMusic-14.apk` and exact corresponding source at commit `8e114f7738f43ba6fe31f06bd11493a406b354bf`. See [the 0.2.3 release record](releases/0.2.3.md).
 
 Echo checks the latest published stable release from `addy1243/Echo` once per 24 hours at startup. Settings → Check for updates checks immediately. No notification is shown when there is no newer compatible asset. Drafts and prereleases are ignored. A public repository is required; no GitHub token or client secret is included in the APK.
 
@@ -15,17 +15,17 @@ See the [0.1.9 release record](releases/0.1.9.md) for downloads, hashes, install
 
 ## Publishing a future update
 
-1. Increase the Android integer `versionCode` above the installed version. Current source defaults are code **13**, version **0.2.2**. `versionName` is the label; update ordering uses `versionCode`. Check the built APK's output metadata too: an older output directory may still contain an APK built with earlier version defaults.
+1. Increase the Android integer `versionCode` above the installed version. Current source defaults are code **15**, version **0.2.4**. `versionName` is the label; update ordering uses `versionCode`. Check the built APK's output metadata too: an older output directory may still contain an APK built with earlier version defaults.
 2. Build/sign the APK with the **same signing certificate** as the installed app. Keep your key safe and outside Git. A fresh CI-generated debug key will not update an existing installation. The current preview APK is debug-signed; a release signed with a different key cannot replace it in place. Export the library before any intentional signing-key migration; this updater does not uninstall or erase your library.
-3. Rename the APK to **`EchoMusic-<versionCode>.apk`**, for example `EchoMusic-13.apk` for code 13.
+3. Rename the APK to **`EchoMusic-<versionCode>.apk`**, for example `EchoMusic-15.apk` for code 15.
 4. Upload it as a release asset under [addy1243/Echo Releases](https://github.com/addy1243/Echo/releases), add notes, and publish as the latest stable release. Source ZIP/TAR files are not APK updates. GitHub's asset metadata must include its SHA-256 digest; if an older asset lacks that digest, upload it again.
 5. Open the older Echo build and choose Settings → Check for updates. Publishing source commits alone does not publish an APK.
 
 Example preview build (still uses this machine's existing debug key):
 
 ```powershell
-.\gradlew.bat :app:assembleDebug '-PechoVersionCode=13' '-PechoVersionName=0.2.2'
-Copy-Item app/build/outputs/apk/debug/app-debug.apk EchoMusic-13.apk
+.\gradlew.bat :app:assembleDebug '-PechoVersionCode=15' '-PechoVersionName=0.2.4'
+Copy-Item app/build/outputs/apk/debug/app-debug.apk EchoMusic-15.apk
 ```
 
 For a release build, use Android Studio's signed APK flow and the original signing key. The 0.1.8 release was published with owner authorization; future releases require their own authorized publication and newer version code.
@@ -36,8 +36,8 @@ Echo accepts only HTTPS GitHub release assets from its configured repository, en
 
 Cancellation closes the HTTP call. Failed downloads can be retried; GitHub rate-limit cooldowns are respected. A verified pending APK survives process death and the unknown-sources permission round trip; startup rechecks package/signers/version before offering it again. Completed/stale pending APKs are cleaned up after the installed version catches up. User-started downloads run in a dataSync foreground service with progress and Cancel in an Android notification. Hide the dialog or leave Echo while downloading; reopening Echo restores the verified update. Notification visibility requires notification permission. Completion never starts the installer in the background. Transfers do not resume after force-stop, process termination or reboot; retry starts from the beginning. Android/OEM limits still apply.
 
-## Earlier updater verification snapshot
+## Historical updater verification snapshot (0.1.1, 2026-10-25)
 
-The GitHub repository was verified public; `/releases/latest` returned HTTP404 because there is no published release yet. Therefore live GitHub download and in-place installer completion require a published newer signed APK. **Four new JVM tests passed** for naming, URL/digest/size boundaries, identity/version/signers and cancelling a blocked response body. **Four Android checks passed on the connected Android16 phone**: JSON release selection, real APK signer reading/pinning, FileProvider isolation, and popup/progress/cancel/install/retry callbacks. The first UI attempt failed because the phone was dozing; it passed after the user unlocked the screen. Build and lint pass. Version0.1.1/code2 was installed in place, retaining app data.
+At that point the repository had no release yet; those results are superseded by the later published-release records and do not describe current updater availability. **Four new JVM tests passed** for naming, URL/digest/size boundaries, identity/version/signers and cancelling a blocked response body. **Four Android checks passed on the connected Android16 phone**: JSON release selection, real APK signer reading/pinning, FileProvider isolation, and popup/progress/cancel/install/retry callbacks. The first UI attempt failed because the phone was dozing; it passed after the user unlocked the screen. Build and lint pass. Version0.1.1/code2 was installed in place, retaining app data.
 
 References: [GitHub release assets and digests](https://docs.github.com/en/rest/releases/assets), [Android PackageInstaller](https://developer.android.com/reference/android/content/pm/PackageInstaller).

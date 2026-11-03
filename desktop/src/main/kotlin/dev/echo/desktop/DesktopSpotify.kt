@@ -2,7 +2,9 @@ package dev.echo.desktop
 
 import dev.echo.core.Track
 import dev.echo.data.provider.TrackMatcher
+import dev.echo.data.provider.YouTubePlaylistPreview
 import dev.echo.data.provider.automaticRecordingMatch
+import dev.echo.data.provider.youtubePlaylistId
 import dev.echo.data.spotify.SpotifyLinkPreview
 import dev.echo.data.spotify.parsePlaylistFile
 import dev.echo.data.spotify.spotifyPlaylistLinkId
@@ -36,6 +38,12 @@ fun desktopSpotifyImport(preview: SpotifyLinkPreview, link: String): DesktopPlay
         "Spotify returned inconsistent playlist counts"
     }
     return DesktopPlaylistImport(listOf(DesktopImportPlaylist(preview.name, preview.tracks, id)))
+}
+
+fun desktopYouTubeImport(preview: YouTubePlaylistPreview, link: String): DesktopPlaylistImport {
+    youtubePlaylistId(link)
+    require(preview.tracks.isNotEmpty()) { "YouTube returned no playlist songs to import" }
+    return DesktopPlaylistImport(listOf(DesktopImportPlaylist(preview.name, preview.tracks)))
 }
 
 suspend fun automaticDesktopMatches(

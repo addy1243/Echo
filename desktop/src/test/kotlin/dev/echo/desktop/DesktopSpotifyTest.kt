@@ -1,6 +1,7 @@
 package dev.echo.desktop
 
 import dev.echo.core.Track
+import dev.echo.data.provider.YouTubePlaylistPreview
 import dev.echo.data.spotify.SpotifyLinkPreview
 import java.nio.file.Files
 import kotlinx.coroutines.CancellationException
@@ -64,6 +65,13 @@ class DesktopSpotifyTest {
         assertEquals("abcdefghijklmnopqrstuv", result.playlists.single().spotifyId)
         assertFalse(preview.complete)
         assertThrows(IllegalArgumentException::class.java) { desktopSpotifyImport(preview, "https://evil.example/playlist/abcdefghijklmnopqrstuv") }
+    }
+
+    @Test fun youtubePlaylistCountChangingDuringPreviewDoesNotBlockImport() {
+        val preview = YouTubePlaylistPreview("Changed", listOf(recording, recording), total = 1)
+        val result = desktopYouTubeImport(preview, "https://www.youtube.com/playlist?list=PL1234567890")
+        assertEquals(listOf(recording, recording), result.playlists.single().tracks)
+        assertFalse(preview.complete)
     }
 
     @Test fun automaticMatchingSearchesEachUniqueMissingSongAndKeepsAmbiguity() = runBlocking {

@@ -1,6 +1,6 @@
 # Echo Music
 
-[0.2.3](https://github.com/addy1243/Echo/releases/tag/v0.2.3) adds Move playback and Play together to the compact [connected player](docs/CONNECTED_PLAYBACK.md). Move carries the current song, position and remaining queue. Play together coordinates a shared queue across two to eight devices on the same account. Each player resolves its own stream; acoustic synchronization, cross-account rooms and OS output routing are unavailable.
+The 0.2.4 release candidate adds public YouTube playlist-title search and public playlist-link preview/import on Android and Windows. Search results open the existing preview-and-confirm flow; capped or partial results are identified before import. Spotify imports remain public-link or playlist-file based, without Spotify title search, audio or automatic sync. See [integration details](docs/INTEGRATIONS.md).
 
 Native Kotlin Android personal music player. Android 8.0+; Kotlin, Compose Material 3, Room, Hilt, Media3 and DataStore. Open this folder in Android Studio.
 
@@ -8,13 +8,13 @@ A **Windows desktop app** lives in `desktop`: desktop navigation, YouTube/local 
 
 Echo Music's original source is licensed under GPL-3.0-or-later; see [LICENSE](LICENSE), [COPYING](COPYING) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms and matching source. Settings → Licenses & source displays the packaged notices.
 
-## 0.2.3 — Android and Windows
+## 0.2.4 release candidate — Android and Windows
 
-[Release page](https://github.com/addy1243/Echo/releases/tag/v0.2.3) · [Android APK](https://github.com/addy1243/Echo/releases/download/v0.2.3/EchoMusic-14.apk) · [Windows installer](https://github.com/addy1243/Echo/releases/download/v0.2.3/EchoMusic-Windows-x64-0.2.3.msi) · [Full corresponding source](https://github.com/addy1243/Echo/releases/download/v0.2.3/EchoMusic-14-source.zip) · [Release record and checksums](docs/releases/0.2.3.md)
+Android 0.2.4/code15 and Windows 0.2.4 are being prepared. Release artifacts and publication verification are pending; see [the release record](docs/releases/0.2.4.md). The [previous stable release](https://github.com/addy1243/Echo/releases/tag/v0.2.3) remains Android 0.2.3/code14 and Windows 0.2.3; its assets and record are unchanged.
 
-Android is0.2.3/code14, Android8.0+, with the original signing certificate for in-place updates. Windows is0.2.3/x64 with bundled GPL Temurin Java21; install64-bit VLC3 separately. The MSI is unsigned and installation remains interactive. The actual installed Start-menu app upgraded successfully with library and credential hashes preserved. Earlier release tags/assets remain immutable.
+Android is Android8.0+ and must use the original signing certificate for in-place updates. Windows is x64 with bundled GPL Temurin Java21; install64-bit VLC3 separately. The MSI is unsigned and installation remains interactive.
 
-Local0.2.3 executable: `desktop/build/compose/binaries/main/app/EchoMusic/EchoMusic.exe`. Keep its full app/runtime directory together; the MSI installs the separate updatable copy. Use the existing Start-menu shortcut after an MSI upgrade and restart Echo to load the new version. Publication and verification status are recorded in the release record.
+The local executable is at `desktop/build/compose/binaries/main/app/EchoMusic/EchoMusic.exe`. Keep its full app/runtime directory together; the MSI installs the separate updatable copy. Use the existing Start-menu shortcut after an MSI upgrade and restart Echo to load the new version.
 
 ## Android features
 

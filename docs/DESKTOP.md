@@ -1,6 +1,6 @@
 # Echo for Windows
 
-Windows **0.2.3** and Android **0.2.3/code14** are [published](https://github.com/addy1243/Echo/releases/tag/v0.2.3). The compact player supports Move of the current song/position/remaining queue and Play together across two to eight devices on one account. Streams resolve independently; acoustic synchronization, cross-account rooms and OS output routing are unavailable. Earlier release tags/assets remain immutable.
+Windows **0.2.4** and Android **0.2.4/code15** are release candidates; publication and artifact checks are pending in [the release record](releases/0.2.4.md). They add public YouTube playlist-title search and public playlist-link preview/import. The previous stable release is [0.2.3](https://github.com/addy1243/Echo/releases/tag/v0.2.3), which added Move and Play together. Earlier release tags/assets remain immutable.
 
 ## Run or install
 
@@ -10,7 +10,7 @@ Current laptop executable:
 C:\Users\adars\OneDrive\Documents\Autos\Echo\desktop\build\compose\binaries\main\app\EchoMusic\EchoMusic.exe
 ```
 
-Keep the whole `EchoMusic` directory together, including `app` and `runtime`; Java is bundled. Release installer: `build/releases/0.2.3/EchoMusic-Windows-x64-0.2.3.msi`; checksums and matching source accompany the release. The earlier `build/distributions` 0.1.0 installer is a development preview, not the published release.
+Keep the whole `EchoMusic` directory together, including `app` and `runtime`; Java is bundled. Release installer: `build/releases/0.2.4/EchoMusic-Windows-x64-0.2.4.msi`; checksums and matching source accompany the release. The earlier `build/distributions` 0.1.0 installer is a development preview, not the published release.
 
 **64-bit VLC 3 is required separately.** Echo uses LibVLC without opening VLC's window. VLC is not bundled or installed silently. The MSI is unsigned. The existing Start-menu installation upgraded to0.2.3 successfully; library and DPAPI credential hashes were unchanged, and the owner confirmed the running version after restarting Echo.
 
@@ -19,9 +19,9 @@ The per-user MSI installs program files under `%LOCALAPPDATA%\EchoMusicDesktop`,
 ## Available
 
 - Desktop sidebar, wide song table, artwork, persistent transport and Now playing/Up next; maximized window. The EXE, window, installer and shortcuts reuse Android's Echo waveform/colors.
-- Local/YouTube playback and YouTube Music search; play/pause, seek, previous/next, volume, repeat, ordinary/recording-related Smart shuffle, Play next, normal/shuffled append, guarded queue editing and monotonic sleep timer.
+- Local/YouTube playback and YouTube Music song or public playlist-title search; play/pause, seek, previous/next, volume, repeat, ordinary/recording-related Smart shuffle, Play next, normal/shuffled append, guarded queue editing and monotonic sleep timer.
 - Playlists with rename/delete and occurrence move/remove, favorites, actual listening-time history, confirmed history clear and metadata backup import/export. Duplicate occurrences survive. Abrupt termination can lose unfinished listening duration.
-- Spotify public-link preview/import and CSV/account-data JSON import, with explicit partial/unknown totals. Guarded manual/local recording association and conservative automatic matching are available. No Spotify audio or automatic Spotify sync is supplied.
+- Public YouTube playlist-title search and link preview/import, plus Spotify public-link and CSV/account-data JSON import, with explicit partial/unknown totals. Guarded manual/local recording association and conservative automatic matching are available. Spotify imports contain no audio and do not sync automatically.
 - Discovery from actual library/favorite/recent artists, monthly music searches, save-to-playlist and save mix. Search results are not verified release dates.
 - Private manual downloads with integrity checks, progress, Cancel/Retry/Remove and offline-only playback. Transfers run while Echo is open; Retry restarts interruptions. Frequent-song automatic caching is absent.
 - Optional Google/Firebase library sync and daily/manual Windows update checks with verified MSI staging and explicit interactive installation.
