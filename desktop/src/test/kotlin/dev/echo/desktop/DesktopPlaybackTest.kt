@@ -8,6 +8,40 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DesktopPlaybackTest {
+    @Test fun transientPlaybackRetryUsesOneThreeSixThenCapsAtOneMinute() {
+        assertEquals(1_000L, desktopPlaybackRetryDelayMs(1))
+        assertEquals(3_000L, desktopPlaybackRetryDelayMs(2))
+        assertEquals(6_000L, desktopPlaybackRetryDelayMs(3))
+        assertEquals(12_000L, desktopPlaybackRetryDelayMs(4))
+        assertEquals(24_000L, desktopPlaybackRetryDelayMs(5))
+        assertEquals(48_000L, desktopPlaybackRetryDelayMs(6))
+        assertEquals(60_000L, desktopPlaybackRetryDelayMs(7))
+        assertEquals(60_000L, desktopPlaybackRetryDelayMs(20))
+    }
+
+    @Test fun retryingPlaybackKeepsPauseIntentAndItsPositionForResume() {
+        val state = DesktopPlaybackState(queue = listOf(song("aaaaaaaaaaa")), index = 0,
+            playing = false, positionMs = 12_345, retrying = true)
+        assertTrue(desktopPlaybackIsActive(state))
+        assertEquals(12_345L, state.positionMs)
+        assertFalse(desktopPlaybackIsActive(state.copy(retrying = false)))
+    }
+
+    @Test fun abandonedRetryClearsOnlyItsCapturedOccurrence() {
+        val track = song("aaaaaaaaaaa")
+        val state = DesktopPlaybackState(queue = listOf(track), index = 0, positionMs = 12_345,
+            occurrence = 7, retrying = true)
+        val finished = finishDesktopPlaybackRetry(state, track.id, 7)
+        assertFalse(finished.retrying)
+        assertEquals(12_345L, finished.positionMs)
+        assertTrue(finishDesktopPlaybackRetry(state, track.id, 8).retrying)
+    }
+
+    @Test fun newerRetryAttemptSupersedesTheOlderScheduledAttempt() {
+        assertFalse(desktopPlaybackRetryIsCurrent(4, 5))
+        assertTrue(desktopPlaybackRetryIsCurrent(5, 5))
+    }
+
     @Test fun playNextPreservesCurrentPositionDuplicatesAndWrappedUpcoming() {
         val a = song("aaaaaaaaaaa"); val b = song("bbbbbbbbbbb"); val c = song("ccccccccccc")
         val state = DesktopPlaybackState(listOf(a, b, a), index = 1, repeatMode = DesktopRepeatMode.ALL,

@@ -141,3 +141,60 @@ test('playback v2 MOVE and bounded group rows enforce owner, safe payloads, fenc
   assert.equal((await request(`${base}/groups/${group}/head`, 'GET', 'someone-else')).status, 401);
   assert.equal((await request(`${base}/ops/${op}/request`, 'DELETE', uid)).status, 200);
 });
+
+test('playback v2 remote queues, group replacement cohorts and timing estimates are bounded', async () => {
+  const uid = `v2-queue-${Date.now()}`;
+  const base = `users/${uid}/playbackV2`;
+  const op = '00000000-0000-4000-8000-000000000031';
+  const group = '00000000-0000-4000-8000-000000000099';
+  const now = Date.now();
+  const privateRequest = { schema: 2, id: op, type: 'PLAY', sourceDeviceId: 'phone-1',
+    sourceSessionId: 'phone-session', targetDeviceId: 'laptop-1', targetSessionId: 'laptop-session',
+    targetFence: v2Fence('laptop-session'), queue: v2Queue(), createdAt: timestamp, expiresAt: now + 60000 };
+  let result = await request(`${base}/queueOps/${op}/request`, 'PUT', uid, privateRequest);
+  assert.equal(result.status, 200, await result.text());
+  const unsafe = { ...privateRequest, id: '00000000-0000-4000-8000-000000000032',
+    queue: { ...v2Queue(), entries: [{ ...v2Queue().entries[0], recording: { ...v2Recording(), id: 'file:///private/song' } }] } };
+  assert.equal((await request(`${base}/queueOps/${unsafe.id}/request`, 'PUT', uid, unsafe)).status, 401);
+
+  const timing = { schema: 1, sessionId: 'laptop-session', roundTripP95Ms: 20, jitterMs: 3,
+    clockUncertaintyMs: 3, updatedAt: timestamp };
+  result = await request(`${base}/groups/${group}/syncTimingV1/laptop-1`, 'PUT', uid, timing);
+  assert.equal(result.status, 200, await result.text());
+  assert.equal((await request(`${base}/groups/${group}/syncTimingV1/laptop-1`, 'PUT', uid,
+    { ...timing, roundTripP95Ms: 5001 })).status, 401);
+
+  const groupRequest = { schema: 2, id: op, sourceDeviceId: 'phone-1', sourceSessionId: 'phone-session',
+    epoch: 1, expectedSequence: 0, expectedDigest: 'a'.repeat(64), queue: v2Queue(),
+    cohort: [{ deviceId: 'phone-1', sessionId: 'phone-session' },
+      { deviceId: 'laptop-1', sessionId: 'laptop-session' }], createdAt: timestamp, expiresAt: now + 60000 };
+  result = await request(`${base}/groups/${group}/queueOps/${op}/request`, 'PUT', uid, groupRequest);
+  assert.equal(result.status, 200, await result.text());
+  const oneMember = { ...groupRequest, id: '00000000-0000-4000-8000-000000000033',
+    cohort: [groupRequest.cohort[0]] };
+  assert.equal((await request(`${base}/groups/${group}/queueOps/${oneMember.id}/request`, 'PUT', uid, oneMember)).status, 401);
+});
+
+test('playback v2 device feature negotiation preserves legacy device rows and exact sessions', async () => {
+  const uid = `v2-features-${Date.now()}`;
+  const base = `users/${uid}/playbackV2`;
+  const devicePath = `${base}/devices/laptop-1`;
+  const featurePath = `${base}/deviceFeaturesV1/laptop-1`;
+  const device = v2Device();
+  let result = await request(devicePath, 'PUT', uid, device);
+  assert.equal(result.status, 200, await result.text());
+  result = await request(featurePath, 'PUT', uid,
+    { sessionId: 'session-1', updatedAt: timestamp, queue: true, groupQueue: true, sync: true });
+  assert.equal(result.status, 200, await result.text());
+  assert.equal((await request(featurePath, 'PUT', 'another-user',
+    { sessionId: 'session-1', updatedAt: timestamp, queue: true, groupQueue: true, sync: true })).status, 401);
+  assert.equal((await request(featurePath, 'PUT', uid,
+    { sessionId: 'old-session', updatedAt: timestamp, queue: true, groupQueue: true, sync: true })).status, 401,
+  'feature negotiation is bound to the exact currently advertised device session');
+  assert.equal((await request(featurePath, 'PUT', uid,
+    { sessionId: 'session-1', updatedAt: timestamp, queue: true, groupQueue: true, sync: true, move: true })).status, 401,
+  'feature rows reject unknown fields');
+  assert.equal((await request(devicePath, 'PUT', uid,
+    { ...device, capabilities: ['move', 'group', 'queue'] })).status, 401,
+  'new capabilities never enter the legacy device row');
+});

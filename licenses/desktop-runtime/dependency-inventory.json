@@ -389,6 +389,38 @@
       "embeddedNoticeEntries": []
     },
     {
+      "coordinate": "org.jetbrains.compose.material:material-icons-core-desktop:1.7.3",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "material-icons-core-desktop-1.7.3.jar",
+      "sha256": "bcf6c853b6db2ff148d2d3aad3b7a7ea54d93fc7b42e0afd840eb6daf1a1c681",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
+      "coordinate": "org.jetbrains.compose.material:material-icons-extended-desktop:1.7.3",
+      "configurations": [
+        "desktopRuntimeClasspath"
+      ],
+      "artifact": "material-icons-extended-desktop-1.7.3.jar",
+      "sha256": "dc55d383dca8279e353917e5c5a93d192a95e7ca4f926ee55ee0b4627f99d860",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "source": "https://github.com/JetBrains/compose-jb",
+      "embeddedNoticeEntries": []
+    },
+    {
       "coordinate": "org.jetbrains.compose.material:material-ripple-desktop:1.8.2",
       "configurations": [
         "desktopRuntimeClasspath"

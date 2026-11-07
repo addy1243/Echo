@@ -55,8 +55,9 @@ private val Ink = Color(0xFF101014)
 
 @Composable
 fun EchoApp(vm: EchoViewModel) {
-    dev.echo.app.account.AccountSyncHost(vm)
+    if (!BuildConfig.STAGING) dev.echo.app.account.AccountSyncHost(vm)
     val connected by vm.connectedPlaybackState.collectAsStateWithLifecycle()
+    val connectedV2 by vm.connectedPlaybackV2State.collectAsStateWithLifecycle()
     val selectedPlaybackTargetId by vm.selectedConnectedPlaybackTargetId.collectAsStateWithLifecycle()
     val connectedPlaybackEnabled by vm.connectedPlaybackEnabled.collectAsStateWithLifecycle()
     val nav = rememberNavController()
@@ -114,7 +115,8 @@ fun EchoApp(vm: EchoViewModel) {
                     IconButton(onClick = { nav.navigate("settings") { launchSingleTop = true } }) { Icon(Icons.Default.Settings, "Settings") }
                 }) },
             bottomBar = { if (route != "player") Column {
-                if (vm.current != null || selectedPlaybackTargetId != null) MiniPlayer(vm, tracks) { nav.navigate("player") { launchSingleTop = true } }
+                if (vm.current != null || selectedPlaybackTargetId != null || connectedV2.group != null ||
+                    connectedPlaybackEnabled && connected.devices.isNotEmpty() || BuildConfig.STAGING && connected.devices.isNotEmpty()) PlayerDock(vm, tracks) { nav.navigate("player") { launchSingleTop = true } }
                 Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).navigationBarsPadding().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                     listOf(Triple("home", "Home", Icons.Default.Home), Triple("search", "Search", Icons.Default.Search), Triple("library", "Library", Icons.Default.LibraryMusic), Triple("profile", "Profile", Icons.Default.Person)).forEach { (key, label, icon) ->
                         Column(Modifier.weight(1f).fillMaxHeight().testTag("tab-$key").selectable(selected = activeTab == key, role = Role.Tab, onClick = {
@@ -126,6 +128,7 @@ fun EchoApp(vm: EchoViewModel) {
                     }
                 }
             } },
+            floatingActionButton = { if (BuildConfig.STAGING && route != "player") StageAdminControls(vm.stage) }
         ) { padding ->
             Column(Modifier.fillMaxSize().padding(padding)) {
                 (credentialError ?: historyError)?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) }
@@ -149,7 +152,7 @@ fun EchoApp(vm: EchoViewModel) {
                         val id = back.arguments?.getString("id").orEmpty()
                         PlaylistScreen(vm, id, playlists.find { it.id == id }, tracks, playlists, favorites)
                     }
-                    composable("player") { PlayerScreen(vm, tracks, playlists, favorites) { nav.popBackStack() } }
+                    composable("player") { FullPlayer(vm, tracks, playlists, favorites) { nav.popBackStack() } }
                     composable("profile") { ProfileScreen(vm) }
                     composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }, { nav.navigate("profile") }) }
                     composable("licenses") { LicensesScreen() }
@@ -165,7 +168,7 @@ fun EchoApp(vm: EchoViewModel) {
     vm: EchoViewModel, tracks: List<Track>, playlists: List<Playlist>, favorites: Set<String>, recent: List<Track>,
     scan: () -> Unit, discover: (Int) -> Unit, openPlaylist: (String) -> Unit, library: () -> Unit, search: () -> Unit,
 ) {
-    LaunchedEffect(Unit) { if (vm.newMusicResults.isEmpty()) vm.refreshDiscovery() }
+    LaunchedEffect(Unit) { if (!BuildConfig.STAGING && vm.newMusicResults.isEmpty()) vm.refreshDiscovery() }
     val suggestions = vm.discoveryResults.ifEmpty { vm.newMusicResults }
     val preview = suggestions.ifEmpty { tracks.filter { it.sourceUri != null } }.take(5)
     val liked = tracks.filter { it.id in favorites && it.sourceUri != null }
@@ -192,9 +195,13 @@ fun EchoApp(vm: EchoViewModel) {
             }
         } else item(key = "discovery-empty") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (vm.discoveryLoading) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Finding songs for you…") }
-                else Text("Discoveries couldn't load. Try again, or search for an artist.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(enabled = !vm.discoveryLoading, onClick = vm::refreshDiscovery) { Text("Refresh discoveries") }
+                if (BuildConfig.STAGING) {
+                    Text("Stage preview · add demo players with Admin, then open Stage Mix to try queue routing.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    if (vm.discoveryLoading) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Finding songs for you…") }
+                    else Text("Discoveries couldn't load. Try again, or search for an artist.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(enabled = !vm.discoveryLoading, onClick = vm::refreshDiscovery) { Text("Refresh discoveries") }
+                }
             }
         }
         item(key = "discover-mixes") { LazyRow(Modifier.testTag("home-mixes"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -290,7 +297,10 @@ fun EchoApp(vm: EchoViewModel) {
         Column(Modifier.weight(1f)) {
             Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
             Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-            Text(if (track.sourceUri == null) "Choose a recording in its playlist" else "${track.provider} · ${time(track.durationMs)}", color = if (track.sourceUri == null) MaterialTheme.colorScheme.error else Violet, style = MaterialTheme.typography.labelSmall)
+            val detail = if (BuildConfig.STAGING && track.provider == "stage") "Silent Stage demo · routes to the focused player"
+                else if (track.sourceUri == null) "Choose a recording in its playlist" else "${track.provider} · ${time(track.durationMs)}"
+            Text(detail, color = if (track.sourceUri == null && track.provider != "stage") MaterialTheme.colorScheme.error else Violet,
+                style = MaterialTheme.typography.labelSmall)
         }
         Box {
             IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Options for ${track.title}") }
@@ -365,7 +375,7 @@ fun EchoApp(vm: EchoViewModel) {
 }
 
 @Composable private fun DiscoveryScreen(vm: EchoViewModel, playlists: List<Playlist>, favorites: Set<String>, initialTab: Int = 0) {
-    LaunchedEffect(Unit) { if (vm.newMusicResults.isEmpty()) vm.refreshDiscovery() }
+    LaunchedEffect(Unit) { if (!BuildConfig.STAGING && vm.newMusicResults.isEmpty()) vm.refreshDiscovery() }
     var tab by rememberSaveable { mutableIntStateOf(initialTab.coerceIn(0, 1)) }
     val songs = if (tab == 0) vm.discoveryResults else vm.newMusicResults
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -484,7 +494,9 @@ private data class PublicPlaylistPreview(val name: String, val tracks: List<dev.
     var queueMenu by remember { mutableStateOf(false) }
     val offlineSettings by vm.offlineSettings.collectAsStateWithLifecycle()
     val downloads by vm.offlineSongs.collectAsStateWithLifecycle()
-    val firstPlayable = firstPlayableIndex(songs, offlineSettings.offlineOnly, downloads.filter { it.status == "saved" }.map { it.trackId }.toSet())
+    val selectedPlaybackTargetId by vm.selectedConnectedPlaybackTargetId.collectAsStateWithLifecycle()
+    val firstPlayable = if (BuildConfig.STAGING && selectedPlaybackTargetId != null) songs.indices.firstOrNull() ?: -1
+        else firstPlayableIndex(songs, offlineSettings.offlineOnly, downloads.filter { it.status == "saved" }.map { it.trackId }.toSet())
     LazyColumn(Modifier.testTag("playlist-feed"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Hero(playlist?.name ?: "Playlist", "${songs.size} tracks · made for your moments") }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -550,44 +562,6 @@ private data class PublicPlaylistPreview(val name: String, val tracks: List<dev.
     }) } } }, confirmButton = { TextButton(onClick = { match = null }) { Text("Cancel") } }) }
 }
 
-@Composable internal fun MiniPlayer(vm: EchoViewModel, tracks: List<Track>, open: () -> Unit) {
-    val state by vm.connectedPlaybackState.collectAsStateWithLifecycle()
-    val connectedV2 by vm.connectedPlaybackV2State.collectAsStateWithLifecycle()
-    val group = connectedV2.group
-    val selectedId by vm.selectedConnectedPlaybackTargetId.collectAsStateWithLifecycle()
-    val cachedRemote by vm.selectedConnectedPlaybackDevice.collectAsStateWithLifecycle()
-    val remote = if (selectedId == null) null else state.devices.firstOrNull { it.id == selectedId } ?: cachedRemote
-    val remoteSelected = selectedId != null
-    val canControl = remote != null && remote.player.title != null && vm.canControlConnectedDevice(remote)
-    val liveRemote = remote?.let { candidate -> state.devices.firstOrNull { it.id == candidate.id && it.sessionId == candidate.sessionId && it.controlEnabled } }
-    val title = if (remoteSelected) remote?.player?.title ?: if (liveRemote != null) "Ready for playback" else "Reconnecting to player" else vm.current?.mediaMetadata?.title?.toString().orEmpty()
-    val artist = if (remoteSelected) remote?.player?.artist.orEmpty() else vm.current?.mediaMetadata?.artist?.toString().orEmpty()
-    val artwork = if (remoteSelected) connectedArtworkUri(remote?.player?.trackId, tracks) else vm.current?.mediaMetadata?.artworkUri?.toString()
-    val playing = if (remoteSelected) remote?.player?.isPlaying == true else group?.timeline?.playing ?: vm.playing
-    val position = if (remoteSelected) remote?.player?.positionMs ?: 0L else vm.position
-    val duration = if (remoteSelected) remote?.player?.durationMs ?: 0L else vm.duration
-    Surface(Modifier.fillMaxWidth().padding(horizontal = 8.dp).testTag("mini-player").clickable(onClick = open), shape = RoundedCornerShape(12.dp), color = Color(0xFF302B3D)) {
-        Column {
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Artwork(artwork, 42); Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(artist, style = MaterialTheme.typography.bodySmall, maxLines = 1) }
-                IconButton(enabled = if (remoteSelected) canControl else vm.current != null, onClick = {
-                    if (remoteSelected) remote?.let { vm.sendConnectedPlaybackCommand(it, if (playing) dev.echo.data.firebase.ConnectedPlaybackAction.PAUSE else dev.echo.data.firebase.ConnectedPlaybackAction.PLAY) }
-                    else vm.toggle()
-                }) { if (!remoteSelected && vm.buffering) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) else Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    if (remoteSelected) "${if (playing) "Pause" else "Play"} on ${remote?.label ?: "selected player"}" else if (playing) "Pause" else "Play") }
-                IconButton(enabled = if (remoteSelected) canControl else group != null || vm.controller?.hasNextMediaItem() == true, onClick = {
-                    if (remoteSelected) remote?.let { vm.sendConnectedPlaybackCommand(it, dev.echo.data.firebase.ConnectedPlaybackAction.NEXT) }
-                    else if (group != null) vm.controlTogether(dev.echo.data.firebase.GroupActionV2.NEXT)
-                    else vm.controller?.seekToNextMediaItem()
-                }) { Icon(Icons.Default.SkipNext, if (remoteSelected) "Next on ${remote?.label ?: "selected player"}" else "Next") }
-            }
-            LinearProgressIndicator(progress = { if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f }, modifier = Modifier.fillMaxWidth().height(2.dp))
-            ConnectedPlayerControls(vm, compact = true)
-        }
-    }
-}
-
 @Composable private fun SettingsScreen(vm: EchoViewModel, openHistory: () -> Unit, openDownloads: () -> Unit, openLicenses: () -> Unit, openProfile: () -> Unit) {
     val updateStatus by vm.updater.status.collectAsStateWithLifecycle()
     val connected by vm.spotify.connected.collectAsStateWithLifecycle()
@@ -641,9 +615,9 @@ private data class PublicPlaylistPreview(val name: String, val tracks: List<dev.
             OutlinedButton(onClick = { importBackup.launch(arrayOf("application/json")) }) { Text("Import backup") }
         } }
         item { Text("Backups contain library metadata, playlists, likes and local matches. Import merges tracks and replaces playlists with matching IDs. Audio files and API credentials are excluded.", style = MaterialTheme.typography.bodySmall) }
-        item { Text("Original source quality · normal speed\nDownloads and listening history stay on this device.\nPlaylists can sync privately with your Google account.\nDark theme · Android Auto browsing through Media3.") }
+        item { Text(if (BuildConfig.STAGING) "Echo Stage uses an isolated demo library and simulated players.\nDark theme · Android Auto browsing through Media3." else "Original source quality · normal speed\nDownloads and listening history stay on this device.\nPlaylists can sync privately with your Google account.\nDark theme · Android Auto browsing through Media3.") }
         item { OutlinedButton(onClick = { vm.runAction("Artwork cache cleared") { coil.Coil.imageLoader(context).memoryCache?.clear(); coil.Coil.imageLoader(context).diskCache?.clear() } }) { Text("Clear artwork cache") } }
-        item { Text("Android Auto requires testing on a phone and Desktop Head Unit. See playback/VALIDATION.md in the project.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Android Auto needs a compatible host and Desktop Head Unit for validation. See docs/ARCHITECTURE.md in the project.", style = MaterialTheme.typography.bodySmall) }
     }
 }
 

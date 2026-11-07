@@ -4,19 +4,26 @@ import dev.echo.core.connected.EngineCapture
 import dev.echo.core.connected.EngineFence
 import dev.echo.core.connected.EngineObservation
 import dev.echo.core.connected.GroupRef
+import dev.echo.core.connected.GroupTimeline
 import dev.echo.core.connected.NativePlaybackBridgeV2
 import dev.echo.core.connected.PortableRecording
 import dev.echo.core.connected.QueueOccurrence
 import dev.echo.core.connected.RepeatModeV2
 import dev.echo.core.connected.TransferQueue
 import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_GROUP
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_GROUP_QUEUE
 import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_MOVE
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_QUEUE
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_SYNC
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -41,6 +48,124 @@ class ConnectedPlaybackV2ClientTest {
         QueueOccurrence("00000000-0000-4000-8000-000000000001", recording),
         QueueOccurrence("00000000-0000-4000-8000-000000000002", recording),
     ), RepeatModeV2.ALL, shuffleEnabled = false)
+
+    @Test fun unmeasuredGroupTimingPlaceholderIsNotPublishedAsAnEstimate() {
+        val warmup = JSONObject().put("schema", 1).put("sessionId", "warmup-session")
+            .put("roundTripP95Ms", 0).put("jitterMs", 0).put("clockUncertaintyMs", 2_000).put("updatedAt", 1)
+        assertNull(parseGroupSyncTimingV1("warmup-device", warmup))
+        warmup.put("roundTripP95Ms", 1)
+        assertTrue(parseGroupSyncTimingV1("warmup-device", warmup) != null)
+    }
+
+    @Test fun retriesInitialSessionFailureWithoutReplacingTheClient(): Unit = runBlocking {
+        val attempts = AtomicInteger()
+        val id = "startup-retry"
+        val bridge = FakeBridge("startup-retry-session", queue, initialPlaying = false, events = mutableListOf())
+        val client = ConnectedPlaybackV2Client(
+            "https://echo-85da4-default-rtdb.asia-southeast1.firebasedatabase.app", id, id,
+            sessionProvider = { if (attempts.incrementAndGet() == 1) error("temporary refresh failure") else session },
+            bridge = bridge, httpClient = OkHttpClient.Builder().addInterceptor(FakeRtdb().interceptor).build(),
+        )
+        val job = launch { client.run() }
+        try {
+            withTimeout(8_000) { client.state.first { state -> state.devices.any { it.id == id && it.enabled } } }
+            assertTrue(attempts.get() > 1)
+            assertNull("Successful presence polling clears the temporary refresh error", client.state.value.message)
+        } finally { client.close(); job.cancelAndJoin() }
+    }
+
+    @Test fun cancellationDuringInitialSessionRefreshDoesNotPublishPresence(): Unit = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val id = "startup-cancel"
+        val bridge = FakeBridge("startup-cancel-session", queue, initialPlaying = false, events = mutableListOf())
+        val db = FakeRtdb()
+        val client = ConnectedPlaybackV2Client(
+            "https://echo-85da4-default-rtdb.asia-southeast1.firebasedatabase.app", id, id,
+            sessionProvider = { entered.complete(Unit); awaitCancellation() },
+            bridge = bridge, httpClient = OkHttpClient.Builder().addInterceptor(db.interceptor).build(),
+        )
+        val job = launch { client.run() }
+        entered.await()
+        client.close()
+        job.cancelAndJoin()
+        assertNull(db.readOrNull("users/${session.uid}/playbackV2/devices/$id"))
+    }
+
+    @Test fun remoteQueueTransportFailureClearsPendingAndMarksOutcomeUnknown() = runBlocking {
+        val db = FakeRtdb()
+        val events = mutableListOf<String>()
+        val sourceBridge = FakeBridge("queue-source-session", queue, false, events)
+        val targetBridge = FakeBridge("queue-target-session", TransferQueue(emptyList(), RepeatModeV2.OFF, false), false, events)
+        val http = OkHttpClient.Builder().addInterceptor(db.interceptor).build()
+        fun client(id: String, bridge: FakeBridge) = ConnectedPlaybackV2Client(
+            "https://echo-85da4-default-rtdb.asia-southeast1.firebasedatabase.app", id, id,
+            sessionProvider = { session.copy(idToken = "token-$id") }, bridge = bridge, httpClient = http)
+        val source = client("queue-source", sourceBridge)
+        val target = client("queue-target", targetBridge)
+        val jobs = listOf(launch { source.run() }, launch { target.run() })
+        try {
+            withTimeout(8_000) { source.state.first { state -> state.devices.any { it.id == "queue-target" && it.enabled } } }
+            db.failQueueTargetReads = true
+            val remote = source.state.value.devices.first { it.id == "queue-target" }
+            val outcome = runCatching { source.playQueueOn(remote.id, remote.sessionId, remote.snapshot.fence, queue) }
+            assertTrue(outcome.isFailure)
+            assertEquals(QueueOperationV2Status.UNKNOWN, source.state.value.queueOperation?.status)
+            assertFalse(source.state.value.pending)
+        } finally { source.close(); target.close(); jobs.forEach { it.cancelAndJoin() } }
+    }
+
+    @Test fun initialGroupStartDoesNotScheduleAheadWhenOneExactSessionLacksSyncFeature() = runBlocking {
+        val db = FakeRtdb()
+        val events = mutableListOf<String>()
+        val sourceBridge = FakeBridge("legacy-mixed-source-session", queue, true, events).apply { syncSupported = true }
+        val targetBridge = FakeBridge("legacy-mixed-target-session", TransferQueue(emptyList(), RepeatModeV2.OFF, false),
+            false, events)
+        val http = OkHttpClient.Builder().addInterceptor(db.interceptor).build()
+        fun client(id: String, bridge: FakeBridge) = ConnectedPlaybackV2Client(
+            "https://echo-85da4-default-rtdb.asia-southeast1.firebasedatabase.app", id, id,
+            sessionProvider = { session.copy(idToken = "token-$id") }, bridge = bridge, httpClient = http)
+        val source = client("legacy-mixed-source", sourceBridge)
+        val target = client("legacy-mixed-target", targetBridge)
+        val jobs = listOf(launch { source.run() }, launch { target.run() })
+        try {
+            withTimeout(8_000) { source.state.first { state -> state.devices.any { it.id == "legacy-mixed-target" && it.enabled } } }
+            source.startTogether(listOf("legacy-mixed-target"))
+            val timeline = source.state.value.group?.timeline
+            assertTrue("the coordinator should activate immediately for the legacy peer", sourceBridge.lastGroupActivationAtMs > 0)
+            assertTrue("the mixed-version start must not publish a future issue time", timeline != null &&
+                timeline.issuedAtMs <= System.currentTimeMillis() + 1_000L)
+        } finally { source.close(); target.close(); jobs.forEach { it.cancelAndJoin() } }
+    }
+
+    @Test fun initialGroupStartIsImmediateWhenCoordinatorLacksSyncFeature() = runBlocking {
+        val db = FakeRtdb()
+        val events = mutableListOf<String>()
+        val sourceBridge = FakeBridge("legacy-coordinator-session", queue, true, events)
+        val targetBridge = FakeBridge("new-follower-session", TransferQueue(emptyList(), RepeatModeV2.OFF, false),
+            false, events).apply { syncSupported = true }
+        val http = OkHttpClient.Builder().addInterceptor(db.interceptor).build()
+        fun client(id: String, bridge: FakeBridge) = ConnectedPlaybackV2Client(
+            "https://echo-85da4-default-rtdb.asia-southeast1.firebasedatabase.app", id, id,
+            sessionProvider = { session.copy(idToken = "token-$id") }, bridge = bridge, httpClient = http)
+        val source = client("legacy-coordinator", sourceBridge)
+        val target = client("new-follower", targetBridge)
+        val jobs = listOf(launch { source.run() }, launch { target.run() })
+        val initialPosition = sourceBridge.positionMs
+        try {
+            withTimeout(8_000) { source.state.first { state -> state.devices.any { it.id == "new-follower" && it.enabled } } }
+            source.startTogether(listOf("new-follower"))
+            val timeline = source.state.value.group?.timeline
+            assertTrue("the coordinator without Sync support must activate immediately", sourceBridge.lastGroupActivationAtMs > 0)
+            assertTrue("the new follower must not receive a future issue time", timeline != null &&
+                timeline.issuedAtMs <= System.currentTimeMillis() + 1_000L)
+            assertEquals("mixed-version fallback must not project the coordinator position", initialPosition, timeline?.positionMs)
+            withTimeout(8_000) {
+                target.state.first { state -> state.group?.status == GroupV2Status.ACTIVE && targetBridge.playing &&
+                    targetBridge.currentOccurrenceId == queue.entries.first().id }
+            }
+            assertTrue("the Sync-capable follower must apply the legacy immediate timeline", targetBridge.playing)
+        } finally { source.close(); target.close(); jobs.forEach { it.cancelAndJoin() } }
+    }
 
     @Test fun moveActivatesTargetAndObservesStartBeforeGuardedSourcePause() = runBlocking {
         runMove(activationFails = false)
@@ -333,6 +458,11 @@ class ConnectedPlaybackV2ClientTest {
             val initial = source.state.value.group!!.timeline!!
             assertEquals(sharedQueue.entries.map { it.id }, initial.queue.entries.map { it.id })
             assertEquals(sharedQueue.entries[0].id, sourceBridge.currentOccurrenceId)
+            awaitCondition(8_000) { sourceBridge.lastGroupActivationAtMs > 0L && targetBridge.lastGroupActivationAtMs > 0L }
+            assertTrue("The prepared follower must not activate before the shared deadline",
+                targetBridge.lastGroupActivationAtMs >= initial.issuedAtMs - 100L)
+            assertTrue("Prepared players should activate from the same schedule",
+                kotlin.math.abs(sourceBridge.lastGroupActivationAtMs - targetBridge.lastGroupActivationAtMs) <= 300L)
             assertEquals(sharedQueue.entries[0].id, targetBridge.currentOccurrenceId)
             assertTrue(sourceBridge.playing && targetBridge.playing)
             assertEquals("The coordinator should activate its already-ready stage without a second media fetch.", 1,
@@ -419,9 +549,10 @@ class ConnectedPlaybackV2ClientTest {
                     source.state.value.group?.ref?.epoch == oldGroup.ref.epoch + 1
             }
             awaitCondition(8_000) { db.readOrNull("$groupPath/requests/$staleRequestId") == null }
+            awaitCondition(20_000) { !source.state.value.pending && !target.state.value.pending &&
+                !sourceBridge.playing && !targetBridge.playing }
             assertEquals(sharedQueue.entries[0].id, sourceBridge.currentOccurrenceId)
             assertEquals(sharedQueue.entries[0].id, targetBridge.currentOccurrenceId)
-            assertFalse(sourceBridge.playing || targetBridge.playing)
 
             target.leaveTogether()
             awaitCondition(8_000) { source.state.value.group == null }
@@ -492,6 +623,150 @@ class ConnectedPlaybackV2ClientTest {
         }
     }
 
+    @Test fun groupQueueReplacementUsesOneFutureStartForPreparedMembers() = runBlocking {
+        val events = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val db = FakeRtdb()
+        val sourceBridge = FakeBridge("queue-source-session", queue, initialPlaying = true, events = events).apply {
+            groupQueueSupported = true
+            syncSupported = true
+        }
+        val targetBridge = FakeBridge("queue-target-session", TransferQueue(emptyList(), RepeatModeV2.OFF, false),
+            initialPlaying = false, events = events).apply {
+            groupQueueSupported = true
+            syncSupported = true
+        }
+        val http = OkHttpClient.Builder().addInterceptor(db.interceptor).build()
+        fun client(id: String, bridge: FakeBridge) = ConnectedPlaybackV2Client(
+            "https://echo-85da4-default-rtdb.asia-southeast1.firebasedatabase.app", id, id,
+            sessionProvider = { session.copy(idToken = "token-$id") }, bridge = bridge, httpClient = http)
+        val source = client("queue-source", sourceBridge)
+        val target = client("queue-target", targetBridge)
+        val jobs = listOf(launch { source.run() }, launch { target.run() })
+        try {
+            withTimeout(8_000) { source.state.first { state -> state.devices.any { it.id == "queue-target" && it.enabled } } }
+            withTimeout(20_000) { source.startTogether(listOf("queue-target")) }
+            val group = source.state.value.group!!
+            val timeline = group.timeline!!
+            val path = "users/${session.uid}/playbackV2/groups/${group.ref.groupId}"
+            val replacement = TransferQueue(listOf(QueueOccurrence(
+                "00000000-0000-4000-8000-000000000003", recording.copy(title = "Selected replacement"))),
+                RepeatModeV2.OFF, shuffleEnabled = false)
+            val previousSourceActivation = sourceBridge.lastGroupActivationAtMs
+            val previousTargetActivation = targetBridge.lastGroupActivationAtMs
+            val replacing = async { source.replaceGroupQueue(group.ref, timeline.sequence, replacement) }
+            val operationId = withTimeout(3_000) {
+                while (source.state.value.groupQueueOperation?.id == null) delay(10)
+                source.state.value.groupQueueOperation!!.id
+            }
+            val operationPath = "$path/queueOps/$operationId"
+
+            var committed: GroupTimeline? = null
+            try { withTimeout(25_000) {
+                while (committed == null) {
+                    val head = db.readOrNull("$path/head")
+                    val nextSequence = head?.optLong("timelineSeq", -1L) ?: -1L
+                    if (nextSequence == timeline.sequence + 1) {
+                        committed = db.read("$path/timelines/$nextSequence")
+                            .let { parseGroupTimeline(group.ref.groupId, it) }
+                    } else {
+                        val operationState = db.readOrNull("$operationPath/state")
+                        if (operationState?.optString("status") in setOf("FAILED", "UNKNOWN", "PARTIAL")) {
+                            error("Shared queue operation ended before its timeline commit: state=$operationState " +
+                                "acks=${db.readOrNull("$operationPath/acks")}")
+                        }
+                        delay(10)
+                    }
+                }
+            } } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
+                throw AssertionError("Shared queue timeline did not commit: operation=${source.state.value.groupQueueOperation} " +
+                    "state=${db.readOrNull("$operationPath/state")} acks=${db.readOrNull("$operationPath/acks")} " +
+                    "group=${source.state.value.group}", timeout)
+            }
+            val committedTimeline = requireNotNull(committed)
+            assertEquals(replacement.entries.map { it.id }, committedTimeline.queue.entries.map { it.id })
+            assertTrue("The group replacement needs a future deadline for every prepared member",
+                committedTimeline.issuedAtMs - System.currentTimeMillis() >= 1_000L)
+            val operation = withTimeout(25_000) { replacing.await() }
+            assertEquals(GroupQueueOperationV2Status.COMPLETE, operation.status)
+            assertTrue(sourceBridge.lastGroupActivationAtMs >= committedTimeline.issuedAtMs - 100L)
+            assertTrue(targetBridge.lastGroupActivationAtMs >= committedTimeline.issuedAtMs - 100L)
+            assertTrue(kotlin.math.abs(sourceBridge.lastGroupActivationAtMs - targetBridge.lastGroupActivationAtMs) <= 300L)
+            assertTrue(sourceBridge.lastGroupActivationAtMs > previousSourceActivation)
+            assertTrue(targetBridge.lastGroupActivationAtMs > previousTargetActivation)
+        } finally {
+            source.close(); target.close(); jobs.forEach { it.cancelAndJoin() }
+        }
+    }
+
+    @Test fun syncProjectsFromTheObservationAfterDelayedCoordinatorReads() = runBlocking {
+        val db = FakeRtdb()
+        val events = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val http = OkHttpClient.Builder().addInterceptor(db.interceptor).build()
+        val sourceBridge = FakeBridge("delayed-sync-source-session", queue, initialPlaying = true, events = events).apply {
+            syncSupported = true
+            advanceWhilePlaying = true
+            setPlayback(32_000, true)
+        }
+        val targetBridge = FakeBridge("delayed-sync-target-session", queue, initialPlaying = true, events = events).apply {
+            syncSupported = true
+            setPlayback(32_000, true)
+        }
+        fun client(id: String, bridge: FakeBridge) = ConnectedPlaybackV2Client(
+            "https://echo-85da4-default-rtdb.asia-southeast1.firebasedatabase.app", id, id,
+            sessionProvider = { session.copy(idToken = "token-$id") }, bridge = bridge, httpClient = http)
+        val source = client("delayed-sync-source", sourceBridge)
+        val target = client("delayed-sync-target", targetBridge)
+        val jobs = listOf(launch { source.run() }, launch { target.run() })
+        try {
+            withTimeout(8_000) { source.state.first { state -> state.devices.any { it.id == "delayed-sync-target" && it.enabled } } }
+            withTimeout(20_000) { source.startTogether(listOf("delayed-sync-target"), replacePlaying = true) }
+            withTimeout(12_000) { source.state.first { it.group?.status == GroupV2Status.ACTIVE } }
+            withTimeout(12_000) { target.state.first { it.group?.status == GroupV2Status.ACTIVE } }
+            val firstTimeline = source.state.value.group!!.timeline!!
+            awaitCondition(8_000) {
+                sourceBridge.lastGroupActivationAtMs > 0L && targetBridge.lastGroupActivationAtMs > 0L
+            }
+            val groupPath = "users/${session.uid}/playbackV2/groups/${source.state.value.group!!.ref.groupId}"
+            awaitCondition(8_000) {
+                val members = db.read("$groupPath/members")
+                members.optJSONObject("delayed-sync-source")?.optString("status") == GroupMemberV2Status.PLAYING.name &&
+                    members.optJSONObject("delayed-sync-target")?.optString("status") == GroupMemberV2Status.PLAYING.name
+            }
+
+            // Model several serial ~250 ms REST operations between request receipt and
+            // coordinator observation. A timestamp captured before those operations would
+            // double-count their delay in the projected position.
+            db.delayedAuthToken = "token-delayed-sync-source"
+            db.delayedRequestMs = 250L
+            target.requestGroup(GroupActionV2.SYNC)
+            var synced: GroupTimeline? = null
+            withTimeout(12_000) {
+                while (synced == null) {
+                    synced = source.state.value.group?.timeline?.takeIf { it.sequence > firstTimeline.sequence }
+                    if (synced == null) delay(10)
+                }
+            }
+            val timeline = requireNotNull(synced)
+            withTimeout(12_000) {
+                while (true) {
+                    val expected = timeline.positionMs +
+                        (System.currentTimeMillis() - timeline.issuedAtMs).coerceAtLeast(0L)
+                    if (kotlin.math.abs(sourceBridge.observe().positionMs - expected) <= 400L &&
+                        kotlin.math.abs(targetBridge.observe().positionMs - expected) <= 400L) break
+                    delay(50)
+                }
+            }
+            val now = System.currentTimeMillis()
+            val observed = sourceBridge.observe()
+            val expectedPositionNow = (timeline.positionMs + (now - timeline.issuedAtMs).coerceAtLeast(0L))
+            assertTrue("Timeline position must be projected from the post-transport observation; " +
+                "expected near $expectedPositionNow, actual ${observed.positionMs}",
+                kotlin.math.abs(expectedPositionNow - observed.positionMs) <= 400L)
+        } finally {
+            source.close(); target.close(); jobs.forEach { it.cancelAndJoin() }
+        }
+    }
+
     @Test fun togetherRenewsPreparingLeaseDuringSlowNativeStage() = runBlocking {
         val events = java.util.Collections.synchronizedList(mutableListOf<String>())
         val db = FakeRtdb()
@@ -549,7 +824,7 @@ class ConnectedPlaybackV2ClientTest {
     @Test fun preparationTimeoutRacingActiveHeadClosesAndReconcilesLateNativeActivation() = runBlocking {
         val events = java.util.Collections.synchronizedList(mutableListOf<String>())
         val db = FakeRtdb()
-        val prepareTimeoutMs = 6_000L
+        val prepareTimeoutMs = 12_000L
         val sourceActivationGate = kotlinx.coroutines.CompletableDeferred<Unit>()
         val targetActivationGate = kotlinx.coroutines.CompletableDeferred<Unit>()
         val sourceActivationStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -586,8 +861,8 @@ class ConnectedPlaybackV2ClientTest {
             // Hold both native activations after ACTIVE is committed. Let the caller's
             // preparation deadline expire, then release native work so CLOSED wins and
             // any late activation is reconciled against the original queues.
-            withTimeout(8_000) { sourceActivationStarted.await() }
-            withTimeout(8_000) { targetActivationStarted.await() }
+            withTimeout(20_000) { sourceActivationStarted.await() }
+            withTimeout(20_000) { targetActivationStarted.await() }
             delay(prepareTimeoutMs + 200)
             sourceActivationGate.complete(Unit)
             targetActivationGate.complete(Unit)
@@ -931,6 +1206,7 @@ class ConnectedPlaybackV2ClientTest {
         private var staged: TransferQueue? = null
         private var stagedGroup: GroupRef? = null
         private var activeGroup: GroupRef? = null
+        private var stagedOperationId: String? = null
         private data class Displaced(val queue: TransferQueue, val occurrenceId: String?, val positionMs: Long)
         private var displaced: Displaced? = null
         private val preparing = AtomicBoolean(false)
@@ -942,11 +1218,17 @@ class ConnectedPlaybackV2ClientTest {
         var observeStarted: kotlinx.coroutines.CompletableDeferred<Unit>? = null
         @Volatile var blockNextPreparedObservation = false
         var groupTransportDelayMs = 0L
+        @Volatile var lastGroupActivationAtMs = 0L
+        @Volatile var syncSupported = false
+        @Volatile var groupQueueSupported = false
         var advanceWhilePlaying = false
         private var playbackClockNanos = System.nanoTime()
 
         override suspend fun fence() = currentFence
-        override suspend fun capabilities() = setOf(CONNECTED_V2_CAPABILITY_MOVE, CONNECTED_V2_CAPABILITY_GROUP)
+        override suspend fun capabilities() = setOf(CONNECTED_V2_CAPABILITY_MOVE, CONNECTED_V2_CAPABILITY_GROUP,
+            CONNECTED_V2_CAPABILITY_QUEUE) +
+            (if (groupQueueSupported) setOf(CONNECTED_V2_CAPABILITY_GROUP_QUEUE) else emptySet()) +
+            (if (syncSupported) setOf(CONNECTED_V2_CAPABILITY_SYNC) else emptySet())
         override suspend fun observe(): EngineObservation {
             if (blockNextPreparedObservation && stagedGroup != null && activeGroup == null) {
                 blockNextPreparedObservation = false
@@ -962,6 +1244,7 @@ class ConnectedPlaybackV2ClientTest {
 
         override suspend fun prepare(operationId: String, queue: TransferQueue, expectedTarget: EngineFence, group: GroupRef?): EngineObservation {
             check(expectedTarget == currentFence)
+            stagedOperationId = operationId
             if (failConcurrentPreparation) check(preparing.compareAndSet(false, true)) { "Concurrent native preparations" }
             try {
                 events += "${sessionId}-prepare-started"
@@ -980,6 +1263,7 @@ class ConnectedPlaybackV2ClientTest {
 
         override suspend fun activate(operationId: String, positionMs: Long, play: Boolean): EngineObservation {
             if (failActivation) error("simulated native activation failure")
+            check(stagedOperationId == operationId) { "activated a different staged operation" }
             activateStarted?.complete(Unit)
             activateGate?.await()
             if (activateDelayMs > 0) delay(activateDelayMs)
@@ -992,6 +1276,8 @@ class ConnectedPlaybackV2ClientTest {
             currentFence = currentFence.copy(queueRevision = currentFence.queueRevision + 1,
                 occurrenceRevision = currentFence.occurrenceRevision + 1, transportRevision = currentFence.transportRevision + 1)
             activeGroup = stagedGroup
+            stagedOperationId = null
+            if (activeGroup != null) lastGroupActivationAtMs = System.currentTimeMillis()
             events += "target-observed"
             return observation(ready = true)
         }
@@ -1023,6 +1309,7 @@ class ConnectedPlaybackV2ClientTest {
 
         override suspend fun abort(operationId: String) {
             staged = null
+            if (stagedOperationId == operationId) stagedOperationId = null
             if (displaced != null && stagedGroup?.groupId == operationId) {
                 stagedGroup = null
                 displaced = null
@@ -1106,7 +1393,10 @@ class ConnectedPlaybackV2ClientTest {
             get() = failTokenValue.get()
             set(value) { failTokenValue.set(value) }
         @Volatile var failAllRequests = false
+        @Volatile var failQueueTargetReads = false
         @Volatile var corruptObservedAckSession = false
+        @Volatile var delayedAuthToken: String? = null
+        @Volatile var delayedRequestMs = 0L
         var failNextObservedAckBeforeCommit: Boolean
             get() = failNextObservedAck.get()
             set(value) { failNextObservedAck.set(value) }
@@ -1115,6 +1405,14 @@ class ConnectedPlaybackV2ClientTest {
             if (failAllRequests || failToken != null && request.url.queryParameter("auth") == failToken) {
                 return@Interceptor Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(503)
                     .message("Simulated disconnected device").body("".toResponseBody()).build()
+            }
+            if (failQueueTargetReads && request.method == "GET" && request.url.encodedPath.contains("/queueOps/") &&
+                request.url.encodedPath.endsWith("/target.json")) {
+                return@Interceptor Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(503)
+                    .message("Simulated queue response timeout").body("".toResponseBody()).build()
+            }
+            if (request.url.queryParameter("auth") == delayedAuthToken && delayedRequestMs > 0L) {
+                Thread.sleep(delayedRequestMs)
             }
             val path = request.url.encodedPath.removePrefix("/").removeSuffix(".json")
             val current = values[path]

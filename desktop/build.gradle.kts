@@ -26,6 +26,7 @@ dependencies {
     implementation(project(":core"))
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
+    implementation(compose.materialIconsExtended)
     implementation(libs.coroutines.core)
     implementation(libs.okhttp)
     implementation(libs.newpipe.extractor)
@@ -37,6 +38,15 @@ dependencies {
 
 sourceSets.main { resources.srcDir(rootProject.file("licenses")) }
 
+tasks.register<JavaExec>("runStage") {
+    group = "application"
+    description = "Run the isolated Windows Stage preview with silent demo players."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.echo.desktop.StagePreviewKt")
+    jvmArgs("--add-modules=jdk.httpserver")
+}
+
 compose.desktop {
     application {
         mainClass = "dev.echo.desktop.MainKt"
@@ -45,7 +55,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi)
             packageName = "EchoMusic"
-            packageVersion = "0.2.4"
+            packageVersion = "0.2.5"
             windows {
                 iconFile.set(project.file("resources/echo.ico"))
                 installationPath = "EchoMusicDesktop"
@@ -137,8 +147,8 @@ tasks.register<JavaExec>("msiCheck") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("dev.echo.desktop.DesktopMsiCheckKt")
-    args(providers.gradleProperty("echoMsiPath").getOrElse(layout.buildDirectory.file("compose/binaries/main/msi/EchoMusic-0.2.4.msi").get().asFile.absolutePath),
-        providers.gradleProperty("echoMsiVersion").getOrElse("0.2.4"))
+    args(providers.gradleProperty("echoMsiPath").getOrElse(layout.buildDirectory.file("compose/binaries/main/msi/EchoMusic-0.2.5.msi").get().asFile.absolutePath),
+        providers.gradleProperty("echoMsiVersion").getOrElse("0.2.5"))
 }
 
 tasks.register<JavaExec>("publishedWindowsUpdateCheck") {

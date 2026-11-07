@@ -1,36 +1,67 @@
 package dev.echo.desktop
 
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogWindow
+import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberDialogState
 import androidx.compose.ui.window.rememberWindowState
 import dev.echo.core.Track
+import dev.echo.core.connected.EngineCapture
+import dev.echo.core.connected.QueueOccurrence
+import dev.echo.core.connected.portableTransferQueue
 import dev.echo.desktop.DesktopLibrary.Companion.localTrack
 import dev.echo.data.provider.YouTubeProvider
 import dev.echo.data.provider.YouTubePlaylistSearchResult
 import dev.echo.data.firebase.ConnectedDevice
 import dev.echo.data.firebase.ConnectedPlaybackAction
+import dev.echo.data.firebase.GroupQueueOperationV2Status
+import dev.echo.data.firebase.QueueOperationV2Status
 import dev.echo.core.connected.MAX_CONNECTED_GROUP_MEMBERS
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import java.awt.Dimension
 import java.io.File
 import javax.swing.JFileChooser
@@ -41,25 +72,72 @@ private val Canvas = Color(0xFF0C1016)
 private val Panel = Color(0xFF141B24)
 private val Muted = Color(0xFF98A6B8)
 private val Accent = Color(0xFF83E5CB)
+private val GroupAccent = Color(0xFFC7A6FF)
 
-fun main() = application {
-    val startup = remember { runCatching {
-        System.getProperty("echo.desktop.library")?.let { DesktopLibrary(java.nio.file.Path.of(it)) } ?: DesktopLibrary()
+private data class DesktopGroupSeekTarget(
+    val ref: dev.echo.core.connected.GroupRef,
+    val timelineSequence: Long,
+    val occurrenceId: String,
+)
+
+private data class DesktopSidecarPlayer(
+    val device: ConnectedDevice?,
+    val label: String,
+    val presentation: DesktopPlayerPresentationState,
+    val selected: Boolean,
+    val canSelect: Boolean,
+    val hasRecording: Boolean,
+)
+
+private fun playerDeviceName(label: String) = label.removePrefix("Echo · ").trim().ifBlank { "Player" }
+
+private fun playerTabName(label: String) = label.removePrefix("Echo · ").replace(" · Demo ", " ").trim().ifBlank { label }
+
+internal fun desktopDataDirectory(stagingMode: Boolean, localAppData: String?, userHome: String,
+    stagingOverride: String? = null): java.nio.file.Path {
+    val base = java.nio.file.Path.of(localAppData ?: userHome)
+    return if (stagingMode) java.nio.file.Path.of(stagingOverride ?: base.resolve("EchoMusicStage").toString())
+        else base.resolve("EchoMusic")
+}
+
+internal fun launchDesktop(stagingMode: Boolean) = application {
+    val dataDirectory = remember(stagingMode) {
+        desktopDataDirectory(stagingMode, System.getenv("LOCALAPPDATA"), System.getProperty("user.home"),
+            System.getProperty("echo.staging.data"))
+    }
+    val libraryFile = remember(stagingMode, dataDirectory) {
+        if (!stagingMode) System.getProperty("echo.desktop.library")?.let { java.nio.file.Path.of(it) }
+            ?: dataDirectory.resolve("library.json")
+        else dataDirectory.resolve("library.json")
+    }
+    val startup = remember(libraryFile) { runCatching {
+        DesktopLibrary(libraryFile)
     } }
     val store = startup.getOrNull()
     val provider = remember { YouTubeProvider() }
-    val offline = remember { DesktopOfflineRepository(provider) }
+    val offline = remember(dataDirectory) { DesktopOfflineRepository(provider, dataDirectory.resolve("offline-audio")) }
     val player = remember { store?.let { DesktopPlayback(provider, offline,
         recoveryFile = it.file.resolveSibling("playback-v2-recovery.json").toFile(),
         findLocalTrack = { key -> it.snapshot().tracks.firstOrNull { track -> safeEngineRecordingId(track) == key } }) { track, event, listened ->
         it.recordHistory(track, event, listened, track.durationMs)
     } } }
-    Window(onCloseRequest = { player?.close(); offline.close(); exitApplication() }, title = "Echo Music", icon = painterResource("echo-icon.png"),
-        state = rememberWindowState(placement = WindowPlacement.Maximized, width = 1280.dp, height = 760.dp)) {
+    var windowVisible by remember { mutableStateOf(true) }
+    val windowState = rememberWindowState(placement = WindowPlacement.Maximized, width = 1280.dp, height = 760.dp)
+    val showWindow = { windowState.isMinimized = false; windowVisible = true }
+    val quit = { player?.close(); offline.close(); exitApplication() }
+    Tray(icon = painterResource("echo-icon.png"), tooltip = "Echo Music", onAction = showWindow) {
+        Item("Open Echo Music", onClick = showWindow)
+        Separator()
+        Item("Quit Echo Music", onClick = quit)
+    }
+    Window(visible = windowVisible, onCloseRequest = { windowVisible = false },
+        title = if (stagingMode) "Echo Music · Staging" else "Echo Music", icon = painterResource("echo-icon.png"),
+        state = windowState) {
         LaunchedEffect(Unit) { window.minimumSize = Dimension(1060, 650) }
         MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Canvas,
             surface = Panel, onSurface = Color(0xFFEAF0F7))) {
-            if (store != null && player != null) DesktopApp(store, provider, player, offline)
+            if (store != null && player != null) DesktopApp(store, provider, player, offline, stagingMode,
+                dataDirectory.resolve("google-account.dpapi"))
             else Surface(Modifier.fillMaxSize(), color = Canvas) {
                 Column(Modifier.padding(60.dp), verticalArrangement = Arrangement.Center) {
                     Text("Your library needs attention", fontSize = 28.sp, fontWeight = FontWeight.Bold)
@@ -67,57 +145,70 @@ fun main() = application {
                         (startup.exceptionOrNull()?.message ?: "Unknown library error") +
                         "\n\nLibrary: " + (System.getProperty("echo.desktop.library") ?: "${System.getenv("LOCALAPPDATA")}/EchoMusic/library.json"),
                         modifier = Modifier.padding(vertical = 24.dp))
-                    Button(onClick = { exitApplication() }) { Text("Close") }
+                    Button(onClick = quit) { Text("Quit Echo Music") }
                 }
             }
         }
     }
 }
 
+fun main() = launchDesktop(stagingMode = false)
+
 @Composable
-private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player: DesktopPlayback, offline: DesktopOfflineRepository) {
+private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player: DesktopPlayback,
+    offline: DesktopOfflineRepository, stagingMode: Boolean, accountFile: java.nio.file.Path) {
     val scope = rememberCoroutineScope()
     val updater = remember { DesktopUpdater() }
     val update by updater.state.collectAsState()
     var showUpdates by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { updater.check(manual = false) }
+    LaunchedEffect(Unit) { if (!stagingMode) updater.check(manual = false) }
     LaunchedEffect(update.phase) {
         if (update.phase in setOf(DesktopUpdatePhase.AVAILABLE, DesktopUpdatePhase.READY)) showUpdates = true
     }
     DisposableEffect(updater) { onDispose { updater.close() } }
-    val google = remember { DesktopGoogleAccount() }
+    val google = remember(accountFile) { DesktopGoogleAccount(file = accountFile) }
     val account by google.state.collectAsState()
-    val connectedPlayback = remember { DesktopConnectedPlayback(store, google, player) }
+    val stageSimulator = remember(stagingMode) { if (stagingMode) StageConnectedPlayback() else null }
+    val connectedPlayback: DesktopConnectedPlaybackBackend = remember(stagingMode) {
+        stageSimulator ?: DesktopConnectedPlayback(store, google, player)
+    }
     val connectedState by connectedPlayback.state.collectAsState()
     val connectedV2 by connectedPlayback.v2State.collectAsState()
-    var connectedPlaybackEnabled by remember { mutableStateOf(connectedPlayback.enabled()) }
     var selectedRemoteId by remember { mutableStateOf<String?>(null) }
     var lastSelectedRemote by remember { mutableStateOf<ConnectedDevice?>(null) }
     var lastConnectedAccount by remember { mutableStateOf(account.email) }
+    LaunchedEffect(google, connectedPlayback, stagingMode) {
+        if (!stagingMode) google.state.map { it.email }.distinctUntilChanged().collectLatest { email ->
+            if (email == null || !dev.echo.data.firebase.EchoFirebaseProject.configured) connectedPlayback.stopGracefully()
+            else withContext(Dispatchers.IO) { connectedPlayback.run() }
+        }
+    }
     LaunchedEffect(account.email) {
         if (lastConnectedAccount != account.email) {
             lastConnectedAccount = account.email
-            connectedPlaybackEnabled = false
-            connectedPlayback.stopGracefully()
-            connectedPlayback.setEnabled(false)
+            selectedRemoteId = null
+            lastSelectedRemote = null
         }
     }
-    LaunchedEffect(account.email, connectedPlaybackEnabled, lastConnectedAccount) {
-        if (account.email == null || account.email != lastConnectedAccount || !connectedPlaybackEnabled ||
-            !dev.echo.data.firebase.EchoFirebaseProject.configured) {
-            connectedPlayback.stopGracefully()
-            return@LaunchedEffect
+    LaunchedEffect(connectedV2.group?.ref) {
+        if (connectedV2.group == null) {
+            selectedRemoteId = null
+            lastSelectedRemote = null
         }
-        withContext(Dispatchers.IO) { connectedPlayback.run() }
     }
-    LaunchedEffect(account.email, connectedPlaybackEnabled) {
-        if (account.email == null || !connectedPlaybackEnabled) {
+    LaunchedEffect(connectedV2.group?.members, selectedRemoteId) {
+        if (selectedRemoteId != null && connectedV2.group?.members?.any {
+                it.deviceId == selectedRemoteId && it.status != dev.echo.data.firebase.GroupMemberV2Status.LEFT
+            } == true) {
             selectedRemoteId = null
             lastSelectedRemote = null
         }
     }
     LaunchedEffect(selectedRemoteId, connectedState.devices) {
-        selectedRemoteId?.let { id -> connectedState.devices.firstOrNull { it.id == id }?.let { lastSelectedRemote = it } }
+        val selectedSession = lastSelectedRemote?.sessionId
+        selectedRemoteId?.let { id -> connectedState.devices.firstOrNull {
+            it.id == id && (selectedSession == null || it.sessionId == selectedSession)
+        }?.let { lastSelectedRemote = it } }
     }
     DisposableEffect(connectedPlayback) { onDispose { connectedPlayback.stop() } }
     val firebase = remember { DesktopFirebaseSync(store, google) }
@@ -125,7 +216,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     var accountJob by remember { mutableStateOf<Job?>(null) }
     var automaticSync by remember { mutableStateOf(false) }
     var confirmCloudSync by remember { mutableStateOf(false) }
-    val playback by player.state.collectAsState()
+    val playbackFlow = remember(player, stageSimulator) { stageSimulator?.localPlayback ?: player.state }
+    val playback by playbackFlow.collectAsState()
     val downloads by offline.state.collectAsState()
     var library by remember { mutableStateOf(store.snapshot()) }
     var page by remember { mutableStateOf("Home") }
@@ -142,6 +234,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     var playlistName by remember { mutableStateOf("") }
     var addTrack by remember { mutableStateOf<Track?>(null) }
     var showDevices by remember { mutableStateOf(false) }
+    var showStageAdmin by remember { mutableStateOf(false) }
+    var fullPlayerOpen by remember { mutableStateOf(false) }
     var smartJob by remember { mutableStateOf<Job?>(null) }
     var smartBusy by remember { mutableStateOf(false) }
     var recommendedIds by remember { mutableStateOf(emptySet<String>()) }
@@ -172,7 +266,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         } catch (_: Exception) { notice = "The saved sync preference could not be read. Automatic sync is off." }
     }
     LaunchedEffect(account.email, automaticSync) {
-        if (account.email != null && automaticSync) while (true) {
+        if (!stagingMode && account.email != null && automaticSync) while (true) {
             if (!google.state.value.busy) {
                 firebase.synchronize()
                 library = withContext(Dispatchers.IO) { store.snapshot() }
@@ -206,31 +300,148 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         }
     }
     LaunchedEffect(playback.occurrence, playback.playing, page) {
-        library = withContext(Dispatchers.IO) { store.snapshot() }
+        library = withContext(Dispatchers.IO) {
+            if (stagingMode && stageSimulator != null)
+                seedStageLibraryIfEmpty(store, stageSimulator.tracksForPresentation())
+            else store.snapshot()
+        }
     }
     val selectedPlaylist = library.playlists.find { "playlist:${it.id}" == page }
-    val trackMap = library.tracks.associateBy { it.id }
+    val trackMap = (library.tracks + stageSimulator?.tracksForPresentation().orEmpty()).associateBy { it.id }
     val selectedRemote = selectedRemotePlayer(selectedRemoteId, connectedState.devices, lastSelectedRemote)
     val remotePlayer = selectedRemote?.device
-    val remoteLive = selectedRemote != null && !selectedRemote.reconnecting && remotePlayer?.controlEnabled == true &&
-        remotePlayer?.player?.title?.isNullOrBlank() == false &&
-        connectedPlaybackEnabled && account.email != null && !connectedState.pending
-    val presentedTrack = if (selectedRemoteId != null) remotePlayer?.let { connectedPresentationTrack(it.player, trackMap) } else playback.current
-    val presentedTitle = if (selectedRemoteId != null) remotePlayer?.player?.title else playback.current?.title
-    val presentedArtist = if (selectedRemoteId != null) remotePlayer?.player?.artist else playback.current?.artist
-    val presentedPlaying = if (selectedRemoteId != null) remotePlayer?.player?.isPlaying == true else playback.playing
-    val presentedPosition = if (selectedRemoteId != null) remotePlayer?.player?.positionMs ?: 0L else playback.positionMs
-    val presentedDuration = if (selectedRemoteId != null) remotePlayer?.player?.durationMs ?: 0L else playback.durationMs
+    val selectedIsGroupMember = selectedRemoteId != null && connectedV2.group?.members?.any {
+        it.deviceId == selectedRemoteId && it.status != dev.echo.data.firebase.GroupMemberV2Status.LEFT
+    } == true
+    val remoteFocused = selectedRemoteId != null && !selectedIsGroupMember
+    val focusedGroup = connectedV2.group.takeIf { !remoteFocused }
+    val focusedGroupSeekTarget = focusedGroup?.timeline?.let { timeline ->
+        timeline.queue.entries.getOrNull(timeline.cursor)?.let { occurrence ->
+            DesktopGroupSeekTarget(focusedGroup.ref, timeline.sequence, occurrence.id)
+        }
+    }
     val ownDeviceId = connectedPlayback.deviceId
+    val currentFocusedRemoteId = rememberUpdatedState(selectedRemoteId.takeIf { remoteFocused })
+    val currentFocusedGroupRef = rememberUpdatedState(focusedGroup?.ref)
+    val remoteLive = remoteFocused && selectedRemote != null && !selectedRemote.reconnecting && remotePlayer?.controlEnabled == true &&
+        (stagingMode || account.email != null) && !connectedState.pending
+    val presentation = desktopPlayerPresentation(playback, selectedRemote.takeIf { remoteFocused }, focusedGroup, trackMap, ownDeviceId)
+    val presentedTrack = presentation.track
+    val presentedTitle = presentation.title
+    val presentedArtist = presentation.artist
+    val presentedPlaying = presentation.playing
+    val presentedPosition = presentation.positionMs
+    val presentedDuration = presentation.durationMs
     val otherPlayers = connectedState.devices.filter { it.id != ownDeviceId }.let { devices ->
         if (lastSelectedRemote != null && devices.none { it.id == lastSelectedRemote!!.id })
             devices + lastSelectedRemote!!.copy(controlEnabled = false) else devices
     }
-    val onlinePlayers = otherPlayers.filter { it.controlEnabled && it.id != selectedRemoteId }
-    val offlinePlayersBase = otherPlayers.filterNot { it.controlEnabled || it.id == selectedRemoteId }
+    val groupMemberIds = connectedV2.group?.members?.filter { it.status != dev.echo.data.firebase.GroupMemberV2Status.LEFT }
+        ?.map { it.deviceId }?.toSet().orEmpty()
+    val focusDevices = otherPlayers.filter { it.controlEnabled && it.id !in groupMemberIds }.sortedBy { it.label.lowercase() }
+    val onlinePlayers = focusDevices.filter { it.id != selectedRemoteId }
+    val deckDevices = buildList {
+        addAll(focusDevices)
+        selectedRemote?.device?.takeIf { remoteFocused && focusDevices.none { online ->
+            online.id == it.id && online.sessionId == it.sessionId
+        } }?.let(::add)
+    }
+    val sidecarPlayers = independentPlayerDeckOrder(
+        deckDevices, selectedRemoteId.takeIf { remoteFocused }, includeLocal = connectedV2.group == null,
+        selectedRemoteSessionId = selectedRemote?.device?.sessionId.takeIf { remoteFocused },
+    ).map { device ->
+        val selected = when {
+            focusedGroup != null -> false
+            remoteFocused -> device?.id == remotePlayer?.id && device?.sessionId == remotePlayer?.sessionId
+            else -> device == null
+        }
+        val reconnecting = device != null && selectedRemote?.let {
+            remoteFocused && it.device.id == device.id && it.device.sessionId == device.sessionId && it.reconnecting
+        } == true
+        DesktopSidecarPlayer(
+            device = device,
+            label = device?.let { playerDeviceName(it.label) } ?: "This laptop",
+            presentation = desktopPlayerPresentation(
+                playback, device?.let { SelectedRemotePlayer(it, reconnecting || !it.controlEnabled) },
+                null, trackMap, ownDeviceId,
+            ),
+            selected = selected,
+            canSelect = device == null || device.controlEnabled,
+            hasRecording = device?.player?.trackId != null || (device == null && playback.current != null),
+        )
+    }
+    val offlinePlayersBase = otherPlayers.filterNot { it.controlEnabled || it.id == selectedRemoteId || it.id in groupMemberIds }
     val offlinePlayers = offlinePlayersBase + listOfNotNull(selectedRemote?.takeIf { it.reconnecting }?.device?.takeIf {
         offlinePlayersBase.none { offline -> offline.id == it.id }
     })
+    val localStatus = when {
+        playback.current == null -> "Ready"
+        playback.ended -> "Ready"
+        playback.retrying -> "Retrying · ${playback.current?.title.orEmpty()}"
+        playback.playing -> "Playing · ${playback.current?.title.orEmpty()}"
+        else -> "Paused · ${playback.current?.title.orEmpty()}"
+    }
+    val connected = stagingMode || (account.email != null && dev.echo.data.firebase.EchoFirebaseProject.configured)
+    val canSyncGroup = connectedV2.group?.let { group ->
+        group.status == dev.echo.data.firebase.GroupV2Status.ACTIVE && !connectedState.pending &&
+            group.members.all { member -> member.status in setOf(
+                dev.echo.data.firebase.GroupMemberV2Status.PLAYING,
+                dev.echo.data.firebase.GroupMemberV2Status.PAUSED,
+            ) && (member.deviceId == ownDeviceId || connectedV2.devices.any { device ->
+                device.id == member.deviceId && device.sessionId == member.sessionId && "sync" in device.capabilities
+            }) }
+    } == true
+    val moveTo: (String) -> Unit = { id -> scope.launch {
+        runCatching { connectedPlayback.moveTo(id, true) }.onFailure { notice = it.message }
+    } }
+    val startTogether: (List<String>, Map<String, String>, Boolean) -> Unit = { ids, sessions, replace -> scope.launch {
+        runCatching { connectedPlayback.startTogether(ids, replacePlaying = replace, expectedTargetSessions = sessions) }
+            .onFailure { notice = it.message }
+    } }
+    val restorePrevious: () -> Unit = { scope.launch {
+        runCatching { connectedPlayback.restoreLatestDisplacedPaused() }.onFailure { notice = it.message }
+    } }
+    val requestGroupAction: (dev.echo.data.firebase.GroupActionV2) -> Unit = { action -> scope.launch {
+        runCatching { connectedPlayback.requestGroup(action) }.onFailure { notice = it.message }
+    } }
+    fun focusPlayer(device: ConnectedDevice?) {
+        if (device == null) {
+            selectedRemoteId = null
+            lastSelectedRemote = null
+            return
+        }
+        val fresh = connectedState.devices.firstOrNull {
+            it.id == device.id && it.sessionId == device.sessionId && it.controlEnabled
+        }
+        if (fresh == null) {
+            notice = "${device.label} changed connection. Choose it again from Devices."
+            return
+        }
+        selectedRemoteId = fresh.id
+        lastSelectedRemote = fresh
+    }
+    val playerPicker: @Composable (Boolean) -> Unit = { showCrossDeviceActions ->
+        DesktopPlayerPicker(
+            stagingMode = stagingMode,
+            showCrossDeviceActions = showCrossDeviceActions,
+            accessibleLabel = when {
+                focusedGroup != null -> "Choose a device or shared player; current focus is Play together"
+                remoteFocused -> "Choose a device; current focus is ${selectedRemote?.device?.label ?: "selected player"}"
+                else -> "Choose a device; current focus is This laptop"
+            },
+            remoteMode = remoteFocused, selectedRemoteId = selectedRemoteId.takeIf { remoteFocused },
+            connected = connected, connectedMessage = connectedState.message, devices = otherPlayers,
+            connectedV2 = connectedV2, ownDeviceId = ownDeviceId,
+            displacedMoveOperationId = playback.displacedMoveOperationId,
+            onMoveV2 = moveTo, onTogetherV2 = startTogether, onRestorePrevious = restorePrevious,
+            onGroupAction = requestGroupAction, onSyncGroup = { requestGroupAction(dev.echo.data.firebase.GroupActionV2.SYNC) },
+            canSyncGroup = canSyncGroup, online = onlinePlayers, offline = offlinePlayers,
+            localStatus = localStatus, commandPending = connectedState.pending,
+            selectedDevice = selectedRemote?.device,
+            onSelectLocal = { selectedRemoteId = null },
+            onSelectRemote = ::focusPlayer,
+        )
+    }
     fun sendRemoteCommand(target: ConnectedDevice, action: ConnectedPlaybackAction, position: Long = 0L) {
         val fresh = connectedState.devices.firstOrNull { it.id == target.id && it.controlEnabled }
         if (!remoteLive || selectedRemoteId != target.id || fresh == null || fresh.sessionId != target.sessionId ||
@@ -239,6 +450,25 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             try { connectedPlayback.sendCommand(fresh, action, position) }
             catch (_: Exception) { notice = "The remote command could not be sent. Check the device and account connection." }
         }
+    }
+    fun previousFocusedPlayback() {
+        if (focusedGroup != null) scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.PREVIOUS) } }
+        else if (stageSimulator != null) stageSimulator.localCommand(ConnectedPlaybackAction.PREVIOUS) else player.previous()
+    }
+    fun toggleFocusedPlayback() {
+        val group = focusedGroup
+        if (group != null) scope.launch { runCatching {
+            connectedPlayback.requestGroup(if (group.timeline?.playing == true) dev.echo.data.firebase.GroupActionV2.PAUSE else dev.echo.data.firebase.GroupActionV2.PLAY)
+        } } else if (stageSimulator != null) stageSimulator.localCommand(
+            if (playback.playing) ConnectedPlaybackAction.PAUSE else ConnectedPlaybackAction.PLAY) else player.toggle()
+    }
+    fun nextFocusedPlayback() {
+        if (focusedGroup != null) scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.NEXT) } }
+        else if (stageSimulator != null) stageSimulator.localCommand(ConnectedPlaybackAction.NEXT) else player.next()
+    }
+    fun seekFocusedPlayback(positionMs: Long) {
+        if (focusedGroup != null) scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.SEEK, positionMs) } }
+        else if (stageSimulator != null) stageSimulator.localCommand(ConnectedPlaybackAction.SEEK, positionMs) else player.seek(positionMs)
     }
     val tracks = when {
         page == "Search" -> results
@@ -252,9 +482,70 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         (playback.index + 1 until playback.queue.size).toList() +
             if (playback.repeatMode == DesktopRepeatMode.ALL) (0 until playback.index).toList() else emptyList()
     val currentRow = if (selectedRemoteId == null && tracks.map { it.id } == playback.queue.map { it.id }) playback.index else -1
+    fun dispatchPortableQueue(items: List<Track>, index: Int, selectedOnly: Boolean = false): Boolean {
+        val focusedRemoteId = currentFocusedRemoteId.value
+        val group = connectedV2.group.takeIf { focusedRemoteId == null }
+        if (group == null && focusedRemoteId == null) return false
+        val focusedRemoteSession = remotePlayer?.sessionId
+        val groupSequence = group?.timelineSequence
+        val selected = items.getOrNull(index) ?: run { notice = "Choose a song first"; return true }
+        val routedItems = if (selectedOnly) listOf(selected) else items
+        val routedIndex = if (selectedOnly) 0 else index
+        if (stageSimulator != null) {
+            try {
+                if (group != null) {
+                    require(connectedPlayback.v2State.value.group?.timelineSequence == groupSequence) {
+                        "The demo shared queue changed; select the song again."
+                    }
+                    stageSimulator.replaceDemoGroupQueue(group.ref, requireNotNull(groupSequence), routedItems, routedIndex)
+                } else {
+                    val session = focusedRemoteSession ?: error("Select a demo device again.")
+                    stageSimulator.playTracksOnDemo(focusedRemoteId!!, session, routedItems, routedIndex)
+                }
+            } catch (error: Exception) { notice = error.message ?: "The demo player could not start this queue." }
+            return true
+        }
+        val queue = try { portableTransferQueue(routedItems, routedIndex) }
+        catch (error: Exception) { notice = error.message ?: "This queue cannot be sent to another Echo player"; return true }
+        scope.launch {
+            try {
+                val latest = connectedPlayback.v2State.value
+                require(currentFocusedRemoteId.value == focusedRemoteId && currentFocusedGroupRef.value == group?.ref &&
+                    latest.group?.takeIf { focusedRemoteId == null }?.ref == group?.ref) {
+                    "Player focus changed while preparing this queue. Select the song again."
+                }
+                if (group != null) {
+                    require(latest.group?.timelineSequence == groupSequence) { "The shared queue changed; select the song again." }
+                    val result = connectedPlayback.replaceGroupQueue(group.ref, requireNotNull(groupSequence), queue)
+                    when (result.status) {
+                        GroupQueueOperationV2Status.COMPLETE -> Unit
+                        GroupQueueOperationV2Status.PARTIAL, GroupQueueOperationV2Status.UNKNOWN,
+                        GroupQueueOperationV2Status.COMMITTED -> notice = "The shared queue change needs reconciliation. Check every Play together device before continuing."
+                        else -> notice = result.reason ?: "The shared queue was not changed."
+                    }
+                } else {
+                    val target = latest.devices.firstOrNull { it.id == focusedRemoteId && it.enabled &&
+                        it.sessionId == focusedRemoteSession }
+                        ?: error("The selected device restarted or is reconnecting. Select it again.")
+                    val result = connectedPlayback.playQueueOn(target.id, target.sessionId, target.snapshot.fence, queue)
+                    when (result.status) {
+                        QueueOperationV2Status.COMPLETE -> Unit
+                        QueueOperationV2Status.UNKNOWN -> notice = "The device did not confirm playback. Check its current queue before retrying."
+                        else -> notice = result.reason ?: "The selected device could not start this queue."
+                    }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { notice = error.message ?: "The focused player could not start this queue" }
+        }
+        return true
+    }
     fun play(items: List<Track>, index: Int, selectedOnly: Boolean = false) {
-        selectedRemoteId = null
         val track = items.getOrNull(index) ?: return
+        if (dispatchPortableQueue(items, index, selectedOnly)) return
+        if (stageSimulator != null) {
+            stageSimulator.playLocal(items, index)
+            return
+        }
         if (!desktopPlayable(track)) {
             query = "${track.artist} ${track.title}".take(200)
             notice = "This is imported song metadata. Search for its recording, or open the matching audio file on this laptop."
@@ -267,13 +558,24 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             if (selectedOnly) player.searchSelected(track) else player.play(playable, selected)
         }
     }
+    fun changeFocusedQueue(items: List<Track>, playNext: Boolean = false) {
+        if (currentFocusedRemoteId.value == null && focusedGroup == null) {
+            if (stageSimulator != null) stageSimulator.appendLocal(items, next = playNext)
+            else player.append(items.filter(::desktopPlayable), next = playNext)
+            return
+        }
+        notice = "Queue append and Play next cannot preserve playback on a connected player yet. Use Play to replace its queue."
+    }
     fun smartShuffle(items: List<Track>) {
         if (smartJob?.isActive == true) return
-        selectedRemoteId = null
-        val captured = player.state.value
+        val focusedRemoteId = currentFocusedRemoteId.value
+        val focusedRemoteSession = lastSelectedRemote?.sessionId
+        val focusedGroup = currentFocusedGroupRef.value
+        val routed = focusedRemoteId != null || focusedGroup != null
+        val captured = playback
         val original = items.filter(::desktopPlayable)
         val playlist = selectedPlaylist
-        val retained = captured.current.takeIf { captured.canRetainCurrent }
+        val retained = captured.current.takeIf { !routed && captured.canRetainCurrent }
         smartJob = scope.launch {
             smartBusy = true
             try {
@@ -283,9 +585,20 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                 require(playlist == null || latest.playlists.find { it.id == playlist.id }?.trackIds == playlist.trackIds) {
                     "The playlist changed while finding related songs. Try Smart shuffle again."
                 }
-                val keep = retained?.id?.takeIf { it == mixed.anchor.id }
-                require(player.applySmartQueue(mixed.queue, captured.occurrence, keep, captured.queueRevision)) {
-                    "Playback or the queue changed while finding related songs. Try Smart shuffle again."
+                if (routed) {
+                    require(currentFocusedRemoteId.value == focusedRemoteId && currentFocusedGroupRef.value == focusedGroup &&
+                        lastSelectedRemote?.sessionId == focusedRemoteSession) {
+                        "Player focus changed while finding related songs. Try Smart shuffle again."
+                    }
+                    dispatchPortableQueue(mixed.queue, 0, selectedOnly = false)
+                } else {
+                    val keep = retained?.id?.takeIf { it == mixed.anchor.id }
+                    val applied = if (stageSimulator != null) {
+                        stageSimulator.playLocal(mixed.queue, 0); true
+                    } else player.applySmartQueue(mixed.queue, captured.occurrence, keep, captured.queueRevision)
+                    require(applied) {
+                        "Playback or the queue changed while finding related songs. Try Smart shuffle again."
+                    }
                 }
                 recommendedIds = mixed.queue.filter { candidate -> original.none { it.id == candidate.id } }.map { it.id }.toSet()
             } catch (e: CancellationException) { throw e }
@@ -294,6 +607,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         }
     }
     Surface(Modifier.fillMaxSize(), color = Canvas) {
+        Box(Modifier.fillMaxSize()) {
         Column {
             Row(Modifier.weight(1f)) {
                 Column(Modifier.width(220.dp).fillMaxHeight().background(Color(0xFF10151D)).verticalScroll(rememberScrollState()).padding(22.dp)) {
@@ -316,8 +630,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                     }
                     Spacer(Modifier.height(20.dp))
                     HorizontalDivider(color = Color(0xFF28303C))
-                    TextButton(onClick = { showDevices = true }) { Text("Devices & account", color = Muted) }
-                    TextButton(onClick = { showUpdates = true }) { Text("App updates", color = Muted) }
+                    if (!stagingMode) TextButton(onClick = { showDevices = true }) { Text("Devices & account", color = Muted) }
+                    if (!stagingMode) TextButton(onClick = { showUpdates = true }) { Text("App updates", color = Muted) }
                     TextButton(onClick = { showImport = true }) { Text("Import playlist", color = Muted) }
                     TextButton(onClick = { scope.launch {
                         val file = chooseFiles(true).firstOrNull() ?: return@launch
@@ -360,7 +674,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                         DesktopDownloadsPanel(offline, onPlay = { track -> play(listOf(track), 0) }, modifier = Modifier.weight(1f))
                     } else if (page == "Home") {
                         DesktopDiscoverScreen(provider, library, { items, index -> play(items, index) },
-                            { addTrack = it }, { notice = it }, Modifier.weight(1f), onlineAllowed = !downloads.offlineOnly,
+                        { addTrack = it }, { notice = it }, Modifier.weight(1f), onlineAllowed = !stagingMode && !downloads.offlineOnly,
                             onSaveMix = { items -> disk {
                                 store.importParsedPlaylists(DesktopPlaylistImport(listOf(DesktopImportPlaylist("Discovery mix", items))))
                             } })
@@ -404,8 +718,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                         Button(onClick = { play(tracks, 0) }) { Text("Play all") }
                         OutlinedButton(onClick = { play(tracks.shuffled(), 0) }) { Text("Shuffle") }
                         OutlinedButton(onClick = { smartShuffle(tracks) }, enabled = !smartBusy) { Text("Smart shuffle") }
-                        TextButton(onClick = { selectedRemoteId = null; player.append(tracks.filter(::desktopPlayable)) }) { Text("Add to queue") }
-                        TextButton(onClick = { selectedRemoteId = null; player.append(tracks.filter(::desktopPlayable).shuffled()) }) { Text("Queue shuffled") }
+                        TextButton(onClick = { changeFocusedQueue(tracks) }) { Text("Add to queue") }
+                        TextButton(onClick = { changeFocusedQueue(tracks.shuffled()) }) { Text("Queue shuffled") }
                     }
                     if (smartBusy) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -460,8 +774,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                             val event = if (page == "History") library.history.asReversed().getOrNull(index) else null
                             TrackRow(track, index, index == currentRow, track.id in library.favorites,
                                 onPlay = { play(tracks, index, page == "Search") }, onLike = { disk { store.toggleFavorite(track) } },
-                                onAdd = { addTrack = track }, onQueue = { selectedRemoteId = null; player.append(listOf(track).filter(::desktopPlayable)) },
-                                onNext = { selectedRemoteId = null; player.append(listOf(track).filter(::desktopPlayable), next = true) },
+                                onAdd = { addTrack = track }, onQueue = { changeFocusedQueue(listOf(track)) },
+                                onNext = { changeFocusedQueue(listOf(track), playNext = true) },
                                 onDownload = track.takeIf { it.provider == "youtube" }?.let { {
                                     try { offline.download(it) } catch (e: Exception) { notice = e.message ?: "Download could not start" }
                                 } },
@@ -503,50 +817,178 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             }
             if (selectedRemoteId == null && playback.error != null) Text(playback.error.orEmpty(), color = Color(0xFFFFB7AC), fontSize = 12.sp,
                 modifier = Modifier.fillMaxWidth().background(Color(0xFF38252A)).padding(12.dp))
-            HorizontalDivider(color = Color(0xFF28303C))
             DesktopPlayerBar(presentedTrack, presentedTitle, presentedArtist, presentedPlaying, presentedPosition, presentedDuration,
-                remoteMode = selectedRemoteId != null, remoteDevice = remotePlayer,
-                remoteEnabled = remoteLive, commandPending = connectedState.pending,
+                remoteMode = remoteFocused,
+                remoteDevice = remotePlayer.takeIf { remoteFocused },
+                focusedDeviceLabel = if (focusedGroup != null) "Play together" else remotePlayer?.label?.let(::playerDeviceName) ?: "This laptop",
+                onOpenFullPlayer = { fullPlayerOpen = true },
+                remoteEnabled = remoteLive,
+                groupFocused = focusedGroup != null,
                 localAvailable = playback.current != null, localLoading = playback.loading,
                 localVolume = playback.volume, localRepeat = playback.repeatMode.name.lowercase(), localSleep = playback.sleepRemainingMs,
-                onLocalPrevious = { selectedRemoteId = null; if (connectedV2.group != null) scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.PREVIOUS) } } else player.previous() },
-                onLocalToggle = { selectedRemoteId = null; if (connectedV2.group != null) scope.launch { runCatching { connectedPlayback.requestGroup(if (connectedV2.group?.timeline?.playing == true) dev.echo.data.firebase.GroupActionV2.PAUSE else dev.echo.data.firebase.GroupActionV2.PLAY) } } else player.toggle() },
-                onLocalNext = { selectedRemoteId = null; if (connectedV2.group != null) scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.NEXT) } } else player.next() },
-                onLocalSeek = { if (connectedV2.group != null) scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.SEEK, it) } } else player.seek(it) }, onLocalVolume = { player.setVolume(it) },
-                onLocalRepeat = { if (connectedV2.group == null) player.setRepeatMode(DesktopRepeatMode.entries[(playback.repeatMode.ordinal + 1) % DesktopRepeatMode.entries.size]) },
-                onLocalShuffle = { if (connectedV2.group == null) { selectedRemoteId = null; player.shuffleUpcoming() } },
-                onLocalSleep = { if (connectedV2.group == null) player.setSleepTimer(it) }, onRemoteCommand = ::sendRemoteCommand,
-                connected = connectedPlaybackEnabled && account.email != null,
-                connectedMessage = connectedState.message, otherPlayers = otherPlayers,
-                connectedV2 = connectedV2,
-                ownDeviceId = ownDeviceId,
-                onMoveV2 = { id -> scope.launch { runCatching { connectedPlayback.moveTo(id, true) }.onFailure { notice = it.message } } },
-                onTogetherV2 = { ids, sessions, replace -> scope.launch { runCatching {
-                    connectedPlayback.startTogether(ids, replacePlaying = replace, expectedTargetSessions = sessions)
+                onLocalPrevious = ::previousFocusedPlayback,
+                onLocalToggle = ::toggleFocusedPlayback,
+                onLocalNext = ::nextFocusedPlayback,
+                onLocalSeek = ::seekFocusedPlayback,
+                groupSeekTarget = focusedGroupSeekTarget,
+                onGroupSeek = { target, position -> scope.launch { runCatching {
+                    connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.SEEK, position,
+                        target.ref, target.timelineSequence, target.occurrenceId)
                 }.onFailure { notice = it.message } } },
-                onRestorePrevious = { scope.launch { runCatching { connectedPlayback.restoreLatestDisplacedPaused() }.onFailure { notice = it.message } } },
-                onGroupAction = { action -> scope.launch { runCatching { connectedPlayback.requestGroup(action) }.onFailure { notice = it.message } } },
-                onlinePlayers = onlinePlayers, offlinePlayers = offlinePlayers,
-                localStatus = when {
-                    playback.current == null -> "Ready"
-                    playback.ended -> "Ready"
-                    playback.playing -> "Playing · ${playback.current?.title.orEmpty()}"
-                    else -> "Paused · ${playback.current?.title.orEmpty()}"
-                },
-                selectedRemoteId = selectedRemoteId, reconnecting = selectedRemote?.reconnecting == true,
-                onSelectLocal = { selectedRemoteId = null }, onSelectRemote = { device ->
-                    selectedRemoteId = device.id; lastSelectedRemote = device
+                onLocalVolume = { if (stageSimulator != null) stageSimulator.setLocalVolume(it) else player.setVolume(it) },
+                onLocalRepeat = { if (connectedV2.group == null) if (stageSimulator != null) stageSimulator.cycleLocalRepeat()
+                    else player.setRepeatMode(DesktopRepeatMode.entries[(playback.repeatMode.ordinal + 1) % DesktopRepeatMode.entries.size]) },
+                onLocalShuffle = { if (connectedV2.group == null) { selectedRemoteId = null
+                    if (stageSimulator != null) stageSimulator.shuffleLocalUpcoming() else player.shuffleUpcoming() } },
+                onLocalSleep = { if (connectedV2.group == null) if (stageSimulator != null) stageSimulator.setLocalSleepTimer(it)
+                    else player.setSleepTimer(it) }, onRemoteCommand = ::sendRemoteCommand,
+                onlinePlayers = onlinePlayers, selectedRemoteId = selectedRemoteId,
+                sidecarPlayers = sidecarPlayers,
+                onSidecarFocus = ::focusPlayer,
+                onFocusStep = { direction ->
+                    if (focusedGroup == null && focusDevices.isNotEmpty()) {
+                        val next = nextIndependentPlayer(focusDevices, selectedRemoteId, direction,
+                            includeLocal = connectedV2.group == null,
+                            selectedRemoteSessionId = selectedRemote?.device?.sessionId.takeIf { remoteFocused })
+                        if (next != null || connectedV2.group == null) focusPlayer(next)
+                    }
                 },
                 upcomingIndexes = upcomingIndexes, playback = playback, recommendedIds = recommendedIds,
-                onClearQueue = { selectedRemoteId = null; player.clearUpcoming() },
-                onJump = { index, revision -> selectedRemoteId = null; scope.launch { player.jumpTo(index, revision) } },
-                onMove = { from, to, occurrence, revision -> selectedRemoteId = null; scope.launch { player.moveUpcoming(from, to, occurrence, revision) } },
-                onRemove = { index, occurrence, revision -> selectedRemoteId = null; scope.launch { player.removeUpcoming(index, occurrence, revision) } })
+                onClearQueue = { selectedRemoteId = null; if (stageSimulator != null) stageSimulator.clearLocalUpcoming() else player.clearUpcoming() },
+                onJump = { index, revision -> selectedRemoteId = null
+                    if (stageSimulator != null) stageSimulator.jumpLocal(index, revision) else scope.launch { player.jumpTo(index, revision) } },
+                onMove = { from, to, occurrence, revision -> selectedRemoteId = null
+                    if (stageSimulator != null) stageSimulator.moveLocal(from, to, occurrence, revision)
+                    else scope.launch { player.moveUpcoming(from, to, occurrence, revision) } },
+                onRemove = { index, occurrence, revision -> selectedRemoteId = null
+                    if (stageSimulator != null) stageSimulator.removeLocal(index, occurrence, revision)
+                    else scope.launch { player.removeUpcoming(index, occurrence, revision) } })
         }
+        if (stagingMode) FloatingActionButton(
+            onClick = { showStageAdmin = true },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 34.dp, bottom = 136.dp)
+                .semantics { contentDescription = "Stage admin: manage demo devices" },
+            containerColor = Accent, contentColor = Canvas,
+        ) {
+            Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Devices, null); Spacer(Modifier.width(7.dp)); Text("Admin")
+            }
+        }
+        }
+    }
+    if (showStageAdmin && stageSimulator != null) AlertDialog(
+        onDismissRequest = { showStageAdmin = false },
+        title = { Text("Stage Admin · Demo devices") },
+        text = {
+            Column(Modifier.widthIn(min = 500.dp, max = 680.dp).heightIn(max = 500.dp)
+                .verticalScroll(rememberScrollState())) {
+                Text("Add simulated phones and laptops to try device focus, queues, Move, and Play together without Gmail or Firebase. Playback is silent and stays inside this stage window.",
+                    color = Muted, modifier = Modifier.padding(bottom = 12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { stageSimulator.addDemoDevice("Android phone") }) { Text("+ Add demo phone") }
+                    OutlinedButton(onClick = { stageSimulator.addDemoDevice("Windows laptop") }) { Text("+ Add demo laptop") }
+                }
+                if (connectedState.devices.isEmpty()) Text("No demo devices yet.", color = Muted,
+                    modifier = Modifier.padding(top = 18.dp))
+                connectedState.devices.forEach { device ->
+                    val isGroupMember = connectedV2.group?.members?.any { it.deviceId == device.id && it.status !=
+                        dev.echo.data.firebase.GroupMemberV2Status.LEFT } == true
+                    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text(device.label, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${if (device.controlEnabled) "Online" else "Offline"} · ${device.player.title ?: "Ready"}" +
+                                    if (isGroupMember) " · Play together member" else "", color = Muted, fontSize = 12.sp)
+                            }
+                            TextButton(onClick = { stageSimulator.setDemoDeviceOnline(device.id, !device.controlEnabled) },
+                                enabled = !isGroupMember) { Text(if (device.controlEnabled) "Disconnect" else "Reconnect") }
+                            TextButton(onClick = {
+                                if (selectedRemoteId == device.id) { selectedRemoteId = null; lastSelectedRemote = null }
+                                stageSimulator.removeDemoDevice(device.id)
+                            }, enabled = !isGroupMember) { Text("Remove") }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Simulated network", color = Muted, fontSize = 11.sp)
+                            DemoLatencyPreset.entries.forEach { preset ->
+                                TextButton(enabled = device.controlEnabled,
+                                    onClick = { stageSimulator.setDemoDeviceLatency(device.id, preset) }) {
+                                    Text("${if (stageSimulator.demoDeviceLatency(device.id) == preset) "✓ " else ""}${preset.label}", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+                Text("Tip: select a demo player from the Devices icon. The Stage host has its own seeded queue for Move and group tests.",
+                    color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 16.dp))
+            }
+        },
+        confirmButton = { TextButton(onClick = { showStageAdmin = false }) { Text("Done") } },
+    )
+    if (fullPlayerOpen) DialogWindow(
+        onCloseRequest = { fullPlayerOpen = false },
+        title = "Echo Music Player",
+        state = rememberDialogState(size = DpSize(1040.dp, 680.dp)),
+        resizable = true,
+    ) {
+        DesktopFullPlayer(
+            track = presentedTrack, title = presentedTitle, artist = presentedArtist,
+            playing = presentedPlaying, positionMs = presentedPosition, durationMs = presentedDuration,
+            remoteMode = remoteFocused,
+            remoteDevice = remotePlayer.takeIf { remoteFocused }, remoteEnabled = remoteLive,
+            commandPending = connectedState.pending, localAvailable = playback.current != null,
+            localLoading = playback.loading, group = focusedGroup != null,
+            groupQueueEntries = connectedV2.group?.timeline?.queue?.entries.orEmpty(),
+            groupQueueCursor = connectedV2.group?.timeline?.cursor ?: 0,
+            onReadRemoteQueue = { device ->
+                val target = connectedV2.devices.firstOrNull {
+                    it.id == device.id && it.sessionId == device.sessionId && it.enabled
+                } ?: error("${device.label} is reconnecting; select it again")
+                connectedPlayback.readRemoteQueue(target.id, target.sessionId, target.snapshot.fence)
+            },
+            liked = presentedTrack?.id in library.favorites,
+            onToggleFavorite = { presentedTrack?.let { track -> disk { store.toggleFavorite(track) } } },
+            onAddToPlaylist = { presentedTrack?.let { addTrack = it } },
+            onClose = { fullPlayerOpen = false },
+            onPrevious = ::previousFocusedPlayback,
+            onToggle = ::toggleFocusedPlayback,
+            onNext = ::nextFocusedPlayback,
+            onSeek = ::seekFocusedPlayback,
+            groupSeekTarget = focusedGroupSeekTarget,
+            onGroupSeek = { target, position -> scope.launch { runCatching {
+                connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.SEEK, position,
+                    target.ref, target.timelineSequence, target.occurrenceId)
+            }.onFailure { notice = it.message } } },
+            onRemoteCommand = ::sendRemoteCommand,
+            localVolume = playback.volume, localRepeat = playback.repeatMode.name.lowercase(), localSleep = playback.sleepRemainingMs,
+            onLocalVolume = { if (stageSimulator != null) stageSimulator.setLocalVolume(it) else player.setVolume(it) },
+            onLocalRepeat = { if (focusedGroup == null) if (stageSimulator != null) stageSimulator.cycleLocalRepeat()
+                else player.setRepeatMode(DesktopRepeatMode.entries[(playback.repeatMode.ordinal + 1) % DesktopRepeatMode.entries.size]) },
+            onLocalShuffle = { if (focusedGroup == null) { selectedRemoteId = null
+                if (stageSimulator != null) stageSimulator.shuffleLocalUpcoming() else player.shuffleUpcoming() } },
+            onLocalSleep = { if (focusedGroup == null) if (stageSimulator != null) stageSimulator.setLocalSleepTimer(it)
+                else player.setSleepTimer(it) },
+            playerPicker = playerPicker,
+            groupMembers = connectedV2.group?.members.orEmpty().map { member ->
+                val name = if (member.deviceId == ownDeviceId) "This laptop" else
+                    connectedV2.devices.firstOrNull { it.id == member.deviceId }?.label ?: member.deviceId.takeLast(8)
+                "$name · ${member.status.name.lowercase().replaceFirstChar(Char::uppercase)}"
+            },
+            queueControls = {
+                if (selectedRemoteId == null && focusedGroup == null && playback.current != null)
+                    QueuePicker(playback, upcomingIndexes, recommendedIds,
+                        { if (stageSimulator != null) stageSimulator.clearLocalUpcoming() else player.clearUpcoming() },
+                        { index, revision -> if (stageSimulator != null) stageSimulator.jumpLocal(index, revision)
+                            else scope.launch { player.jumpTo(index, revision) } },
+                        { from, to, occurrence, revision -> if (stageSimulator != null) stageSimulator.moveLocal(from, to, occurrence, revision)
+                            else scope.launch { player.moveUpcoming(from, to, occurrence, revision) } },
+                        { index, occurrence, revision -> if (stageSimulator != null) stageSimulator.removeLocal(index, occurrence, revision)
+                            else scope.launch { player.removeUpcoming(index, occurrence, revision) } })
+            },
+        )
     }
     if (showImport) DesktopImportDialog(store, onChanged = { disk { } }, onError = { notice = it },
         onDismiss = { showImport = false; importInitialLink = null }, initialLink = importInitialLink)
-    if (showUpdates) DesktopUpdatesDialog(updater, scope, onDismiss = { showUpdates = false })
+    if (showUpdates && !stagingMode) DesktopUpdatesDialog(updater, scope, onDismiss = { showUpdates = false })
     notice?.let { message -> AlertDialog(onDismissRequest = { notice = null }, title = { Text("Echo") },
         text = { Text(message) }, confirmButton = { TextButton(onClick = { notice = null }) { Text("OK") } }) }
     if (newPlaylist) AlertDialog(onDismissRequest = { newPlaylist = false }, title = { Text("New playlist") },
@@ -575,7 +1017,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                 disk { store.addToPlaylist(playlist.id, track) }; addTrack = null
             }) { Text(playlist.name) } }
         } }, confirmButton = { TextButton(onClick = { addTrack = null }) { Text("Done") } }) }
-    if (showDevices) AlertDialog(onDismissRequest = { showDevices = false }, title = { Text("Devices & account") },
+    if (showDevices && !stagingMode) AlertDialog(onDismissRequest = { showDevices = false }, title = { Text("Devices & account") },
         text = { Column(Modifier.widthIn(min = 400.dp, max = 560.dp).heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
             Text(account.email ?: "Listen locally, or connect your Google account.", fontWeight = FontWeight.SemiBold)
             account.message?.let { Text(it, color = Muted, modifier = Modifier.padding(top = 12.dp)) }
@@ -601,7 +1043,10 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                             if (enabled) confirmCloudSync = true else accountAction { firebase.setAutomatic(false); automaticSync = false }
                         })
                     }
-                    TextButton(onClick = { accountAction { google.signOut() } }) { Text("Sign out") }
+                    TextButton(onClick = { accountAction {
+                        connectedPlayback.stopGracefully()
+                        google.signOut()
+                    } }) { Text("Sign out") }
                 }
                 TextButton(onClick = { accountAction {
                     chooseFiles(true, "Choose Echo Desktop OAuth client JSON").firstOrNull()?.let { google.importClientJson(it) }
@@ -621,22 +1066,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             }
             Spacer(Modifier.height(16.dp))
             Text("Connected playback", fontWeight = FontWeight.SemiBold)
-            Text("When enabled, this open Echo desktop app shares the current song and accepts remote controls. Audio stays on its original device; this is not synchronized playback.",
+            Text("While Echo is running, including in the system tray, this laptop shares its player status and accepts remote controls. Play together is available from the player when you want one shared queue.",
                 color = Muted, modifier = Modifier.padding(top = 8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                Text("Allow remote controls on this laptop", modifier = Modifier.weight(1f))
-                Switch(checked = connectedPlaybackEnabled, enabled = account.email != null &&
-                    dev.echo.data.firebase.EchoFirebaseProject.configured, onCheckedChange = { enabled ->
-                    if (enabled) {
-                        connectedPlayback.setEnabled(true)
-                        connectedPlaybackEnabled = true
-                    } else scope.launch {
-                        connectedPlayback.stopGracefully()
-                        connectedPlayback.setEnabled(false)
-                        connectedPlaybackEnabled = false
-                    }
-                })
-            }
             if (account.email == null) Text("Sign in first. Connected playback uses the signed-in Firebase account.", color = Muted, fontSize = 12.sp)
             Text("Choose connected players from the bottom player. Remote controls only work while a player is reachable.",
                 color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
@@ -656,93 +1087,357 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
 }
 
 @Composable
-private fun DesktopPlayerBar(
+private fun DesktopFullPlayer(
     track: Track?, title: String?, artist: String?, playing: Boolean, positionMs: Long, durationMs: Long,
     remoteMode: Boolean, remoteDevice: ConnectedDevice?, remoteEnabled: Boolean, commandPending: Boolean,
+    localAvailable: Boolean, localLoading: Boolean, group: Boolean,
+    groupQueueEntries: List<QueueOccurrence>, groupQueueCursor: Int,
+    onReadRemoteQueue: suspend (ConnectedDevice) -> EngineCapture,
+    liked: Boolean, onToggleFavorite: () -> Unit, onAddToPlaylist: () -> Unit, onClose: () -> Unit,
+    onPrevious: () -> Unit, onToggle: () -> Unit, onNext: () -> Unit, onSeek: (Long) -> Unit,
+    groupSeekTarget: DesktopGroupSeekTarget?, onGroupSeek: (DesktopGroupSeekTarget, Long) -> Unit,
+    onRemoteCommand: (ConnectedDevice, ConnectedPlaybackAction, Long) -> Unit,
+    localVolume: Float, localRepeat: String, localSleep: Long?,
+    onLocalVolume: (Float) -> Unit, onLocalRepeat: () -> Unit, onLocalShuffle: () -> Unit, onLocalSleep: (Int?) -> Unit,
+    playerPicker: @Composable (Boolean) -> Unit,
+    groupMembers: List<String>, queueControls: @Composable () -> Unit,
+) {
+    var queueOpen by remember { mutableStateOf(false) }
+    var remoteQueue by remember(remoteDevice?.id, remoteDevice?.sessionId) { mutableStateOf<EngineCapture?>(null) }
+    var remoteQueueLoading by remember(remoteDevice?.id, remoteDevice?.sessionId) { mutableStateOf(false) }
+    var remoteQueueError by remember(remoteDevice?.id, remoteDevice?.sessionId) { mutableStateOf<String?>(null) }
+    val focusAccent = if (group) GroupAccent else Accent
+    LaunchedEffect(queueOpen, remoteMode, remoteDevice?.id, remoteDevice?.sessionId) {
+        if (queueOpen && remoteMode && remoteDevice != null) {
+            remoteQueue = null
+            remoteQueueError = null
+            remoteQueueLoading = true
+            try { remoteQueue = onReadRemoteQueue(remoteDevice) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { remoteQueueError = failure.message ?: "Could not read the device queue" }
+            finally { remoteQueueLoading = false }
+        }
+    }
+    Surface(
+        Modifier.width(1040.dp).height(680.dp),
+        color = if (group) Color(0xFF201A2B) else Canvas,
+        shape = RoundedCornerShape(28.dp),
+        border = BorderStroke(1.dp, if (group) GroupAccent.copy(alpha = .6f) else Accent.copy(alpha = .25f)),
+    ) {
+        Column(Modifier.fillMaxSize().padding(30.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(if (group) "PLAYING TOGETHER" else "NOW PLAYING", color = focusAccent,
+                        fontSize = 11.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
+                    Text(if (group) "${groupMembers.size} devices · shared player" else
+                        if (remoteMode) "Playing on ${remoteDevice?.label ?: "selected device"}" else "This laptop",
+                        color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                }
+                IconButton(onClick = onClose) { Text("×", color = Muted, fontSize = 26.sp) }
+            }
+            Spacer(Modifier.height(24.dp))
+            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(38.dp)) {
+                Cover(track, Modifier.size(360.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (playing) Text("▮▮▮", color = focusAccent, fontSize = 13.sp)
+                        Text(if (playing) "PLAYING" else "PAUSED", color = focusAccent, fontSize = 11.sp, letterSpacing = 1.8.sp)
+                    }
+                    Text(title ?: "Choose a song", fontSize = 30.sp, fontWeight = FontWeight.Bold,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 12.dp))
+                    Text(artist.orEmpty(), color = Muted, fontSize = 16.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 18.dp)) {
+                        OutlinedButton(enabled = track != null, onClick = onToggleFavorite) { Text(if (liked) "♥ Liked" else "♡ Like") }
+                        OutlinedButton(enabled = track != null, onClick = onAddToPlaylist) { Text("＋ Playlist") }
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    PlayerTransport(
+                        Modifier.fillMaxWidth(), remoteMode, remoteDevice, remoteEnabled, playing,
+                        positionMs, durationMs, localAvailable, localLoading,
+                        onPrevious, onToggle, onNext, onSeek, groupSeekTarget, onGroupSeek, onRemoteCommand,
+                    )
+                    Row(Modifier.fillMaxWidth().padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        if (!remoteMode && !group) DesktopLocalPlayerActions(
+                            localAvailable, localVolume, localRepeat, localSleep,
+                            onLocalVolume, onLocalRepeat, onLocalShuffle, onLocalSleep,
+                        )
+                        playerPicker(true)
+                        when {
+                            remoteMode -> IconButton(enabled = remoteDevice != null && remoteEnabled && !commandPending,
+                                onClick = { queueOpen = true }, modifier = Modifier.semantics {
+                                    contentDescription = "Open queue on ${remoteDevice?.label ?: "selected device"}"
+                                }) { Icon(Icons.Default.QueueMusic, null) }
+                            group -> IconButton(enabled = groupQueueEntries.isNotEmpty(),
+                                onClick = { queueOpen = true }, modifier = Modifier.semantics {
+                                    contentDescription = "Open shared queue · ${groupQueueEntries.size} songs"
+                                }) { Icon(Icons.Default.QueueMusic, null) }
+                            else -> queueControls()
+                        }
+                    }
+                    if (commandPending) Text("Remote command pending confirmation…", color = Muted,
+                        fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
+                }
+            }
+        }
+    }
+    if (queueOpen) Dialog(onCloseRequest = { queueOpen = false }) {
+        Surface(Modifier.width(460.dp).heightIn(min = 240.dp, max = 560.dp),
+            color = Panel, shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(1.dp, focusAccent.copy(alpha = .5f))) {
+            Column(Modifier.fillMaxSize().padding(22.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(if (group) "Shared queue" else "Queue on ${remoteDevice?.label ?: "device"}",
+                            fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (group) "Play together · ${groupQueueEntries.size} songs"
+                            else if (remoteQueueLoading) "Loading device snapshot…"
+                            else "Read-only device snapshot", color = focusAccent, fontSize = 12.sp)
+                    }
+                    IconButton(onClick = { queueOpen = false }) { Text("×", color = Muted, fontSize = 22.sp) }
+                }
+                Spacer(Modifier.height(12.dp))
+                when {
+                    !group && remoteQueueLoading -> CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
+                    !group && remoteQueueError != null -> Text(remoteQueueError.orEmpty(), color = Color(0xFFFFB7AC))
+                    group && groupQueueEntries.isEmpty() -> Text("The shared queue is empty.", color = Muted)
+                    !group && remoteQueue?.queue?.entries.isNullOrEmpty() -> Text("This device's queue is empty.", color = Muted)
+                    else -> {
+                        val entries = if (group) groupQueueEntries else remoteQueue?.queue?.entries.orEmpty()
+                        val cursor = if (group) groupQueueCursor else 0
+                        LazyColumn(Modifier.weight(1f)) {
+                            itemsIndexed(entries, key = { _, entry -> entry.id }) { index, entry ->
+                                val current = index == cursor
+                                Row(Modifier.fillMaxWidth().padding(vertical = 5.dp)
+                                    .background(if (current) focusAccent.copy(alpha = .12f) else Color.Transparent,
+                                        RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically) {
+                                    Text(if (current) "▶" else "${index + 1}", color = focusAccent,
+                                        modifier = Modifier.width(36.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(entry.recording.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(entry.recording.artist, color = Muted, fontSize = 12.sp,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DesktopPlayerBar(
+    track: Track?, title: String?, artist: String?, playing: Boolean, positionMs: Long, durationMs: Long,
+    remoteMode: Boolean, remoteDevice: ConnectedDevice?, focusedDeviceLabel: String, onOpenFullPlayer: () -> Unit,
+    remoteEnabled: Boolean, groupFocused: Boolean,
     localAvailable: Boolean, localLoading: Boolean, localVolume: Float, localRepeat: String, localSleep: Long?,
     onLocalPrevious: () -> Unit, onLocalToggle: () -> Unit, onLocalNext: () -> Unit, onLocalSeek: (Long) -> Unit,
+    groupSeekTarget: DesktopGroupSeekTarget?, onGroupSeek: (DesktopGroupSeekTarget, Long) -> Unit,
     onLocalVolume: (Float) -> Unit, onLocalRepeat: () -> Unit, onLocalShuffle: () -> Unit, onLocalSleep: (Int?) -> Unit,
     onRemoteCommand: (ConnectedDevice, ConnectedPlaybackAction, Long) -> Unit,
-    connected: Boolean, connectedMessage: String?, otherPlayers: List<ConnectedDevice>,
-    connectedV2: dev.echo.data.firebase.ConnectedPlaybackV2State,
-    ownDeviceId: String,
-    onMoveV2: (String) -> Unit, onTogetherV2: (List<String>, Map<String, String>, Boolean) -> Unit, onRestorePrevious: () -> Unit,
-    onGroupAction: (dev.echo.data.firebase.GroupActionV2) -> Unit,
-    onlinePlayers: List<ConnectedDevice>,
-    offlinePlayers: List<ConnectedDevice>, localStatus: String, selectedRemoteId: String?, reconnecting: Boolean,
-    onSelectLocal: () -> Unit, onSelectRemote: (ConnectedDevice) -> Unit,
+    onlinePlayers: List<ConnectedDevice>, selectedRemoteId: String?,
+    sidecarPlayers: List<DesktopSidecarPlayer>, onSidecarFocus: (ConnectedDevice?) -> Unit,
+    onFocusStep: (Int) -> Unit,
     upcomingIndexes: List<Int>, playback: DesktopPlaybackState, recommendedIds: Set<String>,
     onClearQueue: () -> Unit, onJump: (Int, Long) -> Unit,
     onMove: (Int, Int, Long, Long) -> Unit, onRemove: (Int, Long, Long) -> Unit,
 ) {
-    BoxWithConstraints(Modifier.fillMaxWidth().background(Panel)) {
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center) {
         val narrow = maxWidth < 1180.dp
-        val shortName = remoteDevice?.let { shortDeviceName(it.label) } ?: if (remoteMode) "Device" else "Laptop"
-        val stateName = when {
-            remoteMode && reconnecting -> "Reconnecting to ${remoteDevice?.label ?: lastKnownDeviceName(otherPlayers, selectedRemoteId)}"
-            remoteMode && commandPending -> "Command pending on ${remoteDevice?.label ?: "device"}"
-            remoteMode && remoteDevice?.player?.title != null -> "${if (playing) "Playing on" else "Paused on"} ${remoteDevice.label}"
-            remoteMode -> "Controlling ${remoteDevice?.label ?: "device"}"
-            playing -> "Playing on this laptop"
-            localAvailable -> "Paused on this laptop"
-            else -> "This laptop"
-        }
-        val deviceLabel = when {
-            remoteMode && reconnecting -> "Reconnecting · $shortName"
-            remoteMode && commandPending -> "Pending · $shortName"
-            remoteMode && remoteDevice?.player?.title != null -> "${if (playing) "Playing" else "Paused"} · $shortName"
-            remoteMode -> "Controlling · $shortName"
-            else -> "⌘ Laptop"
-        }
-        val pick: @Composable () -> Unit = {
-            DesktopPlayerPicker(deviceLabel, stateName, remoteMode, selectedRemoteId, connected,
-                connectedMessage, otherPlayers, connectedV2, ownDeviceId, playback.displacedMoveOperationId,
-                onMoveV2, onTogetherV2, onRestorePrevious, onGroupAction,
-                onlinePlayers, offlinePlayers, localVolume, localRepeat, localSleep,
-                localStatus, commandPending, remoteDevice, onSelectLocal, onSelectRemote,
-                onLocalVolume, onLocalRepeat, onLocalShuffle, onLocalSleep)
-        }
+        val dockShape = RoundedCornerShape(28.dp)
         val transport: @Composable (Modifier) -> Unit = { modifier ->
             PlayerTransport(modifier, remoteMode, remoteDevice, remoteEnabled, playing,
                 positionMs, durationMs, localAvailable, localLoading, onLocalPrevious, onLocalToggle, onLocalNext,
-                onLocalSeek, onRemoteCommand)
+                onLocalSeek, groupSeekTarget, onGroupSeek, onRemoteCommand)
         }
-        if (narrow) Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Cover(track, Modifier.size(54.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(title ?: if (remoteMode) "Ready to play" else "Ready when you are", fontWeight = FontWeight.SemiBold,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(artist ?: if (remoteMode) "" else "Choose a song to start", color = Muted, fontSize = 12.sp,
+        val swipeFocus = Modifier.pointerInput(selectedRemoteId, onlinePlayers.map { it.id to it.sessionId }, groupFocused) {
+            var distance = 0f
+            detectHorizontalDragGestures(onHorizontalDrag = { change, amount ->
+                distance += amount
+                change.consume()
+            }, onDragEnd = {
+                if (kotlin.math.abs(distance) >= 56f) onFocusStep(if (distance < 0f) 1 else -1)
+                distance = 0f
+            })
+        }
+        Row(Modifier.widthIn(max = 1600.dp).fillMaxWidth(if (sidecarPlayers.isEmpty()) .9f else .96f),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Surface(
+                modifier = Modifier.weight(1f),
+                shape = dockShape,
+                color = if (groupFocused) Color(0xFF201A2B) else Panel,
+                shadowElevation = 16.dp,
+            ) {
+                if (narrow) Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(swipeFocus, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Cover(track, Modifier.size(54.dp).clickable(onClick = onOpenFullPlayer), circular = true)
+                        Column(Modifier.weight(1f).clickable(onClick = onOpenFullPlayer)) {
+                            Text(focusedDeviceLabel, color = Accent, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(title ?: if (remoteMode) "Ready to play" else "Ready when you are", fontWeight = FontWeight.SemiBold,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(artist ?: if (remoteMode) "" else "Choose a song to start", color = Muted, fontSize = 12.sp,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        transport(Modifier.weight(1f))
+                        if (!remoteMode && !groupFocused) DesktopLocalPlayerActions(localAvailable, localVolume, localRepeat, localSleep,
+                            onLocalVolume, onLocalRepeat, onLocalShuffle, onLocalSleep)
+                        if (!remoteMode && !groupFocused && playback.current != null) QueuePicker(playback, upcomingIndexes, recommendedIds,
+                            onClearQueue, onJump, onMove, onRemove)
+                    }
+                } else Row(Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 22.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(swipeFocus.widthIn(max = 310.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Cover(track, Modifier.size(62.dp).clickable(onClick = onOpenFullPlayer), circular = true)
+                        Column(Modifier.widthIn(min = 130.dp, max = 220.dp).clickable(onClick = onOpenFullPlayer)) {
+                            Text(focusedDeviceLabel, color = Accent, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(title ?: if (remoteMode) "Ready to play" else "Ready when you are", fontWeight = FontWeight.SemiBold,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(artist ?: if (remoteMode) "" else "Choose a song to start", color = Muted, fontSize = 12.sp,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    transport(Modifier.weight(1f))
+                    if (!remoteMode && !groupFocused) DesktopLocalPlayerActions(localAvailable, localVolume, localRepeat, localSleep,
+                        onLocalVolume, onLocalRepeat, onLocalShuffle, onLocalSleep)
+                    if (!remoteMode && !groupFocused && playback.current != null) QueuePicker(playback, upcomingIndexes, recommendedIds,
+                        onClearQueue, onJump, onMove, onRemove)
+                }
+            }
+            if (sidecarPlayers.size > 1 || (groupFocused && sidecarPlayers.isNotEmpty()) ||
+                (remoteMode && sidecarPlayers.any { it.selected && it.presentation.reconnecting })) {
+                val deckWidth = if (narrow) 270.dp else 352.dp
+                val selected = sidecarPlayers.firstOrNull { it.selected } ?: sidecarPlayers.first()
+                val backs = sidecarPlayers.filterNot { it == selected }
+                val selectedOffset = (backs.size * 80).dp.coerceAtMost(deckWidth - 180.dp)
+                val stackStep = if (backs.isEmpty()) 0.dp else selectedOffset / backs.size
+                Box(Modifier.width(deckWidth).height(104.dp)
+                    .semantics { contentDescription = "Independent player deck, ${sidecarPlayers.size} cards" }) {
+                    backs.forEachIndexed { index, card ->
+                        DesktopSidecarPlayerCard(card,
+                            Modifier.width(deckWidth - stackStep * index).offset(x = stackStep * index),
+                            focused = false, peekWidth = stackStep, onFocus = onSidecarFocus)
+                    }
+                    selected?.let { card ->
+                        DesktopSidecarPlayerCard(card, Modifier.width(deckWidth - selectedOffset).offset(x = selectedOffset),
+                            focused = card.selected, showDetails = card.selected || groupFocused, onFocus = onSidecarFocus)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DesktopSidecarPlayerCard(
+    card: DesktopSidecarPlayer,
+    modifier: Modifier,
+    focused: Boolean,
+    showDetails: Boolean = focused,
+    peekWidth: Dp? = null,
+    onFocus: (ConnectedDevice?) -> Unit,
+) {
+    val player = card.presentation
+    val track = player.track
+    val status = when {
+        player.reconnecting -> "Reconnecting"
+        !card.hasRecording -> "Ready"
+        player.playing -> "Playing"
+        else -> "Paused"
+    }
+    Surface(
+        onClick = { if (card.canSelect) onFocus(card.device) },
+        enabled = card.canSelect,
+        modifier = modifier.height(104.dp),
+        shape = RoundedCornerShape(22.dp),
+        color = Panel,
+        contentColor = Color(0xFFEAF0F7),
+        border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Accent else Accent.copy(alpha = .28f)),
+        shadowElevation = if (focused) 16.dp else 6.dp,
+    ) {
+        if (showDetails) {
+            Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Cover(track, Modifier.size(62.dp), circular = false)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(card.label, color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(if (card.hasRecording) player.title ?: "Unknown track" else if (player.reconnecting) "Reconnecting…" else "Ready",
+                        fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(if (player.artist.isNullOrBlank()) status else "$status · ${player.artist}",
+                        color = Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                transport(Modifier.weight(1f))
-                pick()
-                if (!remoteMode && connectedV2.group == null && playback.current != null) QueuePicker(playback, upcomingIndexes, recommendedIds,
-                    onClearQueue, onJump, onMove, onRemove)
-            }
-        } else Row(Modifier.fillMaxWidth().height(108.dp).padding(horizontal = 24.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Cover(track, Modifier.size(58.dp))
-            Column(Modifier.widthIn(min = 130.dp, max = 230.dp)) {
-                Text(title ?: if (remoteMode) "Ready to play" else "Ready when you are", fontWeight = FontWeight.SemiBold,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(artist ?: if (remoteMode) "" else "Choose a song to start", color = Muted, fontSize = 12.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            transport(Modifier.weight(1f))
-            if (!remoteMode) {
-                Column(Modifier.width(118.dp)) {
-                    Text("Volume", fontSize = 11.sp, color = Muted)
-                    Slider(localVolume, onLocalVolume)
+        } else {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
+                Column(Modifier.width(peekWidth ?: 64.dp).fillMaxHeight().padding(3.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Cover(track, Modifier.size(34.dp))
+                    Text(playerTabName(card.label), color = Accent, fontSize = 9.sp, lineHeight = 11.sp,
+                        fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis)
                 }
-                if (connectedV2.group == null && playback.current != null) QueuePicker(playback, upcomingIndexes, recommendedIds,
-                    onClearQueue, onJump, onMove, onRemove)
             }
-            pick()
+        }
+    }
+}
+
+@Composable
+private fun DesktopLocalPlayerActions(
+    localAvailable: Boolean, volume: Float, repeat: String, sleep: Long?,
+    onVolume: (Float) -> Unit, onRepeat: () -> Unit, onShuffle: () -> Unit, onSleep: (Int?) -> Unit,
+) {
+    var volumeOpen by remember { mutableStateOf(false) }
+    var sleepOpen by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(enabled = localAvailable, onClick = onShuffle,
+            modifier = Modifier.semantics { contentDescription = "Shuffle upcoming" }) {
+            Icon(Icons.Default.Shuffle, null, tint = if (localAvailable) Accent else Muted)
+        }
+        IconButton(enabled = localAvailable, onClick = onRepeat,
+            modifier = Modifier.semantics { contentDescription = "Repeat mode: $repeat" }) {
+            Icon(if (repeat == "one") Icons.Default.RepeatOne else Icons.Default.Repeat, null,
+                tint = if (repeat == "off" || !localAvailable) Muted else Accent)
+        }
+        Box {
+            IconButton(onClick = { volumeOpen = true },
+                modifier = Modifier.semantics { contentDescription = "Volume" }) {
+                Icon(Icons.Default.VolumeUp, null, tint = Accent)
+            }
+            DropdownMenu(volumeOpen, onDismissRequest = { volumeOpen = false }) {
+                Column(Modifier.width(190.dp).padding(horizontal = 14.dp, vertical = 8.dp)) {
+                    Text("Volume", color = Muted, fontSize = 12.sp)
+                    Slider(volume, onVolume)
+                }
+            }
+        }
+        Box {
+            IconButton(enabled = localAvailable, onClick = { sleepOpen = true },
+                modifier = Modifier.semantics {
+                    contentDescription = sleep?.let { "Sleep timer, ${clock(it)} remaining" } ?: "Set sleep timer"
+                }) {
+                Icon(Icons.Default.Bedtime, null, tint = if (sleep == null) Muted else Accent)
+            }
+            DropdownMenu(sleepOpen, onDismissRequest = { sleepOpen = false }) {
+                Text("Sleep timer", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    color = Muted, fontSize = 12.sp)
+                listOf(15, 30, 45, 60).forEach { minute -> DropdownMenuItem(text = { Text("$minute minutes") },
+                    onClick = { onSleep(minute); sleepOpen = false }) }
+                if (sleep != null) DropdownMenuItem(text = { Text("Cancel timer") },
+                    onClick = { onSleep(null); sleepOpen = false })
+            }
         }
     }
 }
@@ -752,10 +1447,15 @@ private fun PlayerTransport(
     modifier: Modifier, remoteMode: Boolean, remoteDevice: ConnectedDevice?, remoteEnabled: Boolean,
     playing: Boolean, positionMs: Long, durationMs: Long, localAvailable: Boolean, localLoading: Boolean,
     onLocalPrevious: () -> Unit, onLocalToggle: () -> Unit, onLocalNext: () -> Unit, onLocalSeek: (Long) -> Unit,
+    groupSeekTarget: DesktopGroupSeekTarget?, onGroupSeek: (DesktopGroupSeekTarget, Long) -> Unit,
     onRemoteCommand: (ConnectedDevice, ConnectedPlaybackAction, Long) -> Unit,
 ) {
     var dragValue by remember(remoteMode, remoteEnabled, remoteDevice?.id, remoteDevice?.sessionId,
-        remoteDevice?.player?.trackRevision, remoteDevice?.player?.queueRevision) { mutableStateOf<Float?>(null) }
+        remoteDevice?.player?.trackRevision, remoteDevice?.player?.queueRevision, groupSeekTarget) { mutableStateOf<Float?>(null) }
+    var dragGroupTarget by remember(remoteMode, remoteEnabled, remoteDevice?.id, remoteDevice?.sessionId,
+        remoteDevice?.player?.trackRevision, remoteDevice?.player?.queueRevision, groupSeekTarget) {
+        mutableStateOf<DesktopGroupSeekTarget?>(null)
+    }
     var dragTarget by remember(remoteMode, remoteEnabled, remoteDevice?.id, remoteDevice?.sessionId,
         remoteDevice?.player?.trackRevision, remoteDevice?.player?.queueRevision) { mutableStateOf<ConnectedDevice?>(null) }
     val canTransport = if (remoteMode) remoteEnabled else localAvailable
@@ -781,15 +1481,18 @@ private fun PlayerTransport(
                 onValueChange = { value ->
                     if (remoteMode) {
                         if (dragTarget == null) dragTarget = remoteDevice
-                        dragValue = value
-                    } else onLocalSeek(value.toLong())
-                }, onValueChangeFinished = {
-                    if (remoteMode) {
-                        val target = dragTarget
-                        val value = dragValue
-                        if (target != null && value != null) onRemoteCommand(target, ConnectedPlaybackAction.SEEK, value.toLong())
-                        dragTarget = null; dragValue = null
                     }
+                    if (dragValue == null) dragGroupTarget = groupSeekTarget
+                    dragValue = value
+                }, onValueChangeFinished = {
+                    val target = dragTarget
+                    val groupTarget = dragGroupTarget
+                    val value = dragValue
+                    if (value != null && remoteMode && target != null)
+                        onRemoteCommand(target, ConnectedPlaybackAction.SEEK, value.toLong())
+                    else if (value != null && groupTarget != null) onGroupSeek(groupTarget, value.toLong())
+                    else if (value != null) onLocalSeek(value.toLong())
+                    dragTarget = null; dragGroupTarget = null; dragValue = null
                 }, valueRange = 0f..durationMs.coerceAtLeast(1).toFloat(), enabled = durationMs > 0 && canTransport,
                 modifier = Modifier.weight(1f).height(26.dp).padding(horizontal = 10.dp))
             Text(clock(durationMs), fontSize = 10.sp, color = Muted)
@@ -799,25 +1502,34 @@ private fun PlayerTransport(
 
 @Composable
 private fun DesktopPlayerPicker(
-    buttonLabel: String, accessibleLabel: String, remoteMode: Boolean, selectedRemoteId: String?,
-    connected: Boolean, connectedMessage: String?, devices: List<ConnectedDevice>,
+    stagingMode: Boolean,
+    showCrossDeviceActions: Boolean,
+    accessibleLabel: String,
+    remoteMode: Boolean,
+    selectedRemoteId: String?,
+    connected: Boolean,
+    connectedMessage: String?,
+    devices: List<ConnectedDevice>,
     connectedV2: dev.echo.data.firebase.ConnectedPlaybackV2State,
     ownDeviceId: String,
     displacedMoveOperationId: String?,
-    onMoveV2: (String) -> Unit, onTogetherV2: (List<String>, Map<String, String>, Boolean) -> Unit, onRestorePrevious: () -> Unit,
+    onMoveV2: (String) -> Unit,
+    onTogetherV2: (List<String>, Map<String, String>, Boolean) -> Unit,
+    onRestorePrevious: () -> Unit,
     onGroupAction: (dev.echo.data.firebase.GroupActionV2) -> Unit,
+    onSyncGroup: () -> Unit,
+    canSyncGroup: Boolean,
     online: List<ConnectedDevice>,
-    offline: List<ConnectedDevice>, volume: Float, repeat: String, sleep: Long?, localStatus: String,
-    commandPending: Boolean, selectedDevice: ConnectedDevice?, onSelectLocal: () -> Unit,
-    onSelectRemote: (ConnectedDevice) -> Unit, onVolume: (Float) -> Unit, onRepeat: () -> Unit,
-    onShuffle: () -> Unit, onSleep: (Int?) -> Unit,
+    offline: List<ConnectedDevice>,
+    localStatus: String,
+    commandPending: Boolean,
+    selectedDevice: ConnectedDevice?,
+    onSelectLocal: () -> Unit,
+    onSelectRemote: (ConnectedDevice) -> Unit,
 ) {
     val group = connectedV2.group
-    var expanded by remember { mutableStateOf(false) }
-    var otherOpen by remember { mutableStateOf(false) }
-    var moveOpen by remember { mutableStateOf(false) }
-    var togetherOpen by remember { mutableStateOf(false) }
-    var sleepOpen by remember { mutableStateOf(false) }
+    var openPanel by remember { mutableStateOf<String?>(null) }
+    var showOffline by remember { mutableStateOf(false) }
     var confirmRestorePrevious by remember { mutableStateOf(false) }
     var togetherDeviceSessions by remember { mutableStateOf(emptyMap<String, String>()) }
     var confirmTogether by remember { mutableStateOf(false) }
@@ -831,216 +1543,261 @@ private fun DesktopPlayerPicker(
     }
     val readyToStartTogether = togetherDeviceIds.size in 1 until MAX_CONNECTED_GROUP_MEMBERS &&
         !invalidTogetherSelection && selectedTogetherDevices.size == togetherDeviceIds.size
-    LaunchedEffect(connectedV2.group?.ref, connectedV2.group?.status) {
-        if (connectedV2.group?.status == dev.echo.data.firebase.GroupV2Status.ACTIVE) {
+    LaunchedEffect(group?.ref, group?.status) {
+        if (group?.status == dev.echo.data.firebase.GroupV2Status.ACTIVE) {
             togetherDeviceSessions = emptyMap()
             confirmTogether = false
         }
     }
+    val memberIds = group?.members?.filter { it.status != dev.echo.data.firebase.GroupMemberV2Status.LEFT }
+        ?.map { it.deviceId }?.toSet().orEmpty()
+    val independent = devices.filter { it.id !in memberIds }
+    val current = independent.firstOrNull { it.id == selectedRemoteId }
     Box {
-        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.semantics { contentDescription = accessibleLabel }) {
-            Text(buttonLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box {
+                IconButton(onClick = { openPanel = "devices" }, modifier = Modifier.semantics {
+                    contentDescription = accessibleLabel
+                }) { Icon(Icons.Default.Devices, null, tint = Accent) }
+                if (online.isNotEmpty()) Surface(
+                    modifier = Modifier.align(Alignment.TopEnd), shape = CircleShape,
+                    color = Color(0xFF27313A), contentColor = Accent,
+                ) { Text("+${online.size}", fontSize = 9.sp, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)) }
+            }
+            if (showCrossDeviceActions) {
+                OutlinedButton(onClick = { openPanel = "move" }, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                    Icon(Icons.Default.SwapHoriz, null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(5.dp)); Text("Move")
+                }
+                OutlinedButton(onClick = { openPanel = "together" }, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                    Icon(Icons.Default.Groups, null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(5.dp)); Text("Together")
+                }
+            }
         }
-        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
-            Column(Modifier.width(350.dp).heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
-                Text("Your players", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-                devices.firstOrNull { it.id == selectedRemoteId && it.controlEnabled }?.let { device ->
+        DropdownMenu(openPanel != null, onDismissRequest = { openPanel = null }) {
+            Column(Modifier.width(if (openPanel == "devices") 330.dp else 390.dp)
+                .heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(vertical = 5.dp)) {
+                when (openPanel) {
+                    "devices" -> {
+                        Text("Devices", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
                         DropdownMenuItem(text = {
                             Column {
-                                Text("${if (device.label.contains("android", true)) "▣" else "▱"}  ${device.label}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(if (!device.controlEnabled) "Offline" else if (device.player.title == null) "Ready to play" else
-                                    "${if (device.player.isPlaying) "Playing" else "Paused"} · ${device.player.title}",
-                                    color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(if (group != null) "Play together · ${group.members.size} devices" else "This laptop")
+                                Text(if (group != null) "Shared player" else localStatus, color = Muted, fontSize = 11.sp,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                        }, onClick = { onSelectRemote(device); expanded = false })
-                    }
-                DropdownMenuItem(text = {
-                    Column {
-                        Text("▱  This laptop")
-                        Text(localStatus, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }, onClick = { onSelectLocal(); expanded = false })
-                online.filterNot { it.id == selectedRemoteId }.forEach { device ->
-                    DropdownMenuItem(text = {
-                        Column {
-                            Text("${if (device.label.contains("android", true)) "▣" else "▱"}  ${device.label}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(if (device.player.title == null) "Ready to play" else
-                                "${if (device.player.isPlaying) "Playing" else "Paused"} · ${device.player.title}",
-                                color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }, onClick = { onSelectRemote(device); expanded = false })
-                }
-                if (offline.isNotEmpty()) {
-                    TextButton(onClick = { otherOpen = !otherOpen }, modifier = Modifier.fillMaxWidth()) {
-                        Text("${if (otherOpen) "▾" else "▸"} Other devices (${offline.size})", modifier = Modifier.fillMaxWidth())
-                    }
-                    if (otherOpen) offline.forEach { device -> DropdownMenuItem(text = {
-                        Column { Text(device.label, maxLines = 1, overflow = TextOverflow.Ellipsis); Text("Offline · last known session", color = Muted, fontSize = 11.sp) }
-                    }, onClick = { onSelectRemote(device); expanded = false }) }
-                }
-                if (remoteMode) {
-                    connectedMessage?.let { Text(it, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
-                    if (commandPending) Text("Remote command pending…", color = Muted, fontSize = 12.sp,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                    selectedDevice?.ack?.takeIf { it.status == "rejected" }?.let {
-                        Text("Command declined: ${it.reason ?: "device state changed"}", color = Color(0xFFFFB7AC), fontSize = 12.sp,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                    }
-                } else if (!connected) Text(connectedMessage ?: "Sign in and enable connected playback to see other live players.",
-                    color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-                HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                if (!remoteMode) {
-                    Text("Volume", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp))
-                    Slider(volume, onVolume, modifier = Modifier.padding(horizontal = 12.dp))
-                    if (group == null) {
-                        TextButton(onClick = onRepeat, modifier = Modifier.fillMaxWidth()) { Text("Repeat: $repeat", modifier = Modifier.fillMaxWidth()) }
-                        TextButton(onClick = onShuffle, modifier = Modifier.fillMaxWidth()) { Text("Shuffle upcoming", modifier = Modifier.fillMaxWidth()) }
-                        Box {
-                            TextButton(onClick = { sleepOpen = true }, modifier = Modifier.fillMaxWidth()) {
-                                Text(sleep?.let { "Sleep timer · ${clock(it)}" } ?: "Sleep timer", modifier = Modifier.fillMaxWidth())
-                            }
-                            DropdownMenu(sleepOpen, onDismissRequest = { sleepOpen = false }) {
-                                listOf(15, 30, 45, 60).forEach { minute -> DropdownMenuItem(text = { Text("$minute minutes") },
-                                    onClick = { onSleep(minute); sleepOpen = false }) }
-                                DropdownMenuItem(text = { Text("Cancel timer") }, onClick = { onSleep(null); sleepOpen = false })
-                            }
-                        }
-                    }
-                }
-                TextButton(onClick = { moveOpen = !moveOpen }, modifier = Modifier.fillMaxWidth()) { Text("Move this song…", modifier = Modifier.fillMaxWidth()) }
-                if (moveOpen) {
-                    if (displacedMoveOperationId != null && !remoteMode && group == null) {
-                        if (connectedV2.reconcilingMove) {
-                            Text("A Move is still being reconciled. Wait for its outcome before restoring the previous queue.",
-                                color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                        } else if (!confirmRestorePrevious) {
-                            TextButton(enabled = !connectedV2.pending, onClick = { confirmRestorePrevious = true },
-                                modifier = Modifier.fillMaxWidth().testTag("connected-restore-previous")) {
-                                Text("Restore previous queue paused")
-                            }
-                        } else {
-                            Text("This replaces the current queue and restores the previous one paused.", color = Muted,
-                                fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                            TextButton(enabled = !connectedV2.pending, onClick = {
-                                confirmRestorePrevious = false
-                                onRestorePrevious()
-                            }, modifier = Modifier.fillMaxWidth().testTag("connected-restore-previous-confirm")) {
-                                Text("Confirm restore previous queue")
-                            }
-                            TextButton(onClick = { confirmRestorePrevious = false }, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
-                        }
-                    }
-                    when {
-                        remoteMode -> Text("Choose This laptop as the source before moving. A selected remote player is not moved by this action.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                        group != null -> Text("Leave Play together before moving this queue.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                        localStatus == "Ready" -> Text("Start a song on this laptop before moving the queue.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                        else -> {
-                            Text("The current song and remaining queue move together. The destination queue is saved for paused recovery.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                            connectedV2.devices.filter { it.enabled && it.id != ownDeviceId && "move" in it.capabilities }.forEach { device ->
-                                TextButton(enabled = !connectedV2.pending, onClick = { onMoveV2(device.id) }, modifier = Modifier.fillMaxWidth()) {
-                                    Text("Replace ${device.label}'s queue and Move", maxLines = 2)
-                                }
-                            }
-                        }
-                    }
-                }
-                TextButton(onClick = { togetherOpen = !togetherOpen }, modifier = Modifier.fillMaxWidth()) { Text("Play together…", modifier = Modifier.fillMaxWidth()) }
-                if (togetherOpen) {
-                    if (remoteMode && group == null) {
-                        Text("Choose This laptop as the source before creating a shared queue.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                    } else if (group != null) {
-                        Text("Together · ${group.status.name.lowercase()}", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                        group.members.forEach { member ->
-                            val memberName = if (member.deviceId == ownDeviceId) "This laptop" else
+                        }, onClick = { onSelectLocal(); openPanel = null })
+                        group?.members.orEmpty().forEach { member ->
+                            val name = if (member.deviceId == ownDeviceId) {
+                                if (stagingMode) "Stage host · this player" else "This laptop · coordinator"
+                            } else
                                 connectedV2.devices.firstOrNull { it.id == member.deviceId }?.label ?: member.deviceId.takeLast(8)
-                            val memberStatus = when (member.status) {
+                            val status = when (member.status) {
                                 dev.echo.data.firebase.GroupMemberV2Status.BUFFERING -> "Buffering"
                                 dev.echo.data.firebase.GroupMemberV2Status.DISCONNECTED -> "Reconnecting"
                                 dev.echo.data.firebase.GroupMemberV2Status.LEFT -> "Left"
                                 else -> member.status.name.lowercase().replaceFirstChar(Char::uppercase)
                             }
-                            Text("$memberName · $memberStatus", color = Muted, fontSize = 11.sp, maxLines = 1,
-                                overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
+                            DropdownMenuItem(enabled = false, text = { Column {
+                                Text("●  $name", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("Together · $status", color = Muted, fontSize = 11.sp)
+                            } }, onClick = {})
                         }
-                        group.timeline?.let { timeline ->
-                            Text("Shared queue · ${timeline.queue.entries.size} songs", color = Accent, fontSize = 11.sp,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                            val preview = timeline.queue.entries.drop(timeline.cursor).take(12)
-                            preview.forEachIndexed { offset, occurrence ->
-                                val index = timeline.cursor + offset
-                                Text("${if (offset == 0) "Now · " else "${index + 1}. "}${occurrence.recording.title} · ${occurrence.recording.artist}",
-                                    color = if (index == timeline.cursor) Accent else Muted, fontSize = 11.sp, maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
+                        current?.let { device ->
+                            DevicePickerRow(device, selected = true, enabled = device.controlEnabled) {
+                                onSelectRemote(device); openPanel = null
                             }
-                            val remaining = timeline.queue.entries.size - timeline.cursor - preview.size
-                            if (remaining > 0) Text("+$remaining more songs", color = Muted, fontSize = 10.sp,
-                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
                         }
-                        TextButton(enabled = !connectedV2.pending, onClick = { onGroupAction(dev.echo.data.firebase.GroupActionV2.PREVIOUS) }, modifier = Modifier.fillMaxWidth()) { Text("Previous for everyone") }
-                        TextButton(enabled = !connectedV2.pending, onClick = { onGroupAction(if (group.timeline?.playing == true) dev.echo.data.firebase.GroupActionV2.PAUSE else dev.echo.data.firebase.GroupActionV2.PLAY) }, modifier = Modifier.fillMaxWidth()) { Text(if (group.timeline?.playing == true) "Pause everyone" else "Play for everyone") }
-                        TextButton(enabled = !connectedV2.pending, onClick = { onGroupAction(dev.echo.data.firebase.GroupActionV2.NEXT) }, modifier = Modifier.fillMaxWidth()) { Text("Next for everyone") }
-                        TextButton(enabled = !connectedV2.pending, onClick = { onGroupAction(dev.echo.data.firebase.GroupActionV2.LEAVE) }, modifier = Modifier.fillMaxWidth()) {
-                            Text(if (group.coordinatorDeviceId == ownDeviceId) "End for everyone and restore queue paused"
-                                else "Leave group and restore queue paused")
-                        }
-                    } else {
-                        Text("Share this queue with up to ${MAX_CONNECTED_GROUP_MEMBERS - 1} other Echo players. Each device's independent queue remains available for paused recovery.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                        Text("${togetherDeviceIds.size} of ${MAX_CONNECTED_GROUP_MEMBERS - 1} other players selected", color = Muted,
-                            fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 3.dp))
-                        togetherCandidates.forEach { device ->
-                            val selected = device.id in togetherDeviceIds
-                            val expectedSession = togetherDeviceSessions[device.id]
-                            val changedSession = selected && expectedSession != device.sessionId
-                            val ready = device.enabled && !changedSession
-                            Row(Modifier.fillMaxWidth().clickable(enabled = ready || selected) {
-                                togetherDeviceSessions = if (selected) togetherDeviceSessions - device.id else
-                                    if (togetherDeviceSessions.size < MAX_CONNECTED_GROUP_MEMBERS - 1) togetherDeviceSessions + (device.id to device.sessionId) else togetherDeviceSessions
-                            }.padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(checked = selected, enabled = ready || selected, onCheckedChange = { checked ->
-                                    togetherDeviceSessions = if (checked && !selected && togetherDeviceSessions.size < MAX_CONNECTED_GROUP_MEMBERS - 1)
-                                        togetherDeviceSessions + (device.id to device.sessionId)
-                                        else if (!checked) togetherDeviceSessions - device.id else togetherDeviceSessions
-                                })
-                                Column(Modifier.weight(1f).padding(vertical = 5.dp)) {
+                        independent.filter { it.controlEnabled && it.id != selectedRemoteId }
+                            .sortedBy { it.label.lowercase() }.forEach { device ->
+                                DevicePickerRow(device, selected = false, enabled = true) { onSelectRemote(device); openPanel = null }
+                            }
+                        val offlinePeers = independent.filterNot { it.controlEnabled || it.id == selectedRemoteId }
+                        if (offlinePeers.isNotEmpty()) {
+                            TextButton(onClick = { showOffline = !showOffline }, modifier = Modifier.fillMaxWidth()) {
+                                Text("${if (showOffline) "▾" else "▸"} Offline · ${offlinePeers.size}", modifier = Modifier.fillMaxWidth())
+                            }
+                            if (showOffline) offlinePeers.forEach { device ->
+                                DropdownMenuItem(enabled = false, text = { Column {
                                     Text(device.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(if (changedSession) "Session changed · remove and select again" else if (!device.enabled) "Offline or unavailable" else if (device.snapshot.playing)
-                                        "Playing · ${device.snapshot.title.orEmpty()}" else "Paused · ${device.snapshot.title ?: "ready"}",
-                                        color = Muted, fontSize = 11.sp)
+                                    Text("Offline · last known session", color = Muted, fontSize = 11.sp)
+                                } }, onClick = {})
+                            }
+                        }
+                        if (independent.isEmpty() && group == null) Text(
+                            if (stagingMode) "No demo devices yet. Use Stage Admin to add some." else "No other players are online.",
+                            color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                        if (remoteMode) {
+                            connectedMessage?.let { Text(it, color = Muted, fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
+                            if (commandPending) Text("Remote command pending…", color = Muted, fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            selectedDevice?.ack?.takeIf { it.status == "rejected" }?.let {
+                                Text("Command declined: ${it.reason ?: "device state changed"}", color = Color(0xFFFFB7AC), fontSize = 12.sp,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            }
+                        } else if (!connected) Text(connectedMessage ?: "Connected players are unavailable.", color = Muted,
+                            fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                    }
+                    "move" -> {
+                        Text("Move playback", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                        if (displacedMoveOperationId != null && !remoteMode && group == null) {
+                            Text("The previous demo queue is available for paused recovery.", color = Muted, fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            if (!confirmRestorePrevious) TextButton(enabled = !connectedV2.pending,
+                                onClick = { confirmRestorePrevious = true }, modifier = Modifier.fillMaxWidth().testTag("connected-restore-previous")) {
+                                Text("Restore previous queue paused")
+                            } else {
+                                Text("This replaces the current demo queue and restores the earlier queue paused.", color = Muted,
+                                    fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                                TextButton(enabled = !connectedV2.pending, onClick = {
+                                    confirmRestorePrevious = false; onRestorePrevious(); openPanel = null
+                                }, modifier = Modifier.fillMaxWidth().testTag("connected-restore-previous-confirm")) {
+                                    Text("Confirm restore previous queue")
+                                }
+                                TextButton(onClick = { confirmRestorePrevious = false }, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+                            }
+                        }
+                        when {
+                            remoteMode -> Text("Choose This laptop before moving its demo queue.", color = Muted, fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp))
+                            group != null -> Text("Leave Play together before moving this queue.", color = Muted, fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp))
+                            localStatus == "Ready" -> Text("Start a demo song before moving the queue.", color = Muted, fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp))
+                            else -> {
+                                Text("Move the current song and remaining queue to a demo device.", color = Muted, fontSize = 12.sp,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp))
+                                connectedV2.devices.filter { it.enabled && it.id != ownDeviceId && "move" in it.capabilities }.forEach { device ->
+                                    TextButton(enabled = !connectedV2.pending, onClick = { onMoveV2(device.id); openPanel = null },
+                                        modifier = Modifier.fillMaxWidth()) { Text("Move to ${device.label}", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                                 }
                             }
                         }
-                        togetherDeviceIds.filter { id -> togetherCandidates.none { it.id == id } }.forEach { id ->
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("Selected player ${id.takeLast(8)} is no longer available. Remove it to continue.",
-                                    color = Color(0xFFFFB7AC), fontSize = 11.sp, modifier = Modifier.weight(1f))
-                                TextButton(onClick = { togetherDeviceSessions = togetherDeviceSessions - id }) { Text("Remove") }
+                    }
+                    "together" -> {
+                        Text("Play together", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                        if (remoteMode && group == null) {
+                            Text("Choose This laptop as the coordinator before creating a shared queue.", color = Muted,
+                                fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp))
+                        } else if (group != null) {
+                            Text("${if (stagingMode) "Shared demo timeline" else "Play together"} · ${group.status.name.lowercase()}", color = Muted, fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            group.members.forEach { member ->
+                                val name = if (member.deviceId == ownDeviceId) {
+                                    if (stagingMode) "Stage host · virtual" else "This laptop · coordinator"
+                                } else
+                                    connectedV2.devices.firstOrNull { it.id == member.deviceId }?.label ?: member.deviceId.takeLast(8)
+                                val status = if (member.status == dev.echo.data.firebase.GroupMemberV2Status.DISCONNECTED) "Reconnecting"
+                                    else member.status.name.lowercase().replaceFirstChar(Char::uppercase)
+                                Column(Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) {
+                                    Text("$name · $status", color = Muted, fontSize = 11.sp, maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis)
+                                    val sample = group.syncTiming.firstOrNull { timing ->
+                                        timing.deviceId == member.deviceId && timing.sessionId == member.sessionId &&
+                                            System.currentTimeMillis() - timing.sampledAtMs in 0..15_000L
+                                    }
+                                    Text(sample?.let { "Network estimate · ${it.roundTripP95Ms} ms RTT · ±${it.jitterMs} ms jitter" }
+                                        ?: "Network estimate unavailable · using 8s start",
+                                        color = Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            Text("Connection timing guides the start; speaker and output delay aren't measured.",
+                                color = Muted, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 3.dp))
+                            group.timeline?.let { timeline ->
+                                Text("Shared queue · ${timeline.queue.entries.size} songs", color = Accent, fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                                timeline.queue.entries.drop(timeline.cursor).take(8).forEachIndexed { offset, entry ->
+                                    Text("${if (offset == 0) "Now" else "${timeline.cursor + offset + 1}."} ${entry.recording.title} · ${entry.recording.artist}",
+                                        color = if (offset == 0) Accent else Muted, fontSize = 11.sp, maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
+                                }
+                            }
+                            if (canSyncGroup) TextButton(enabled = !connectedV2.pending, onClick = onSyncGroup,
+                                modifier = Modifier.fillMaxWidth().testTag("connected-group-sync")) {
+                                Text(if (connectedV2.pending) "Adjusting timing…" else "Sync now")
+                            }
+                            TextButton(enabled = !connectedV2.pending, onClick = { onGroupAction(dev.echo.data.firebase.GroupActionV2.PREVIOUS) },
+                                modifier = Modifier.fillMaxWidth()) { Text("Previous for everyone") }
+                            TextButton(enabled = !connectedV2.pending, onClick = { onGroupAction(
+                                if (group.timeline?.playing == true) dev.echo.data.firebase.GroupActionV2.PAUSE else dev.echo.data.firebase.GroupActionV2.PLAY) },
+                                modifier = Modifier.fillMaxWidth()) { Text(if (group.timeline?.playing == true) "Pause everyone" else "Play for everyone") }
+                            TextButton(enabled = !connectedV2.pending, onClick = { onGroupAction(dev.echo.data.firebase.GroupActionV2.NEXT) },
+                                modifier = Modifier.fillMaxWidth()) { Text("Next for everyone") }
+                            TextButton(enabled = !connectedV2.pending, onClick = { onGroupAction(dev.echo.data.firebase.GroupActionV2.LEAVE); openPanel = null },
+                                modifier = Modifier.fillMaxWidth()) { Text("End group and restore queues paused") }
+                        } else {
+                            Text(if (stagingMode) "The Stage host and selected demo devices share one preview queue. Native audio is unchanged."
+                                else "This laptop and the selected devices will share the current queue after every player is ready.",
+                                color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            Text(if (stagingMode) "${togetherDeviceIds.size} of ${MAX_CONNECTED_GROUP_MEMBERS - 1} demo devices selected"
+                                else "${togetherDeviceIds.size} of ${MAX_CONNECTED_GROUP_MEMBERS - 1} other players selected", color = Muted,
+                                fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            togetherCandidates.forEach { device ->
+                                val selected = device.id in togetherDeviceIds
+                                val expected = togetherDeviceSessions[device.id]
+                                val changed = selected && expected != device.sessionId
+                                val ready = device.enabled && !changed
+                                Row(Modifier.fillMaxWidth().clickable(enabled = ready || selected) {
+                                    togetherDeviceSessions = if (selected) togetherDeviceSessions - device.id else
+                                        if (togetherDeviceSessions.size < MAX_CONNECTED_GROUP_MEMBERS - 1) togetherDeviceSessions + (device.id to device.sessionId)
+                                        else togetherDeviceSessions
+                                }.padding(horizontal = 10.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked = selected, enabled = ready || selected, onCheckedChange = { checked ->
+                                        togetherDeviceSessions = if (checked && !selected && togetherDeviceSessions.size < MAX_CONNECTED_GROUP_MEMBERS - 1)
+                                            togetherDeviceSessions + (device.id to device.sessionId)
+                                        else if (!checked) togetherDeviceSessions - device.id else togetherDeviceSessions
+                                    })
+                                    Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
+                                        Text(device.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(if (changed) "Session changed · remove and reselect" else
+                                            if (!device.enabled) "Offline" else if (device.snapshot.playing) "Playing · ${device.snapshot.title.orEmpty()}"
+                                            else "Paused · ${device.snapshot.title ?: "ready"}", color = Muted, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                            if (invalidTogetherSelection) Text(if (stagingMode)
+                                "A selected demo player is offline or has restarted. Remove it and select the current session."
+                                else "A selected player is offline or has restarted. Remove it and select the current session.",
+                                color = Color(0xFFFFB7AC), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            TextButton(enabled = readyToStartTogether && !connectedV2.pending, onClick = {
+                                if (selectedTogetherDevices.any { it.snapshot.playing }) confirmTogether = true
+                                else { onTogetherV2(togetherDeviceIds.toList(), togetherDeviceSessions, false); openPanel = null }
+                            }, modifier = Modifier.fillMaxWidth().testTag("connected-together-start")) {
+                                Text(if (stagingMode) "Start Play together preview" else "Start Play together")
                             }
                         }
-                        if (invalidTogetherSelection) Text("A selected player is offline, unavailable, or its session changed. Remove it or wait until it is ready; no selected players will be skipped.",
-                            color = Color(0xFFFFB7AC), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                        TextButton(enabled = readyToStartTogether && !connectedV2.pending, onClick = {
-                            if (selectedTogetherDevices.any { it.snapshot.playing }) confirmTogether = true
-                            else onTogetherV2(togetherDeviceIds.toList(), togetherDeviceSessions, false)
-                        }, modifier = Modifier.fillMaxWidth().testTag("connected-together-start")) {
-                            Text("Start Play together")
-                        }
+                        connectedV2.message?.let { Text(it, color = Muted, fontSize = 11.sp,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
                     }
-                    connectedV2.message?.let { Text(it, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
                 }
-                Text("Audio outputs", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
-                Text("Output selection is not available yet.", color = Muted, fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             }
         }
         if (confirmTogether) AlertDialog(onDismissRequest = { confirmTogether = false },
-            title = { Text("Replace playing devices?") },
-            text = { Text("At least one selected player is currently playing. Play together will replace its current playback and queue.") },
-            confirmButton = { TextButton(enabled = !connectedV2.pending && readyToStartTogether, onClick = {
-                confirmTogether = false
-                onTogetherV2(togetherDeviceIds.toList(), togetherDeviceSessions, true)
+            title = { Text(if (stagingMode) "Replace playing demo players?" else "Replace playing devices?") },
+            text = { Text(if (stagingMode) "A selected demo player is playing. Play together will replace its demo queue."
+                else "At least one selected player is playing. Play together will replace its current playback and queue.") },
+            confirmButton = { TextButton(enabled = readyToStartTogether, onClick = {
+                confirmTogether = false; onTogetherV2(togetherDeviceIds.toList(), togetherDeviceSessions, true); openPanel = null
             }, modifier = Modifier.testTag("connected-together-confirm")) { Text("Replace and start") } },
             dismissButton = { TextButton(onClick = { confirmTogether = false }) { Text("Cancel") } })
     }
+}
+
+@Composable
+private fun DevicePickerRow(device: ConnectedDevice, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    DropdownMenuItem(enabled = enabled, text = {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(Icons.Default.Devices, null, tint = if (selected) Accent else Muted, modifier = Modifier.size(18.dp))
+            Column {
+                Text(device.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (device.player.title == null) "Ready to play" else
+                    "${if (device.player.isPlaying) "Playing" else "Paused"} · ${device.player.title}",
+                    color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }, onClick = onClick)
 }
 
 @Composable
@@ -1050,7 +1807,9 @@ private fun QueuePicker(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        OutlinedButton(onClick = { expanded = true }) { Text("Queue") }
+        IconButton(onClick = { expanded = true }, modifier = Modifier.semantics { contentDescription = "Open queue" }) {
+            Icon(Icons.Default.QueueMusic, null)
+        }
         DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
             Column(Modifier.width(340.dp).heightIn(max = 400.dp)) {
                 Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1138,11 +1897,12 @@ private fun TrackRow(track: Track, index: Int, current: Boolean, liked: Boolean,
 }
 
 @Composable
-private fun Cover(track: Track?, modifier: Modifier) {
+private fun Cover(track: Track?, modifier: Modifier, circular: Boolean = false) {
     val artwork by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, track?.artworkUri) {
         value = loadDesktopArtwork(track?.artworkUri)
     }
-    Box(modifier.background(Brush.linearGradient(listOf(Color(0xFF25594F), Color(0xFF283B5E))), RoundedCornerShape(8.dp)),
+    val shape = if (circular) CircleShape else RoundedCornerShape(8.dp)
+    Box(modifier.clip(shape).background(Brush.linearGradient(listOf(Color(0xFF25594F), Color(0xFF283B5E))), shape),
         contentAlignment = Alignment.Center) {
         artwork?.let { Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(),
             contentScale = androidx.compose.ui.layout.ContentScale.Crop) }

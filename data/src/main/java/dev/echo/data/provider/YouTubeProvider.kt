@@ -143,7 +143,9 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 throwKnownYouTubeError(error)
-                throw YouTubeRequestException("YouTube could not be reached or its response changed. Check your connection and try again; an Echo update may be needed.")
+                generateSequence<Throwable>(error) { it.cause }.filterIsInstance<YouTubeRequestException>().firstOrNull()?.let { throw it }
+                val retryable = generateSequence<Throwable>(error) { it.cause }.any { it is java.io.IOException }
+                throw YouTubeRequestException("YouTube could not be reached or its response changed. Check your connection and try again; an Echo update may be needed.", retryable)
             }
         }
     }

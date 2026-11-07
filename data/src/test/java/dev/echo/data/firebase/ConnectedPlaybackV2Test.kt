@@ -9,7 +9,10 @@ import dev.echo.core.connected.QueueOccurrence
 import dev.echo.core.connected.RepeatModeV2
 import dev.echo.core.connected.TransferQueue
 import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_GROUP
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_GROUP_QUEUE
 import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_MOVE
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_QUEUE
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_SYNC
 import dev.echo.core.connected.validateTransferQueue
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
@@ -151,6 +154,27 @@ class ConnectedPlaybackV2Test {
         assertTrue(runCatching { validateTransferQueue(TransferQueue(listOf(
             QueueOccurrence("00000000-0000-4000-8000-000000000001",
                 PortableRecording(localId, "Local song", "Local artist", 120_000))), RepeatModeV2.OFF, false)) }.isFailure)
+    }
+
+    @Test fun deviceFeatureSidecarIsStrictFreshAndBoundToTheLegacySessionRow() {
+        val snapshot = EngineObservation(EngineFence("local-session", 1, 2, 3),
+            "00000000-0000-4000-8000-000000000001", 1_000, false, true,
+            recordingId = "youtube:abcdefghijk", title = "Song", artist = "Artist", durationMs = 120_000)
+        val base = connectedV2DeviceJson("local-device", "Local device", snapshot, setOf(
+            CONNECTED_V2_CAPABILITY_MOVE, CONNECTED_V2_CAPABILITY_GROUP, CONNECTED_V2_CAPABILITY_QUEUE,
+            CONNECTED_V2_CAPABILITY_GROUP_QUEUE, CONNECTED_V2_CAPABILITY_SYNC)).put("updatedAt", 123_000)
+        val device = parseConnectedV2Device("local-device", base)
+        assertEquals(setOf(CONNECTED_V2_CAPABILITY_MOVE, CONNECTED_V2_CAPABILITY_GROUP), device.capabilities)
+
+        val featureRow = connectedV2DeviceFeaturesV1Json("local-session", setOf(
+            CONNECTED_V2_CAPABILITY_QUEUE, CONNECTED_V2_CAPABILITY_GROUP_QUEUE, CONNECTED_V2_CAPABILITY_SYNC))
+            .put("updatedAt", 123_000)
+        val features = parseConnectedV2DeviceFeaturesV1(featureRow)
+        assertEquals(setOf(CONNECTED_V2_CAPABILITY_QUEUE, CONNECTED_V2_CAPABILITY_GROUP_QUEUE,
+            CONNECTED_V2_CAPABILITY_SYNC), applyConnectedV2DeviceFeaturesV1(device, features, 124_000).capabilities - device.capabilities)
+        assertEquals(device.capabilities, applyConnectedV2DeviceFeaturesV1(device, features.copy(sessionId = "old-session"), 124_000).capabilities)
+        assertEquals(device.capabilities, applyConnectedV2DeviceFeaturesV1(device, features, 200_000).capabilities)
+        assertTrue(runCatching { parseConnectedV2DeviceFeaturesV1(JSONObject(featureRow.toString()).put("unknown", true)) }.isFailure)
     }
 
     @Test fun transportAddsRealtimeDatabaseJsonSuffixAndUsesEtagCas() = runBlocking {

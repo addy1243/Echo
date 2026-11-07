@@ -120,6 +120,16 @@ Variants: desktopRuntimeClasspath
 License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
 Upstream source: https://github.com/JetBrains/compose-jb
 
+org.jetbrains.compose.material:material-icons-core-desktop:1.7.3
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
+org.jetbrains.compose.material:material-icons-extended-desktop:1.7.3
+Variants: desktopRuntimeClasspath
+License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt
+Upstream source: https://github.com/JetBrains/compose-jb
+
 org.jetbrains.compose.material:material-ripple-desktop:1.8.2
 Variants: desktopRuntimeClasspath
 License: The Apache Software License, Version 2.0 - https://www.apache.org/licenses/LICENSE-2.0.txt

@@ -5,8 +5,11 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
@@ -41,6 +44,11 @@ class ConnectedPlayerUiTest {
                 player = ConnectedPlayerSnapshot("youtube:abcdefghijk", "Remote song", "Remote artist", true, 31_000, 180_000, "track-r1", "queue-r1"),
                 controlEnabled = true,
             )
+            val secondRemote = ConnectedDevice(
+                id = "preview-phone", label = "My phone", sessionId = "phone-session", updatedAt = System.currentTimeMillis(),
+                player = ConnectedPlayerSnapshot("youtube:lmnopqrstuv", "Second song", "Second artist", false, 0, 205_000, "track-r2", "queue-r2"),
+                controlEnabled = true,
+            )
             scenario.onActivity { activity ->
                 vm = ViewModelProvider(activity)[EchoViewModel::class.java]
                 assumeTrue("Keep player UI fixtures on an emulator", android.os.Build.FINGERPRINT.contains("generic") || android.os.Build.MODEL.contains("sdk", true))
@@ -68,7 +76,7 @@ class ConnectedPlayerUiTest {
                         player.pause()
                         player.clearMediaItems()
                     }
-                    vm.connectedPlaybackState.value = ConnectedPlaybackState(devices = listOf(remote))
+                    vm.connectedPlaybackState.value = ConnectedPlaybackState(devices = listOf(remote, secondRemote))
                     vm.selectConnectedPlaybackTarget(null)
                 }
                 compose.waitUntil(5_000) { vm.current == null }
@@ -96,12 +104,14 @@ class ConnectedPlayerUiTest {
                     assertTrue(vm.canControlConnectedDevice(remote))
                 }
                 compose.onNodeWithTag("player-track-title").assertTextContains("Remote song")
+                compose.onNodeWithTag("player-output-label").assertTextContains("PLAYING ON MY LAPTOP")
                 compose.onNodeWithTag("connected-full-controls").assertIsDisplayed()
                 compose.onNodeWithTag("connected-player-status").assertTextContains("Playing on My laptop")
                 compose.onNodeWithTag("connected-devices-action").assertExists()
                 compose.onNodeWithTag("connected-move-action").assertExists()
                 compose.onNodeWithTag("connected-together-action").assertExists()
                 compose.onNodeWithContentDescription("Pause on My laptop").assertIsDisplayed()
+                compose.onNodeWithContentDescription("Song position").assertIsDisplayed()
                 capture("unified-player-full.png")
 
                 scenario.onActivity {
@@ -117,18 +127,41 @@ class ConnectedPlayerUiTest {
                 compose.onNodeWithTag("player-track-title").assertTextContains("Remote song")
                 compose.onNodeWithContentDescription("Pause on My laptop").assertIsNotEnabled()
 
-                compose.onNodeWithContentDescription("Close player").performClick()
+                scenario.onActivity { vm.connectedPlaybackState.value = ConnectedPlaybackState(devices = listOf(remote, secondRemote)) }
+                compose.onNodeWithContentDescription("Close player").performScrollTo().performClick()
                 compose.waitUntil(5_000) {
                     runCatching { compose.onNodeWithTag("mini-player").assertIsDisplayed() }.isSuccess
                 }
-                compose.onNodeWithText("Remote song").assertIsDisplayed()
+                compose.onNodeWithContentDescription("My laptop, Remote song, Remote artist, Playing, player 2 of 3").assertIsDisplayed()
                 capture("unified-player-mini-before.png")
-                compose.onNodeWithTag("connected-mini-devices").assertIsDisplayed()
-                compose.onNodeWithTag("connected-mini-devices").performClick()
-                compose.onNodeWithTag("connected-devices-action").assertIsDisplayed()
-                compose.onNodeWithTag("connected-move-action").assertIsDisplayed()
-                compose.onNodeWithTag("connected-together-action").assertIsDisplayed()
+                compose.onNodeWithContentDescription("Previous track on My laptop").assertIsDisplayed()
+                compose.onNodeWithContentDescription("Pause on My laptop").assertIsDisplayed()
+                compose.onNodeWithContentDescription("Next track on My laptop").assertIsDisplayed()
+                compose.onNodeWithContentDescription("Song position").assertIsDisplayed()
+                compose.onNodeWithTag("mini-player-next-player").assertIsDisplayed()
+                compose.onNodeWithContentDescription("Next player: My phone, Second song, Second artist, Paused, player 3 of 3").performClick()
+                compose.waitUntil(5_000) {
+                    runCatching { compose.onNodeWithContentDescription("My phone, Second song, Second artist, Paused, player 3 of 3").assertIsDisplayed() }.isSuccess
+                }
+                compose.onNodeWithTag("mini-player").performTouchInput { swipeLeft() }
+                compose.waitUntil(5_000) {
+                    runCatching { compose.onNodeWithContentDescription("This phone, Choose a song, Ready to play, player 1 of 3").assertIsDisplayed() }.isSuccess
+                }
+                compose.onNodeWithTag("mini-player").performTouchInput { swipeRight() }
+                compose.waitUntil(5_000) {
+                    runCatching { compose.onNodeWithContentDescription("My phone, Second song, Second artist, Paused, player 3 of 3").assertIsDisplayed() }.isSuccess
+                }
+                compose.onNodeWithTag("mini-player").performClick()
+                compose.waitUntil(5_000) {
+                    runCatching { compose.onNodeWithTag("player-screen").assertIsDisplayed() }.isSuccess
+                }
+                compose.onNodeWithContentDescription("Close player").performScrollTo().performClick()
+                scenario.onActivity { vm.selectConnectedPlaybackTarget(remote) }
+                compose.waitUntil(5_000) {
+                    runCatching { compose.onNodeWithContentDescription("My laptop, Remote song, Remote artist, Playing, player 2 of 3").assertIsDisplayed() }.isSuccess
+                }
                 capture("unified-player-mini.png")
+
             } finally {
                 scenario.onActivity {
                     if (capturedQueue) {
@@ -150,6 +183,7 @@ class ConnectedPlayerUiTest {
     }
 
     private fun capture(name: String) {
+        compose.waitForIdle()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val bitmap = instrumentation.uiAutomation.takeScreenshot()
         val outputDir = instrumentation.targetContext.getExternalFilesDir(null) ?: instrumentation.targetContext.filesDir

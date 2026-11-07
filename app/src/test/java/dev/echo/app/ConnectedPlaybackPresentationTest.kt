@@ -40,6 +40,18 @@ class ConnectedPlaybackPresentationTest {
         assertNull(connectedArtworkUri(null, emptyList()))
     }
 
+    @Test fun focusOrderKeepsTheLocalOrSharedTargetAndPinsAStaleRemoteSession() {
+        val first = target.copy(id = "phone-1", label = "A phone")
+        val restarted = target.copy(sessionId = "session-b", label = "My laptop")
+        val second = target.copy(id = "laptop-2", label = "B laptop")
+        val order = connectedPlaybackFocusTargets(listOf(first, restarted, second), target)
+
+        assertNull(order.first())
+        assertEquals(listOf("phone-1", target.id, "laptop-2", target.id), order.drop(1).map { it?.id })
+        assertEquals("session-b", order[2]?.sessionId)
+        assertEquals("session-a", order.last()?.sessionId)
+    }
+
     private fun stateWith(device: ConnectedDevice, pending: Boolean = false) =
         ConnectedPlaybackState(devices = listOf(device), pending = pending)
 }

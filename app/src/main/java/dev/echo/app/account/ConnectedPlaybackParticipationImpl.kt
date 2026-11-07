@@ -22,7 +22,8 @@ class ConnectedPlaybackParticipationImpl @Inject constructor(
     private val firebase: FirebaseAccountSync,
 ) : ConnectedPlaybackParticipation {
     private val prefs = context.getSharedPreferences("connected-playback", Context.MODE_PRIVATE)
-    override val enabled: Boolean get() = prefs.getBoolean("enabled", false)
+    override val enabled: Boolean get() = !dev.echo.app.BuildConfig.STAGING && !(dev.echo.app.BuildConfig.DEBUG && prefs.getBoolean("test-suppressed", false)) &&
+        accountEmail != null && dev.echo.data.firebase.EchoFirebaseProject.configured
     override val deviceId: String = prefs.getString("device-id", null)
         ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,64}")) }
         ?: UUID.randomUUID().toString().also { prefs.edit().putString("device-id", it).apply() }

@@ -17,12 +17,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
     var showDialog by remember { mutableStateOf(false) }
     val seconds = remainingMs?.coerceAtLeast(0)?.let { (it + 999) / 1000 }
     val countdown = seconds?.let { "%d:%02d".format(it / 60, it % 60) }
-    TextButton(onClick = { showDialog = true }, modifier = Modifier.testTag("sleep-timer-button").semantics {
+    IconButton(onClick = { showDialog = true }, modifier = Modifier.testTag("sleep-timer-button").semantics {
         stateDescription = if (seconds == null) "Off" else "${seconds / 60} minutes ${seconds % 60} seconds remaining"
     }) {
-        Icon(Icons.Default.Bedtime, null)
-        Spacer(Modifier.width(6.dp))
-        Text(if (countdown == null) "Sleep timer" else "Sleep timer · $countdown")
+        Icon(Icons.Default.Bedtime, if (countdown == null) "Set sleep timer" else "Sleep timer · $countdown remaining",
+            tint = if (seconds == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary)
     }
     if (showDialog) AlertDialog(
         onDismissRequest = { showDialog = false },

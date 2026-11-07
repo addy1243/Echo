@@ -31,6 +31,7 @@ class MainActivity : ComponentActivity() {
         if (intent?.action == "android.media.action.MEDIA_PLAY_FROM_SEARCH") {
             model.playFromSearch(intent.getStringExtra(android.app.SearchManager.QUERY).orEmpty())
         }
-        intent?.data?.let { if (it.scheme == "echomusic" && it.host == "oauth" && it.path == "/spotify") model.spotifyCallback(it) }
+        val scheme = if (BuildConfig.STAGING) "echomusic-stage" else "echomusic"
+        intent?.data?.let { if (it.scheme == scheme && it.host == "oauth" && it.path == "/spotify") model.spotifyCallback(it) }
     }
 }

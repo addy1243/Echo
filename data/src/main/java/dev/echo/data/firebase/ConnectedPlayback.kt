@@ -97,18 +97,18 @@ class ConnectedPlaybackClient(
     /** Run from the owning playback service/app lifecycle; it exits when cancelled or closed. */
     suspend fun run() {
         check(!closed && !running) { "Connected playback client is already stopped or running" }
-        val initial = sessionProvider()
         running = true
-        uid = initial.uid
+        var initial: FirebaseSession? = null
         mutableState.value = ConnectedPlaybackState(message = null)
         try {
             while (!closed) {
                 try {
-                val current = sessionProvider()
-                if (current.uid != initial.uid) {
-                    mutableState.value = ConnectedPlaybackState(message = "Account changed; reconnect connected playback.")
-                    return
-                }
+                    val owner = initial ?: sessionProvider().also { initial = it; uid = it.uid }
+                    val current = sessionProvider()
+                    if (current.uid != owner.uid) {
+                        mutableState.value = ConnectedPlaybackState(message = "Account changed; reconnect connected playback.")
+                        return
+                    }
                 val player = sanitizeSnapshot(snapshot())
                 val now = System.currentTimeMillis()
                 var publishedAt = 0L
@@ -138,14 +138,14 @@ class ConnectedPlaybackClient(
                 if (!closed) delay(POLL_MS)
             }
         } finally {
-            runCatching {
+            initial?.let { owner -> runCatching {
                 withContext(NonCancellable) {
                     withTimeoutOrNull(1_500L) {
                         val latest = sessionProvider()
-                        if (latest.uid == initial.uid) writeDevice(latest, lastPlayer ?: sanitizeSnapshot(snapshot()), enabled = false)
+                        if (latest.uid == owner.uid) writeDevice(latest, lastPlayer ?: sanitizeSnapshot(snapshot()), enabled = false)
                     }
                 }
-            }
+            } }
             mutableState.value = ConnectedPlaybackState(message = "Connected playback stopped.")
             running = false
         }

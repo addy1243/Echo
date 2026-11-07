@@ -16,7 +16,7 @@ class ProfileUiTest {
         compose.onNodeWithText("Account sync").assertIsDisplayed()
         compose.onNodeWithTag("profile-screen").performScrollToNode(hasText("Connected playback"))
         compose.onNodeWithText("Connected playback").assertIsDisplayed()
-        compose.onNodeWithTag("connected-playback-toggle").assertExists()
+        compose.onNodeWithText("When Echo is open and you are signed in", substring = true).assertExists()
         compose.onNodeWithTag("profile-screen").performScrollToNode(hasText("A saved library does not mean", substring = true))
         compose.onNodeWithText("A saved library does not mean", substring = true).assertIsDisplayed()
         compose.onNodeWithTag("tab-home").performClick()
