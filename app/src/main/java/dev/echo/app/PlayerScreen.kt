@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -35,121 +36,121 @@ import androidx.media3.common.Player
 import dev.echo.core.Track
 import dev.echo.core.Playlist
 
-@Composable internal fun PlayerScreen(vm: EchoViewModel, tracks: List<Track>, playlists: List<Playlist>, favorites: Set<String>, close: () -> Unit) {
+@Composable internal fun FullPlayer(vm: EchoViewModel, tracks: List<Track>, playlists: List<Playlist>, favorites: Set<String>, close: () -> Unit) {
     var showQueue by remember { mutableStateOf(false) }
     var credits by remember { mutableStateOf(false) }
     var add by remember { mutableStateOf<Track?>(null) }
-    var seeking by remember { mutableStateOf<Float?>(null) }
-    var seekTarget by remember { mutableStateOf<dev.echo.data.firebase.ConnectedDevice?>(null) }
-    val targetId by vm.selectedConnectedPlaybackTargetId.collectAsStateWithLifecycle()
+    val presentation = rememberPlayerPresentation(vm, tracks)
+    val targetId = presentation.selectedRemoteId
     val connectedState by vm.connectedPlaybackState.collectAsStateWithLifecycle()
     val connectedV2 by vm.connectedPlaybackV2State.collectAsStateWithLifecycle()
-    val localGroup = connectedV2.group
-    val cachedTarget by vm.selectedConnectedPlaybackDevice.collectAsStateWithLifecycle()
-    val remote = if (targetId == null) null else connectedState.devices.firstOrNull { it.id == targetId } ?: cachedTarget
-    val remoteSelected = targetId != null
-    val canControlRemote = remote != null && remote.player.title != null && vm.canControlConnectedDevice(remote)
-    LaunchedEffect(targetId, remote?.sessionId, remote?.player?.trackRevision, remote?.player?.queueRevision, vm.current?.mediaId) {
-        seeking = null
-        seekTarget = null
-    }
-    val current = if (remoteSelected) tracks.firstOrNull { it.id == remote?.player?.trackId } else tracks.find { it.id == vm.current?.mediaId }
+    val localGroup = presentation.group
+    val remote = presentation.remote
+    val remoteSelected = targetId != null && localGroup == null
+    val canControlRemote = presentation.remoteEnabled
+    val current = presentation.current
     val player = vm.controller
     val revision = vm.revision
     val accent = MaterialTheme.colorScheme.primary
-    val remotePosition = seekTarget?.player?.positionMs ?: remote?.player?.positionMs ?: 0L
-    val remoteDuration = seekTarget?.player?.durationMs ?: remote?.player?.durationMs ?: 0L
-    val duration = if (remoteSelected || seekTarget != null) remoteDuration else vm.duration
-    val basePosition = if (remoteSelected || seekTarget != null) remotePosition else vm.position
-    val progress = seeking ?: basePosition.toFloat().coerceIn(0f, duration.toFloat().coerceAtLeast(1f))
-    val liveRemote = remote?.let { candidate -> connectedState.devices.firstOrNull { it.id == candidate.id && it.sessionId == candidate.sessionId && it.controlEnabled } }
-    val displayedTitle = if (remoteSelected) remote?.player?.title ?: if (liveRemote != null) "Ready for playback" else "Reconnecting to player" else vm.current?.mediaMetadata?.title?.toString() ?: "Choose a song"
-    val displayedArtist = if (remoteSelected) remote?.player?.artist.orEmpty() else vm.current?.mediaMetadata?.artist?.toString().orEmpty()
-    val artworkUri = if (remoteSelected) connectedArtworkUri(remote?.player?.trackId, tracks) else vm.current?.mediaMetadata?.artworkUri?.toString()
-    val displayedPlaying = if (remoteSelected) remote?.player?.isPlaying == true else localGroup?.timeline?.playing ?: vm.playing
-    BoxWithConstraints(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF342742), Color(0xFF141318), Color(0xFF101014)))).testTag("player-screen")) {
+    val displayedTitle = presentation.title
+    val displayedArtist = presentation.artist
+    val artworkUri = presentation.artworkUri
+    var playlistMembership by remember { mutableStateOf<List<Playlist>>(emptyList()) }
+    LaunchedEffect(current?.id, playlists.map { it.id }) {
+        val trackId = current?.id
+        playlistMembership = if (trackId == null) emptyList() else playlists.filter { playlist ->
+            vm.library.playlistTracks(playlist.id).any { it.id == trackId }
+        }
+    }
+    val displayedPlaying = presentation.playing
+    val playerBackground = if (localGroup != null) listOf(Color(0xFF173B37), Color(0xFF141A1A), Color(0xFF101014))
+        else listOf(Color(0xFF342742), Color(0xFF141318), Color(0xFF101014))
+    BoxWithConstraints(Modifier.fillMaxSize().background(Brush.verticalGradient(playerBackground)).testTag("player-screen")) {
         val artSize = minOf(maxWidth - 56.dp, maxHeight * .38f).coerceIn(140.dp, 340.dp)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 26.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = close) { Icon(Icons.Default.KeyboardArrowDown, "Close player", modifier = Modifier.size(30.dp)) }
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("NOW PLAYING", style = MaterialTheme.typography.labelSmall, letterSpacing = 2.sp, color = accent)
-                    Text(if (!remoteSelected && vm.recommendedIds.contains(vm.current?.mediaId)) "Recommended for this session" else "Your music, in the moment", style = MaterialTheme.typography.bodySmall)
+                    Text(if (localGroup != null) "PLAYING TOGETHER · ${localGroup.members.size} DEVICES"
+                        else "PLAYING ON ${(if (remoteSelected) remote?.label ?: "selected player" else "This phone").uppercase()}",
+                        style = MaterialTheme.typography.labelSmall, letterSpacing = 2.sp, color = if (localGroup != null) Color(0xFF83E0D2) else accent,
+                        modifier = Modifier.testTag("player-output-label"))
+                    Text(if (localGroup != null) "Shared listening session" else if (!remoteSelected && vm.recommendedIds.contains(vm.current?.mediaId)) "Recommended for this session" else "Your music, in the moment", style = MaterialTheme.typography.bodySmall)
                 }
-                if (!remoteSelected && localGroup == null) IconButton(onClick = { showQueue = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Open queue") }
-                else Spacer(Modifier.size(48.dp))
+                if (remoteSelected || localGroup == null || localGroup.timeline != null) IconButton(onClick = { showQueue = true }) {
+                    Icon(Icons.AutoMirrored.Filled.QueueMusic, when {
+                        remoteSelected -> "Open device queue"
+                        localGroup != null -> "Open shared queue"
+                        else -> "Open queue"
+                    })
+                } else Spacer(Modifier.size(48.dp))
             }
             Spacer(Modifier.height(14.dp))
             Surface(shape = RoundedCornerShape(28.dp), shadowElevation = 20.dp) { Artwork(artworkUri, artSize.value.toInt()) }
             Spacer(Modifier.height(26.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(displayedTitle, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("player-track-title"))
+                    Text(displayedTitle,
+                        style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("player-track-title"))
                     Spacer(Modifier.height(6.dp))
-                    Text(displayedArtist, style = MaterialTheme.typography.bodyLarge, color = Color(0xFFC8C1CE), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(displayedArtist,
+                        style = MaterialTheme.typography.bodyLarge, color = Color(0xFFC8C1CE), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
-                IconButton(enabled = current != null, onClick = { current?.let(vm::favorite) }) { Icon(if (current?.id in favorites) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Like song", tint = accent) }
-                IconButton(enabled = current != null, onClick = { add = current }) { Icon(Icons.Default.PlaylistAdd, "Add current song to playlist", tint = accent) }
+                IconButton(enabled = current != null, onClick = { current?.let(vm::favorite) }) { Icon(if (current?.id in favorites) Icons.Default.Favorite else Icons.Default.FavoriteBorder, if (current?.id in favorites) "Unlike song" else "Like song", tint = accent) }
+                IconButton(enabled = current != null, onClick = { add = current }) {
+                    Icon(if (playlistMembership.isNotEmpty()) Icons.Default.Check else Icons.Default.PlaylistAdd,
+                        if (playlistMembership.isNotEmpty()) "Already in ${playlistMembership.size} playlist${if (playlistMembership.size == 1) "" else "s"}; add to another" else "Add current song to playlist", tint = accent)
+                }
             }
             Spacer(Modifier.height(18.dp))
             if (!remoteSelected) {
                 current?.let { DownloadTrackAction(vm, it) }
-                if (localGroup == null) SleepTimerControls(vm)
             }
-            Slider(progress, { value ->
-                if (seekTarget == null && remoteSelected) seekTarget = remote
-                seeking = value
-            }, valueRange = 0f..duration.toFloat().coerceAtLeast(1f), enabled = if (remoteSelected || seekTarget != null) {
-                val captured = seekTarget ?: remote
-                duration > 0 && captured != null && vm.canControlConnectedDevice(captured)
-            } else duration > 0,
-                onValueChangeFinished = {
-                    val value = seeking
-                    val captured = seekTarget
-                    if (value != null) {
-                        if (captured != null) vm.sendConnectedPlaybackCommand(captured, dev.echo.data.firebase.ConnectedPlaybackAction.SEEK, value.toLong())
-                        else if (localGroup != null) vm.controlTogether(dev.echo.data.firebase.GroupActionV2.SEEK, value.toLong())
-                        else player?.seekTo(value.toLong())
-                    }
-                    seeking = null
-                    seekTarget = null
-                }, modifier = Modifier.fillMaxWidth().testTag("player-seek"))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(playerTime(progress.toLong()), style = MaterialTheme.typography.labelSmall); Text(playerTime(duration), style = MaterialTheme.typography.labelSmall) }
+            PlayerSeekBar(vm, presentation, Modifier.fillMaxWidth(), showTimeLabels = true, testTag = "player-seek")
             Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 if (remoteSelected) {
-                    IconButton(enabled = canControlRemote, onClick = { remote?.let { vm.sendConnectedPlaybackCommand(it, dev.echo.data.firebase.ConnectedPlaybackAction.PREVIOUS) } }) { Icon(Icons.Default.SkipPrevious, "Previous on ${remote?.label ?: "selected player"}", modifier = Modifier.size(34.dp)) }
-                    FilledIconButton(enabled = canControlRemote && !connectedState.pending, onClick = { remote?.let { vm.sendConnectedPlaybackCommand(it, if (displayedPlaying) dev.echo.data.firebase.ConnectedPlaybackAction.PAUSE else dev.echo.data.firebase.ConnectedPlaybackAction.PLAY) } }, modifier = Modifier.size(80.dp)) {
+                    IconButton(enabled = canControlRemote, onClick = vm::previousFocusedPlayback) { Icon(Icons.Default.SkipPrevious, "Previous on ${remote?.label ?: "selected player"}", modifier = Modifier.size(34.dp)) }
+                    FilledIconButton(enabled = canControlRemote && !connectedState.pending, onClick = vm::toggleFocusedPlayback, modifier = Modifier.size(80.dp)) {
                         Icon(if (displayedPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, "${if (displayedPlaying) "Pause" else "Play"} on ${remote?.label ?: "selected player"}", modifier = Modifier.size(42.dp))
                     }
-                    IconButton(enabled = canControlRemote && !connectedState.pending, onClick = { remote?.let { vm.sendConnectedPlaybackCommand(it, dev.echo.data.firebase.ConnectedPlaybackAction.NEXT) } }) { Icon(Icons.Default.SkipNext, "Next on ${remote?.label ?: "selected player"}", modifier = Modifier.size(34.dp)) }
+                    IconButton(enabled = canControlRemote && !connectedState.pending, onClick = vm::nextFocusedPlayback) { Icon(Icons.Default.SkipNext, "Next on ${remote?.label ?: "selected player"}", modifier = Modifier.size(34.dp)) }
                 } else if (localGroup != null) {
-                    IconButton(enabled = !connectedV2.pending, onClick = { vm.controlTogether(dev.echo.data.firebase.GroupActionV2.PREVIOUS) }) { Icon(Icons.Default.SkipPrevious, "Previous for everyone", modifier = Modifier.size(34.dp)) }
-                    FilledIconButton(enabled = !connectedV2.pending, onClick = {
-                        vm.controlTogether(if (localGroup.timeline?.playing == true) dev.echo.data.firebase.GroupActionV2.PAUSE else dev.echo.data.firebase.GroupActionV2.PLAY)
-                    }, modifier = Modifier.size(80.dp)) {
+                    IconButton(enabled = !connectedV2.pending, onClick = vm::previousFocusedPlayback) { Icon(Icons.Default.SkipPrevious, "Previous for everyone", modifier = Modifier.size(34.dp)) }
+                    FilledIconButton(enabled = !connectedV2.pending, onClick = vm::toggleFocusedPlayback, modifier = Modifier.size(80.dp)) {
                         Icon(if (localGroup.timeline?.playing == true) Icons.Default.Pause else Icons.Default.PlayArrow,
                             if (localGroup.timeline?.playing == true) "Pause for everyone" else "Play for everyone", modifier = Modifier.size(42.dp))
                     }
-                    IconButton(enabled = !connectedV2.pending, onClick = { vm.controlTogether(dev.echo.data.firebase.GroupActionV2.NEXT) }) { Icon(Icons.Default.SkipNext, "Next for everyone", modifier = Modifier.size(34.dp)) }
+                    IconButton(enabled = !connectedV2.pending, onClick = vm::nextFocusedPlayback) { Icon(Icons.Default.SkipNext, "Next for everyone", modifier = Modifier.size(34.dp)) }
                 } else {
                     IconButton(onClick = { player?.shuffleModeEnabled = player?.shuffleModeEnabled != true }) { Icon(Icons.Default.Shuffle, "Shuffle", tint = if (player?.shuffleModeEnabled == true && revision >= 0) accent else Color(0xFFA29BAA)) }
-                    IconButton(enabled = player != null, onClick = { player?.seekToPrevious() }) { Icon(Icons.Default.SkipPrevious, "Previous", modifier = Modifier.size(34.dp)) }
-                    FilledIconButton(enabled = vm.current != null, onClick = vm::toggle, modifier = Modifier.size(80.dp)) {
+                    IconButton(enabled = player != null, onClick = vm::previousFocusedPlayback) { Icon(Icons.Default.SkipPrevious, "Previous", modifier = Modifier.size(34.dp)) }
+                    FilledIconButton(enabled = vm.current != null, onClick = vm::toggleFocusedPlayback, modifier = Modifier.size(80.dp)) {
                         if (vm.buffering) CircularProgressIndicator(Modifier.size(30.dp), color = MaterialTheme.colorScheme.onPrimary)
                         else Icon(if (vm.playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (vm.playing) "Pause" else "Play", modifier = Modifier.size(42.dp))
                     }
-                    IconButton(enabled = player?.hasNextMediaItem() == true && revision >= 0, onClick = { player?.seekToNextMediaItem() }) { Icon(Icons.Default.SkipNext, "Next", modifier = Modifier.size(34.dp)) }
+                    IconButton(enabled = player?.hasNextMediaItem() == true && revision >= 0, onClick = vm::nextFocusedPlayback) { Icon(Icons.Default.SkipNext, "Next", modifier = Modifier.size(34.dp)) }
                     IconButton(onClick = { player?.repeatMode = when (player?.repeatMode) { Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL; Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE; else -> Player.REPEAT_MODE_OFF } }) {
                         Icon(if (player?.repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat, "Repeat mode ${player?.repeatMode}", tint = if (player != null && player.repeatMode != Player.REPEAT_MODE_OFF && revision >= 0) accent else Color(0xFFA29BAA))
                     }
+                    if (localGroup == null) SleepTimerControls(vm)
                 }
             }
             ConnectedPlayerControls(vm)
             Spacer(Modifier.height(24.dp))
-            if (!remoteSelected && localGroup == null) {
+            if (remoteSelected && remote != null) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    TextButton(onClick = { showQueue = true }) {
+                        Icon(Icons.AutoMirrored.Filled.QueueMusic, null); Spacer(Modifier.width(8.dp))
+                        Text("Queue on ${remote.label}")
+                    }
+                }
+            } else if (!remoteSelected && (localGroup == null || localGroup.timeline != null)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { showQueue = true }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, null); Spacer(Modifier.width(8.dp)); Text("Up next · ${vm.queueItems.drop(1).size}") }
+                    TextButton(onClick = { showQueue = true }) {
+                        Icon(Icons.AutoMirrored.Filled.QueueMusic, null); Spacer(Modifier.width(8.dp))
+                        Text(if (localGroup != null) "Shared queue · ${localGroup.timeline?.queue?.entries?.size ?: 0}" else "Up next · ${vm.queueItems.drop(1).size}")
+                    }
                     if (current?.attribution != null) TextButton(onClick = { credits = true }) { Text("Credits") }
                     else Text(current?.provider?.replaceFirstChar { it.uppercase() }.orEmpty(), style = MaterialTheme.typography.labelSmall, color = Color(0xFFA29BAA))
                 }
@@ -160,8 +161,78 @@ import dev.echo.core.Playlist
         }
     }
     if (showQueue && !remoteSelected && localGroup == null) QueueSheet(vm, tracks, onAdd = { add = it }) { showQueue = false }
+    if (showQueue && !remoteSelected && localGroup?.timeline != null) GroupQueueSheet(localGroup) { showQueue = false }
+    if (showQueue && remoteSelected && remote != null) RemoteQueueSheet(vm, remote) { showQueue = false }
     add?.let { track -> AddToPlaylistDialog(track, vm, playlists) { add = null } }
     if (credits && current != null) Credits(current) { credits = false }
+}
+
+@Composable private fun GroupQueueSheet(group: dev.echo.data.firebase.ConnectedGroupV2, close: () -> Unit) {
+    val timeline = group.timeline ?: return
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = close, sheetState = sheetState, containerColor = Color(0xFF19171F)) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(.78f).padding(horizontal = 20.dp)) {
+            Text("Shared queue", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("${timeline.queue.entries.size} songs · Play together", style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF83E0D2), modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+            LazyColumn {
+                itemsIndexed(timeline.queue.entries, key = { _, entry -> entry.id }) { index, entry ->
+                    val current = index == timeline.cursor
+                    Surface(color = if (current) Color(0xFF244641) else Color.Transparent,
+                        shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(if (current) "▶" else "${index + 1}", color = Color(0xFF83E0D2), modifier = Modifier.width(34.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(entry.recording.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(entry.recording.artist, style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun RemoteQueueSheet(vm: EchoViewModel, target: dev.echo.data.firebase.ConnectedDevice, close: () -> Unit) {
+    var capture by remember(target.id, target.sessionId) { mutableStateOf<dev.echo.core.connected.EngineCapture?>(null) }
+    var loading by remember(target.id, target.sessionId) { mutableStateOf(true) }
+    var error by remember(target.id, target.sessionId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(target.id, target.sessionId) {
+        try { capture = vm.readRemoteQueue(target) }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (failure: Exception) { error = failure.message ?: "The device queue could not be read" }
+        finally { loading = false }
+    }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = close, sheetState = sheetState, containerColor = Color(0xFF19171F)) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(.78f).padding(horizontal = 20.dp)) {
+            Text("Queue on ${target.label}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Read-only snapshot · ${if (capture?.playing == true) "Playing" else "Paused"}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+            when {
+                loading -> CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally).padding(20.dp))
+                error != null -> Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                capture?.queue?.entries.isNullOrEmpty() -> Text("This device's queue is empty.")
+                else -> LazyColumn {
+                    val entries = capture!!.queue.entries
+                    itemsIndexed(entries, key = { _, entry -> entry.id }) { index, entry ->
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Text(if (index == 0) "▶" else "${index + 1}", color = Color(0xFF83E0D2), modifier = Modifier.width(34.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(entry.recording.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(entry.recording.artist, style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable private fun QueueSheet(vm: EchoViewModel, tracks: List<Track>, onAdd: (Track) -> Unit, close: () -> Unit) {
@@ -248,5 +319,3 @@ import dev.echo.core.Playlist
         }
     }
 }
-
-private fun playerTime(ms: Long) = "%d:%02d".format(ms.coerceAtLeast(0) / 60_000, ms.coerceAtLeast(0) / 1000 % 60)

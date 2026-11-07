@@ -1,6 +1,10 @@
 package dev.echo.desktop
 
 import dev.echo.core.Track
+import dev.echo.core.connected.EngineCapture
+import dev.echo.core.connected.EngineFence
+import dev.echo.core.connected.GroupRef
+import dev.echo.core.connected.TransferQueue
 import dev.echo.data.firebase.ConnectedDevice
 import dev.echo.data.firebase.ConnectedPlaybackAction
 import dev.echo.data.firebase.ConnectedPlaybackClient
@@ -10,6 +14,8 @@ import dev.echo.data.firebase.ConnectedPlayerSnapshot
 import dev.echo.data.firebase.ConnectedPlaybackV2Client
 import dev.echo.data.firebase.ConnectedPlaybackV2State
 import dev.echo.data.firebase.GroupActionV2
+import dev.echo.data.firebase.GroupQueueOperationV2
+import dev.echo.data.firebase.QueueOperationV2
 import dev.echo.data.firebase.EchoFirebaseProject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
@@ -22,37 +28,69 @@ import kotlinx.coroutines.withContext
 import java.security.MessageDigest
 import java.util.prefs.Preferences
 
-/** Opt-in foreground presence and controls; authentication is delegated to the existing desktop account. */
+internal interface DesktopConnectedPlaybackBackend {
+    val deviceId: String
+    val state: StateFlow<ConnectedPlaybackState>
+    val v2State: StateFlow<ConnectedPlaybackV2State>
+    fun enabled(): Boolean
+    suspend fun run()
+    suspend fun sendCommand(target: ConnectedDevice, action: ConnectedPlaybackAction, positionMs: Long = 0L)
+    suspend fun moveTo(targetDeviceId: String, replacePlaying: Boolean)
+    suspend fun startTogether(targetDeviceIds: List<String>, replacePlaying: Boolean,
+        expectedTargetSessions: Map<String, String>)
+    suspend fun playQueueOn(targetDeviceId: String, expectedTargetSessionId: String,
+        expectedTargetFence: EngineFence, queue: TransferQueue): QueueOperationV2
+    suspend fun readRemoteQueue(targetDeviceId: String, expectedTargetSessionId: String,
+        expectedTargetFence: EngineFence): EngineCapture
+    suspend fun replaceGroupQueue(expectedGroup: GroupRef, expectedTimelineSequence: Long,
+        queue: TransferQueue): GroupQueueOperationV2
+    suspend fun restoreLatestDisplacedPaused()
+    suspend fun requestGroup(action: GroupActionV2, positionMs: Long = 0L,
+        expectedGroup: GroupRef? = null, expectedTimelineSequence: Long? = null,
+        expectedOccurrenceId: String? = null)
+    suspend fun stopGracefully()
+    fun stop()
+}
+
+/** Foreground presence and controls while signed in; authentication is delegated to the existing desktop account. */
 internal class DesktopConnectedPlayback(
     private val store: DesktopLibrary,
     private val google: DesktopGoogleAccount,
     private val player: DesktopPlayback,
-    private val preferences: Preferences = Preferences.userNodeForPackage(DesktopConnectedPlayback::class.java),
-) {
+    @Suppress("UNUSED_PARAMETER") preferences: Preferences = Preferences.userNodeForPackage(DesktopConnectedPlayback::class.java),
+) : DesktopConnectedPlaybackBackend {
+    override
     val deviceId: String by lazy {
         store.firebaseDeviceId.also { require(DEVICE_ID.matches(it)) { "Invalid saved device ID" } }
     }
 
     private val mutableState = MutableStateFlow(ConnectedPlaybackState())
-    val state: StateFlow<ConnectedPlaybackState> = mutableState.asStateFlow()
+    override val state: StateFlow<ConnectedPlaybackState> = mutableState.asStateFlow()
     private val mutableV2State = MutableStateFlow(ConnectedPlaybackV2State())
-    val v2State: StateFlow<ConnectedPlaybackV2State> = mutableV2State.asStateFlow()
+    override val v2State: StateFlow<ConnectedPlaybackV2State> = mutableV2State.asStateFlow()
     private var client: ConnectedPlaybackClient? = null
     private var v2Client: ConnectedPlaybackV2Client? = null
+    @Volatile private var testOverride: Boolean? = null
 
-    fun enabled(): Boolean = preferences.getBoolean(ENABLED_KEY, false)
+    override fun enabled(): Boolean = testOverride ?: (google.state.value.email != null && EchoFirebaseProject.configured)
 
-    fun setEnabled(enabled: Boolean) {
-        preferences.putBoolean(ENABLED_KEY, enabled)
-    }
+    /** Compatibility seam for existing native/JVM fixtures; never persisted as a user preference. */
+    fun setEnabled(enabled: Boolean) { testOverride = enabled }
 
-    suspend fun run() {
+    override suspend fun run() {
         val expectedAccount = google.state.value.email ?: error("Sign in first")
         val connected = ConnectedPlaybackClient(
             databaseUrl = EchoFirebaseProject.realtimeDatabaseUrl,
             deviceId = deviceId,
             label = "Echo for Windows",
-            sessionProvider = { google.firebaseSession(EchoFirebaseProject.configuration()) },
+            sessionProvider = {
+                check(google.state.value.email == expectedAccount) { "Account changed; reconnect connected playback" }
+                google.firebaseSession(EchoFirebaseProject.configuration()).also {
+                    check(google.state.value.email == expectedAccount && it.email.equals(expectedAccount, true)) {
+                        "Account changed; reconnect connected playback"
+                    }
+                }
+            },
             snapshot = { captureSnapshot() },
             executeCommand = { command ->
                 check(enabled() && google.state.value.email == expectedAccount) { "Connected playback was disabled or the account changed" }
@@ -65,7 +103,14 @@ internal class DesktopConnectedPlayback(
             databaseUrl = EchoFirebaseProject.realtimeDatabaseUrl,
             deviceId = deviceId,
             label = "Echo for Windows",
-            sessionProvider = { google.firebaseSession(EchoFirebaseProject.configuration()) },
+            sessionProvider = {
+                check(google.state.value.email == expectedAccount) { "Account changed; reconnect connected playback" }
+                google.firebaseSession(EchoFirebaseProject.configuration()).also {
+                    check(google.state.value.email == expectedAccount && it.email.equals(expectedAccount, true)) {
+                        "Account changed; reconnect connected playback"
+                    }
+                }
+            },
             bridge = player,
         )
         client = connected
@@ -96,22 +141,37 @@ internal class DesktopConnectedPlayback(
         }
     }
 
-    suspend fun sendCommand(target: ConnectedDevice, action: ConnectedPlaybackAction, positionMs: Long = 0L) {
-        require(enabled()) { "Turn on connected playback first" }
+    override suspend fun sendCommand(target: ConnectedDevice, action: ConnectedPlaybackAction, positionMs: Long) {
+        require(enabled()) { "Sign in to use connected playback" }
         require(target.id != deviceId) { "Choose another Echo device" }
         require(client != null) { "Connected playback is not running" }
         client!!.sendCommand(target, action, positionMs)
     }
 
-    suspend fun moveTo(targetDeviceId: String, replacePlaying: Boolean) =
+    override suspend fun moveTo(targetDeviceId: String, replacePlaying: Boolean) =
         (v2Client ?: error("Connected playback is not running")).moveTo(targetDeviceId, replacePlaying)
 
-    suspend fun startTogether(targetDeviceIds: List<String>, replacePlaying: Boolean,
+    override suspend fun startTogether(targetDeviceIds: List<String>, replacePlaying: Boolean,
         expectedTargetSessions: Map<String, String>) =
         (v2Client ?: error("Connected playback is not running")).startTogether(targetDeviceIds,
             replacePlaying = replacePlaying, expectedTargetSessions = expectedTargetSessions)
 
-    suspend fun restoreLatestDisplacedPaused() {
+    override suspend fun playQueueOn(targetDeviceId: String, expectedTargetSessionId: String,
+        expectedTargetFence: EngineFence, queue: TransferQueue): QueueOperationV2 =
+        (v2Client ?: error("Connected playback is not running")).playQueueOn(
+            targetDeviceId, expectedTargetSessionId, expectedTargetFence, queue)
+
+    override suspend fun readRemoteQueue(targetDeviceId: String, expectedTargetSessionId: String,
+        expectedTargetFence: EngineFence): EngineCapture =
+        (v2Client ?: error("Connected playback is not running")).readRemoteQueue(
+            targetDeviceId, expectedTargetSessionId, expectedTargetFence)
+
+    override suspend fun replaceGroupQueue(expectedGroup: GroupRef, expectedTimelineSequence: Long,
+        queue: TransferQueue): GroupQueueOperationV2 =
+        (v2Client ?: error("Connected playback is not running")).replaceGroupQueue(
+            expectedGroup, expectedTimelineSequence, queue)
+
+    override suspend fun restoreLatestDisplacedPaused() {
         check(!mutableV2State.value.pending) { "Finish the current connected playback operation first." }
         check(!mutableV2State.value.reconcilingMove) {
             "This Move is still being reconciled. Wait for its outcome before restoring the previous queue."
@@ -119,10 +179,12 @@ internal class DesktopConnectedPlayback(
         player.restoreLatestDisplacedPaused()
     }
 
-    suspend fun requestGroup(action: GroupActionV2, positionMs: Long = 0L) =
-        (v2Client ?: error("Connected playback is not running")).requestGroup(action, positionMs)
+    override suspend fun requestGroup(action: GroupActionV2, positionMs: Long,
+        expectedGroup: GroupRef?, expectedTimelineSequence: Long?, expectedOccurrenceId: String?) =
+        (v2Client ?: error("Connected playback is not running")).requestGroup(
+            action, positionMs, expectedGroup, expectedTimelineSequence, expectedOccurrenceId)
 
-    suspend fun stopGracefully() {
+    override suspend fun stopGracefully() {
         val activeV2 = v2Client
         try {
             if (player.isInConnectedGroup()) runCatching { activeV2?.leaveTogether() }
@@ -132,7 +194,7 @@ internal class DesktopConnectedPlayback(
         }
     }
 
-    fun stop() {
+    override fun stop() {
         client?.close()
         v2Client?.close()
         client = null
@@ -157,7 +219,6 @@ internal class DesktopConnectedPlayback(
     }
 
     private companion object {
-        const val ENABLED_KEY = "connectedPlaybackEnabled"
         val DEVICE_ID = Regex("[A-Za-z0-9_-]{1,64}")
     }
 }

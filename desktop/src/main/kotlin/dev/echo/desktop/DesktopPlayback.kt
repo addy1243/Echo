@@ -6,7 +6,10 @@ import dev.echo.core.connected.EngineFence
 import dev.echo.core.connected.EngineObservation
 import dev.echo.core.connected.GroupRef
 import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_GROUP
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_GROUP_QUEUE
 import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_MOVE
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_QUEUE
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_SYNC
 import dev.echo.core.connected.NativePlaybackBridgeV2
 import dev.echo.core.connected.PortableRecording
 import dev.echo.core.connected.QueueOccurrence
@@ -31,6 +34,12 @@ import uk.co.caprica.vlcj.player.base.MediaPlayer
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter
 
 enum class DesktopRepeatMode { OFF, ALL, ONE }
+
+internal fun desktopPlaybackRetryDelayMs(attempt: Int): Long = when (attempt) {
+    1 -> 1_000L
+    2 -> 3_000L
+    else -> minOf(60_000L, 6_000L * (1L shl (attempt - 3).coerceIn(0, 10)))
+}
 
 data class DesktopPlaybackState(
     val queue: List<Track> = emptyList(),
@@ -170,6 +179,8 @@ class DesktopPlayback(
     private var cachedCaptureQueue: TransferQueue? = null
     override val sessionId: String get() = bridgeSessionId
     private var load: Job? = null
+    private var retryJob: Job? = null
+    private var retryAttempt = 0
     private var generation = 0L
     private var listenedMs = 0L
     private var playedRecorded = false
@@ -229,7 +240,8 @@ class DesktopPlayback(
 
     override suspend fun observe(): EngineObservation = withContext(dispatcher) { observationNow() }
 
-    override suspend fun capabilities(): Set<String> = setOf(CONNECTED_V2_CAPABILITY_MOVE, CONNECTED_V2_CAPABILITY_GROUP)
+    override suspend fun capabilities(): Set<String> = setOf(CONNECTED_V2_CAPABILITY_MOVE, CONNECTED_V2_CAPABILITY_GROUP,
+        CONNECTED_V2_CAPABILITY_QUEUE, CONNECTED_V2_CAPABILITY_GROUP_QUEUE, CONNECTED_V2_CAPABILITY_SYNC)
 
     private fun observationNow(): EngineObservation {
         val current = state.value
@@ -311,7 +323,14 @@ class DesktopPlayback(
         }
     }
 
-    override suspend fun activate(operationId: String, positionMs: Long, play: Boolean): EngineObservation = withContext(dispatcher) {
+    override suspend fun activate(operationId: String, positionMs: Long, play: Boolean): EngineObservation =
+        activateStagedQueue(operationId, positionMs, play, preserveMoveBackup = true)
+
+    override suspend fun activateQueueReplacement(operationId: String, positionMs: Long, play: Boolean): EngineObservation =
+        activateStagedQueue(operationId, positionMs, play, preserveMoveBackup = false)
+
+    private suspend fun activateStagedQueue(operationId: String, positionMs: Long, play: Boolean,
+        preserveMoveBackup: Boolean): EngineObservation = withContext(dispatcher) {
         val candidate = preparedTransfer?.takeIf { it.operationId == operationId }
         val stage = candidate ?: error("Playback preparation expired. Try again.")
         if (fenceNow() != stage.expectedTarget) {
@@ -323,12 +342,12 @@ class DesktopPlayback(
             NativeSlot(native, source, state.value.copy(positionMs = native.status().time().coerceAtLeast(0), playing = false))
         } ?: NativeSlot(null, source, state.value.copy(playing = false))
         var newlySavedBackupKey: String? = null
-        if (stage.group == null) {
+        if (stage.group == null && preserveMoveBackup) {
             val key = moveRecoveryKey(operationId)
             recovery.save(key, prior.state)
             newlySavedBackupKey = key
             displacedTransfers[operationId] = prior
-        } else if (activeGroup?.groupId != stage.group.groupId && stage.group.groupId !in groupBackups) {
+        } else if (stage.group != null && activeGroup?.groupId != stage.group.groupId && stage.group.groupId !in groupBackups) {
             val key = groupRecoveryKey(stage.group)
             recovery.save(key, prior.state)
             newlySavedBackupKey = key
@@ -348,7 +367,7 @@ class DesktopPlayback(
             newlySavedBackupKey?.let(recovery::remove)
             displacedTransfers.remove(operationId)
             stage.group?.let { ref -> if (newlySavedBackupKey == groupRecoveryKey(ref)) groupBackups.remove(ref.groupId) }
-            update { it.copy(displacedMoveOperationId = recovery.latestMoveOperationId()) }
+            if (preserveMoveBackup) update { it.copy(displacedMoveOperationId = recovery.latestMoveOperationId()) }
             error("The destination changed while preparing. Its current playback was kept.")
         }
         if (oldPlayer != null && oldPlayer !== prior.player) oldPlayer.release()
@@ -399,7 +418,7 @@ class DesktopPlayback(
                 update { prior.state.copy(playing = false, loading = false, ended = false,
                     queueRevision = it.queueRevision + 1, transportRevision = it.transportRevision + 1) }
             }
-            if (stage.group == null) {
+            if (stage.group == null && preserveMoveBackup) {
                 displacedTransfers.remove(operationId)
                 recovery.remove(moveRecoveryKey(operationId))
                 update { it.copy(displacedMoveOperationId = recovery.latestMoveOperationId()) }
@@ -412,7 +431,7 @@ class DesktopPlayback(
             if (oldSource !== stage.source) oldSource?.close()
         }
         activatingTransferOperationId = null
-        if (stage.group == null) update { it.copy(displacedMoveOperationId = recovery.latestMoveOperationId()) }
+        if (stage.group == null && preserveMoveBackup) update { it.copy(displacedMoveOperationId = recovery.latestMoveOperationId()) }
         observationNow().copy(currentOccurrenceId = stage.queue.entries.first().id, ready = true,
             positionMs = stage.player.status().time().coerceAtLeast(0), playing = stage.player.status().isPlaying)
     }
@@ -600,9 +619,11 @@ class DesktopPlayback(
                 override fun playing(mediaPlayer: MediaPlayer) { event(mediaPlayer) {
                     if (!wantsPlaying) player?.controls()?.setPause(true)
                     else if (!state.value.loading && state.value.current != null) {
+                        retryJob = null
+                        retryAttempt = 0
                         if (playingSince == null) playingSince = TimeSource.Monotonic.markNow()
                         recordStart()
-                        update { it.copy(playing = true) }
+                        update { it.copy(playing = true, error = null) }
                     }
                 } }
                 override fun paused(mediaPlayer: MediaPlayer) { event(mediaPlayer) { stopCounting(); update { it.copy(playing = false) } } }
@@ -631,8 +652,10 @@ class DesktopPlayback(
                 } }
                 override fun error(mediaPlayer: MediaPlayer) { event(mediaPlayer) {
                     if (!state.value.loading) {
-                        record("ERROR")
-                        update { it.copy(playing = false, loading = false, error = "Audio could not play. Try another recording or check your connection.") }
+                        val message = "Audio could not play. Try another recording or check your connection."
+                        val retrying = schedulePlaybackRetry(ticket, source?.terminalResponseCode)
+                        if (retrying) stopCounting() else record("ERROR")
+                        update { it.copy(playing = false, loading = false, error = message) }
                     }
                 } }
             })
@@ -645,16 +668,23 @@ class DesktopPlayback(
     }
 
     private fun start(tracks: List<Track>, index: Int, preserveBridgeQueue: Boolean = false,
-        requestedPositionMs: Long = 0, playOnStart: Boolean = true) {
+        requestedPositionMs: Long = 0, playOnStart: Boolean = true, automaticRetry: Boolean = false) {
+        if (!automaticRetry) cancelPlaybackRetry()
         load?.cancel()
         val ticket = ++generation
         if (!preserveBridgeQueue) { activeGroup = null; activeTransferQueue = null; discardBackups() }
         wantsPlaying = playOnStart
-        update { it.copy(queue = tracks, index = index, playing = false, loading = true, ended = false, positionMs = requestedPositionMs.coerceAtLeast(0), durationMs = tracks[index].durationMs, error = null, occurrence = ticket, queueRevision = it.queueRevision + 1) }
+        update { it.copy(queue = tracks, index = index, playing = false, loading = true, ended = false,
+            positionMs = requestedPositionMs.coerceAtLeast(0), durationMs = tracks[index].durationMs,
+            error = if (automaticRetry) it.error else null,
+            occurrence = if (automaticRetry) it.occurrence else ticket,
+            queueRevision = if (automaticRetry) it.queueRevision else it.queueRevision + 1,
+            transportRevision = if (automaticRetry) it.transportRevision + 1 else it.transportRevision) }
         player?.controls()?.stop(); player?.release(); player = null
         source?.close(); source = null
         remoteActive = false
-        listenedMs = 0; playingSince = null; playedRecorded = false; terminalRecorded = false
+        if (automaticRetry) stopCounting()
+        else { listenedMs = 0; playingSince = null; playedRecorded = false; terminalRecorded = false }
         load = scope.launch {
             try {
                 val track = tracks[index]
@@ -682,21 +712,62 @@ class DesktopPlayback(
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Throwable) {
                 if (generation == ticket) {
-                    record("ERROR")
-                    update { it.copy(playing = false, loading = false, error =
+                    val message =
                     if (error is UnsatisfiedLinkError || error is NoClassDefFoundError) "Install 64-bit VLC 3, then restart Echo to enable playback."
                     else if (offline?.state?.value?.offlineOnly == true) "Offline mode is enabled. Choose downloaded music or a local file."
                     else if (error is dev.echo.data.provider.YouTubeRequestException) error.message
-                    else "Could not start audio. Check that VLC 3 is installed and the recording is available.") }
+                    else "Could not start audio. Check that VLC 3 is installed and the recording is available."
+                    val retrying = isTransientYouTubeFailure(error) && schedulePlaybackRetry(ticket, source?.terminalResponseCode)
+                    if (!retrying) record("ERROR") else stopCounting()
+                    update { it.copy(playing = false, loading = false, error = message) }
                 }
             }
         }
+    }
+
+    private fun isTransientYouTubeFailure(error: Throwable): Boolean {
+        if (state.value.current?.provider != "youtube") return false
+        val causes = generateSequence(error) { it.cause }
+        val providerErrors = causes.filterIsInstance<dev.echo.data.provider.YouTubeRequestException>().toList()
+        if (providerErrors.any { !it.retryable }) return false
+        return providerErrors.any { it.retryable } || causes.any { it is java.io.IOException }
+    }
+
+    private fun schedulePlaybackRetry(ticket: Long, responseCode: Int?): Boolean {
+        val current = state.value
+        val track = current.current ?: return false
+        val failedSource = source
+        if (closed || !wantsPlaying || activeGroup != null || !remoteActive || current.current?.provider != "youtube" ||
+            responseCode?.let { it in 400..499 } == true) return false
+        val occurrence = current.occurrence
+        val trackId = track.id
+        retryAttempt = (retryAttempt + 1).coerceAtMost(100)
+        val delayMs = desktopPlaybackRetryDelayMs(retryAttempt)
+        retryJob?.cancel()
+        retryJob = scope.launch {
+            delay(delayMs)
+            val latest = state.value
+            if (closed || !wantsPlaying || generation != ticket || activeGroup != null || latest.occurrence != occurrence ||
+                latest.current?.id != trackId || offline?.state?.value?.offlineOnly == true ||
+                failedSource?.terminalResponseCode?.let { it in 400..499 } == true) return@launch
+            retryJob = null
+            start(latest.queue, latest.index, preserveBridgeQueue = true,
+                requestedPositionMs = latest.positionMs, automaticRetry = true)
+        }
+        return true
+    }
+
+    private fun cancelPlaybackRetry() {
+        retryJob?.cancel()
+        retryJob = null
+        retryAttempt = 0
     }
 
     fun toggle() { if (!closed) scope.launch { if (!state.value.loading) setPlayingNow(!state.value.playing) } }
 
     private fun setPlayingNow(playing: Boolean) {
         if (activeGroup != null) return
+        if (!playing) cancelPlaybackRetry()
         if (state.value.playing != playing) update { it.copy(transportRevision = it.transportRevision + 1) }
         if (state.value.loading) { wantsPlaying = playing; return }
         if (!playing) { wantsPlaying = false; stopCounting(); player?.controls()?.setPause(true); update { it.copy(playing = false) } }
@@ -874,7 +945,7 @@ class DesktopPlayback(
         if (closed) return
         closed = true
         runBlocking { withContext(dispatcher) {
-            ++generation; load?.cancel(); record("INTERRUPTED")
+            ++generation; load?.cancel(); cancelPlaybackRetry(); record("INTERRUPTED")
             preparedTransfer?.let(::discardPrepared)
             discardBackups()
             source?.close(); source = null

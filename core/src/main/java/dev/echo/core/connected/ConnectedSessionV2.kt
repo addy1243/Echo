@@ -1,5 +1,6 @@
 package dev.echo.core.connected
 
+import dev.echo.core.Track
 import java.util.UUID
 
 data class EngineFence(
@@ -62,6 +63,42 @@ data class GroupTimeline(
     val issuedAtMs: Long,
 )
 
+data class GroupSyncTimingSample(
+    val sessionId: String,
+    val roundTripP95Ms: Long,
+    val jitterMs: Long,
+    val clockUncertaintyMs: Long,
+    val sampledAtMs: Long,
+)
+
+data class GroupSyncDeadline(val startAtMs: Long, val adaptive: Boolean)
+
+/**
+ * Choose one server-time deadline. Allow for the serial RTDB reads/commit on the coordinator,
+ * one full follower poll cycle, and local scheduling overhead. Full RTT is used because
+ * request/response asymmetry is unknown. The 8s cap leaves room under RTDB's +10s
+ * future-timestamp rule for server-clock error and commit latency.
+ * An incomplete or warming-up cohort uses the same 8s cap and is marked non-adaptive.
+ */
+fun groupSyncDeadline(nowServerMs: Long, memberSessionIds: Set<String>, samples: List<GroupSyncTimingSample>,
+    pollIntervalMs: Long = 1_000L, safetyMarginMs: Long = 250L): GroupSyncDeadline {
+    require(nowServerMs > 0 && memberSessionIds.size in 2..MAX_CONNECTED_GROUP_MEMBERS)
+    require(pollIntervalMs in 0..5_000L && safetyMarginMs in 0..2_000L)
+    val current = samples.filter { it.sessionId in memberSessionIds && it.roundTripP95Ms > 0 &&
+        nowServerMs - it.sampledAtMs in 0..15_000L }
+    val complete = current.size == memberSessionIds.size && current.map { it.sessionId }.toSet() == memberSessionIds
+    val leadMs = if (complete) current.maxOf {
+        it.roundTripP95Ms.coerceIn(0, 5_000L) * 8L + it.jitterMs.coerceIn(0, 5_000L) +
+            it.clockUncertaintyMs.coerceIn(0, 2_000L) + pollIntervalMs + safetyMarginMs
+    }.coerceIn(1_500L, 8_000L) else 8_000L
+    return GroupSyncDeadline(nowServerMs + leadMs, adaptive = complete)
+}
+
+fun groupSyncPositionAt(positionMs: Long, observedAtMs: Long, startAtMs: Long, durationMs: Long, playing: Boolean): Long {
+    require(positionMs >= 0 && observedAtMs > 0 && startAtMs >= observedAtMs && durationMs >= positionMs)
+    return if (playing) (positionMs + (startAtMs - observedAtMs)).coerceAtMost(durationMs) else positionMs
+}
+
 /** Adapter over an engine's serialized playback dispatcher. */
 interface NativePlaybackBridgeV2 {
     val sessionId: String
@@ -72,6 +109,8 @@ interface NativePlaybackBridgeV2 {
     suspend fun prepare(operationId: String, queue: TransferQueue, expectedTarget: EngineFence,
         group: GroupRef? = null): EngineObservation
     suspend fun activate(operationId: String, positionMs: Long, play: Boolean): EngineObservation
+    suspend fun activateQueueReplacement(operationId: String, positionMs: Long, play: Boolean): EngineObservation =
+        activate(operationId, positionMs, play)
     suspend fun applyGroupTransport(ref: GroupRef, expectedOccurrenceId: String, positionMs: Long,
         play: Boolean, ended: Boolean): EngineObservation
     suspend fun pauseIfUnchanged(expectedSource: EngineFence): EngineObservation?
@@ -85,6 +124,9 @@ const val MAX_TRANSFER_DURATION_MS = 604_800_000L
 const val MAX_CONNECTED_GROUP_MEMBERS = 8
 const val CONNECTED_V2_CAPABILITY_MOVE = "move"
 const val CONNECTED_V2_CAPABILITY_GROUP = "group"
+const val CONNECTED_V2_CAPABILITY_QUEUE = "queue"
+const val CONNECTED_V2_CAPABILITY_GROUP_QUEUE = "group_queue"
+const val CONNECTED_V2_CAPABILITY_SYNC = "sync"
 private val SESSION_ID = Regex("[A-Za-z0-9_-]{1,128}")
 private val YOUTUBE_ID = Regex("youtube:[A-Za-z0-9_-]{11}")
 private val SAFE_RECORDING_ID = Regex("[A-Za-z0-9_:-]{1,256}")
@@ -111,6 +153,23 @@ fun validateTransferQueue(queue: TransferQueue) {
         require(recording.artist.length <= 128 && recording.artist.none(Char::isISOControl)) { "Queue artist is invalid" }
         require(recording.durationMs in 1..MAX_TRANSFER_DURATION_MS) { "Queue duration is invalid" }
     }
+}
+
+/** Build a portable playlist tail from a clicked occurrence; duplicate tracks keep distinct queue IDs. */
+fun portableTransferQueue(tracks: List<Track>, startIndex: Int = 0): TransferQueue {
+    require(tracks.isNotEmpty() && startIndex in tracks.indices) { "Select a song before routing the queue" }
+    val selected = tracks.drop(startIndex)
+    require(selected.size <= MAX_TRANSFER_OCCURRENCES) {
+        "This queue has more than $MAX_TRANSFER_OCCURRENCES entries and cannot be sent to another player"
+    }
+    val queue = TransferQueue(selected.mapIndexed { offset, track ->
+        require(track.provider == "youtube" && Regex("youtube:[A-Za-z0-9_-]{11}").matches(track.id)) {
+            "Queue position ${startIndex + offset + 1} (${track.title.ifBlank { "Unknown song" }}) is not portable to another Echo player"
+        }
+        QueueOccurrence(UUID.randomUUID().toString(), PortableRecording(track.id, track.title, track.artist, track.durationMs))
+    }, RepeatModeV2.OFF, shuffleEnabled = false)
+    validateTransferQueue(queue)
+    return queue
 }
 
 fun validateEngineCapture(capture: EngineCapture) {

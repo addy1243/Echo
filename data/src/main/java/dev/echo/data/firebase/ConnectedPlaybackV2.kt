@@ -4,6 +4,7 @@ import dev.echo.core.connected.EngineCapture
 import dev.echo.core.connected.EngineFence
 import dev.echo.core.connected.EngineObservation
 import dev.echo.core.connected.GroupRef
+import dev.echo.core.connected.GroupSyncTimingSample
 import dev.echo.core.connected.GroupTimeline
 import dev.echo.core.connected.NativePlaybackBridgeV2
 import dev.echo.core.connected.PortableRecording
@@ -11,6 +12,8 @@ import dev.echo.core.connected.QueueOccurrence
 import dev.echo.core.connected.RepeatModeV2
 import dev.echo.core.connected.TransferQueue
 import dev.echo.core.connected.groupStagedTraversal
+import dev.echo.core.connected.groupSyncDeadline
+import dev.echo.core.connected.groupSyncPositionAt
 import dev.echo.core.connected.validateEngineCapture
 import dev.echo.core.connected.validateEngineFence
 import dev.echo.core.connected.validateGroupTimeline
@@ -19,7 +22,10 @@ import dev.echo.core.connected.validateTransferQueue
 import dev.echo.core.connected.MAX_TRANSFER_OCCURRENCES
 import dev.echo.core.connected.MAX_CONNECTED_GROUP_MEMBERS
 import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_GROUP
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_GROUP_QUEUE
 import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_MOVE
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_QUEUE
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_SYNC
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.util.UUID
@@ -27,7 +33,10 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -35,6 +44,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,9 +61,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 enum class MoveV2Status { PREPARING, PREPARED, ACTIVATING, OBSERVED, PARTIAL, FAILED, COMPLETE, UNKNOWN }
+enum class QueueOperationV2Status { PREPARING, COMPLETE, FAILED, UNKNOWN }
+enum class GroupQueueOperationV2Status { PREPARING, COMMITTED, COMPLETE, FAILED, PARTIAL, UNKNOWN }
 enum class GroupV2Status { PREPARING, ACTIVE, FENCED, CLOSED }
 enum class GroupMemberV2Status { INVITED, PREPARING, READY, PLAYING, PAUSED, BUFFERING, DISCONNECTED, LEFT }
-enum class GroupActionV2 { PLAY, PAUSE, SEEK, NEXT, PREVIOUS, LEAVE }
+enum class GroupActionV2 { PLAY, PAUSE, SEEK, NEXT, PREVIOUS, SYNC, LEAVE }
 
 data class ConnectedV2Device(
     val id: String,
@@ -73,6 +85,22 @@ data class MoveOperationV2(
     val reason: String? = null,
 )
 
+data class QueueOperationV2(
+    val id: String,
+    val status: QueueOperationV2Status,
+    val targetDeviceId: String,
+    val reason: String? = null,
+    val capture: EngineCapture? = null,
+)
+
+data class GroupQueueOperationV2(
+    val id: String,
+    val ref: GroupRef,
+    val status: GroupQueueOperationV2Status,
+    val sequence: Long? = null,
+    val reason: String? = null,
+)
+
 data class GroupMemberV2(
     val deviceId: String,
     val sessionId: String,
@@ -84,6 +112,17 @@ data class GroupMemberV2(
     val updatedAt: Long = 0,
 )
 
+data class GroupSyncTimingV1(
+    val deviceId: String,
+    val sessionId: String,
+    val roundTripP95Ms: Long,
+    val jitterMs: Long,
+    val clockUncertaintyMs: Long,
+    val sampledAtMs: Long,
+) {
+    fun sample() = GroupSyncTimingSample(sessionId, roundTripP95Ms, jitterMs, clockUncertaintyMs, sampledAtMs)
+}
+
 data class ConnectedGroupV2(
     val ref: GroupRef,
     val coordinatorDeviceId: String,
@@ -93,12 +132,15 @@ data class ConnectedGroupV2(
     val status: GroupV2Status,
     val timeline: GroupTimeline? = null,
     val members: List<GroupMemberV2> = emptyList(),
+    val syncTiming: List<GroupSyncTimingV1> = emptyList(),
 )
 
 data class ConnectedPlaybackV2State(
     val devices: List<ConnectedV2Device> = emptyList(),
     val devicesTruncated: Boolean = false,
     val move: MoveOperationV2? = null,
+    val queueOperation: QueueOperationV2? = null,
+    val groupQueueOperation: GroupQueueOperationV2? = null,
     val group: ConnectedGroupV2? = null,
     val message: String? = null,
     val pending: Boolean = false,
@@ -115,6 +157,9 @@ internal class ConnectedPlaybackV2Transport(databaseUrl: String, private val cli
 
     suspend fun put(session: FirebaseSession, path: String, json: JSONObject,
         ifMatch: String? = null): Boolean = request(session, path, "PUT", json, false, ifMatch).let { true }
+
+    suspend fun putWithResponse(session: FirebaseSession, path: String, json: JSONObject): RtdbV2Value =
+        request(session, path, "PUT", json, false, null)
 
     suspend fun compareAndSet(session: FirebaseSession, path: String, json: JSONObject, expectedEtag: String): Boolean =
         try { request(session, path, "PUT", json, false, expectedEtag); true }
@@ -208,12 +253,17 @@ private const val V2_CLOCK_SKEW_TOLERANCE_MS = 5_000L
 private const val V2_GROUP_LEASE_MS = 15_000L
 private const val V2_REQUEST_TTL_MS = 20_000L
 private const val V2_MOVE_OPERATION_TTL_MS = 60_000L
+private const val V2_QUEUE_OPERATION_TTL_MS = 60_000L
 private const val V2_RECONCILE_MS = 120_000L
 private const val V2_GROUP_PREPARE_TIMEOUT_MS = 60_000L
+private const val V2_GROUP_SYNC_TIMING_PUBLISH_MS = 5_000L
+private const val V2_GROUP_SYNC_TIMING_RETRY_MS = 60_000L
+private const val V2_GROUP_SYNC_MAX_SAMPLES = 8
 private const val V2_POLL_MS = 1_000L
 private const val MAX_V2_DEVICES = 32
 private const val MAX_V2_INBOX = 32
 private const val V2_OBSERVATION_TOLERANCE_MS = 2_000L
+private const val V2_GROUP_SYNC_DRIFT_TOLERANCE_MS = 120L
 
 private fun isRecentServerTimestamp(timestamp: Long, now: Long) =
     now - timestamp in -V2_CLOCK_SKEW_TOLERANCE_MS..V2_DEVICE_LEASE_MS
@@ -244,19 +294,53 @@ internal fun transferQueueJson(value: TransferQueue): JSONObject {
     return json
 }
 
-internal fun parseTransferQueue(value: JSONObject): TransferQueue {
+private fun emptyTransferQueueJson() = JSONObject().put("entries", JSONObject().put("empty", true))
+    .put("repeatMode", RepeatModeV2.OFF.name).put("shuffleEnabled", false)
+
+internal fun parseTransferQueue(value: JSONObject): TransferQueue = parseTransferQueue(value, allowEmpty = false)
+
+private fun parseTransferQueue(value: JSONObject, allowEmpty: Boolean): TransferQueue {
     requireV2Keys(value, setOf("entries", "repeatMode", "shuffleEnabled"))
-    val rows = value.getJSONArray("entries")
-    require(rows.length() <= MAX_TRANSFER_OCCURRENCES) { "Queue exceeds the transfer entry limit" }
-    val queue = TransferQueue((0 until rows.length()).map { index ->
-        val entry = rows.getJSONObject(index); requireV2Keys(entry, setOf("id", "recording"))
+    val rawEntries = value.get("entries")
+    val rows = rawEntries as? JSONArray
+    val emptySentinel = rawEntries is JSONObject && rawEntries.length() == 1 && rawEntries.optBoolean("empty", false)
+    require(rows != null || allowEmpty && emptySentinel) { "Invalid transfer queue entries" }
+    val entries = rows ?: JSONArray()
+    require(entries.length() <= MAX_TRANSFER_OCCURRENCES) { "Queue exceeds the transfer entry limit" }
+    val queue = TransferQueue((0 until entries.length()).map { index ->
+        val entry = entries.getJSONObject(index); requireV2Keys(entry, setOf("id", "recording"))
         val recording = entry.getJSONObject("recording"); requireV2Keys(recording, setOf("id", "title", "artist", "durationMs"))
         QueueOccurrence(entry.getString("id"), PortableRecording(recording.getString("id"), recording.getString("title"),
             recording.getString("artist"), recording.getLong("durationMs")))
     }, RepeatModeV2.valueOf(value.getString("repeatMode")), value.getBoolean("shuffleEnabled"))
-    validateTransferQueue(queue)
+    if (queue.entries.isEmpty()) {
+        require(allowEmpty && queue.repeatMode == RepeatModeV2.OFF && !queue.shuffleEnabled) {
+            "An empty remote queue must be idle"
+        }
+    } else validateTransferQueue(queue)
     require(value.toString().toByteArray(Charsets.UTF_8).size <= MAX_V2_QUEUE_BYTES) { "Queue is too large to move between devices" }
     return queue
+}
+
+private fun portableCaptureJson(capture: EngineCapture): JSONObject {
+    validateEngineCapture(capture)
+    val queue = if (capture.queue.entries.isEmpty()) emptyTransferQueueJson() else transferQueueJson(capture.queue)
+    return JSONObject().put("fence", engineFenceJson(capture.fence)).put("queue", queue)
+        .put("positionMs", capture.positionMs).put("playing", capture.playing)
+        .also { require(it.toString().toByteArray(Charsets.UTF_8).size <= MAX_V2_QUEUE_BYTES) { "Remote queue is too large" } }
+}
+
+private fun parsePortableCapture(value: JSONObject): EngineCapture {
+    requireV2Keys(value, setOf("fence", "queue", "positionMs", "playing"))
+    return EngineCapture(parseEngineFence(value.getJSONObject("fence")),
+        parseTransferQueue(value.getJSONObject("queue"), allowEmpty = true), value.getLong("positionMs"),
+        value.getBoolean("playing")).also(::validateEngineCapture)
+}
+
+/** Parse the bounded app-service queue snapshot returned by READ_REMOTE_QUEUE. */
+fun parseRemoteQueueCapture(serialized: String): EngineCapture {
+    require(serialized.toByteArray(Charsets.UTF_8).size <= MAX_V2_QUEUE_BYTES) { "Remote queue is too large to display" }
+    return parsePortableCapture(JSONObject(serialized))
 }
 
 internal fun observationJson(value: EngineObservation) = JSONObject().put("fence", engineFenceJson(value.fence))
@@ -310,6 +394,83 @@ private fun parseMoveRequest(value: JSONObject): MoveRequestV2 {
         request.expiresAt - request.createdAt in 1..V2_MOVE_OPERATION_TTL_MS) { "Invalid playback transfer request" }
     require(value.toString().toByteArray(Charsets.UTF_8).size <= MAX_V2_QUEUE_BYTES) { "Playback transfer request exceeds 128 KiB" }
     return request
+}
+
+private data class QueueRequestV2(
+    val id: String,
+    val type: String,
+    val sourceDeviceId: String,
+    val sourceSessionId: String,
+    val targetDeviceId: String,
+    val targetSessionId: String,
+    val targetFence: EngineFence,
+    val queue: TransferQueue?,
+    val createdAt: Long,
+    val expiresAt: Long,
+)
+
+private fun queueRequestJson(request: QueueRequestV2): JSONObject = JSONObject().put("schema", 2).put("id", request.id)
+    .put("type", request.type).put("sourceDeviceId", request.sourceDeviceId).put("sourceSessionId", request.sourceSessionId)
+    .put("targetDeviceId", request.targetDeviceId).put("targetSessionId", request.targetSessionId)
+    .put("targetFence", engineFenceJson(request.targetFence))
+    .put("queue", request.queue?.let(::transferQueueJson) ?: emptyTransferQueueJson())
+    .put("createdAt", request.createdAt).put("expiresAt", request.expiresAt).also {
+        require(it.toString().toByteArray(Charsets.UTF_8).size <= MAX_V2_QUEUE_BYTES) { "Remote queue request exceeds 128 KiB" }
+    }
+
+private fun parseQueueRequest(value: JSONObject, id: String, now: Long): QueueRequestV2 {
+    requireV2Keys(value, setOf("schema", "id", "type", "sourceDeviceId", "sourceSessionId", "targetDeviceId",
+        "targetSessionId", "targetFence", "queue", "createdAt", "expiresAt"))
+    val type = value.getString("type")
+    val queueValue = value.getJSONObject("queue")
+    val queue = when (type) {
+        "PLAY" -> parseTransferQueue(queueValue)
+        "READ" -> parseTransferQueue(queueValue, allowEmpty = true).also {
+            require(it.entries.isEmpty() && it.repeatMode == RepeatModeV2.OFF && !it.shuffleEnabled)
+        }
+        else -> null
+    }
+    val request = QueueRequestV2(value.getString("id"), type, value.getString("sourceDeviceId"),
+        value.getString("sourceSessionId"), value.getString("targetDeviceId"), value.getString("targetSessionId"),
+        parseEngineFence(value.getJSONObject("targetFence")), queue, value.getLong("createdAt"), value.getLong("expiresAt"))
+    require(value.getInt("schema") == 2 && request.id == id && V2_OPERATION_ID.matches(id) &&
+        runCatching { UUID.fromString(id) }.isSuccess && type in setOf("PLAY", "READ") &&
+        V2_DEVICE_ID.matches(request.sourceDeviceId) && V2_DEVICE_ID.matches(request.targetDeviceId) &&
+        request.sourceDeviceId != request.targetDeviceId && V2_DEVICE_ID.matches(request.sourceSessionId) &&
+        request.targetSessionId == request.targetFence.sessionId &&
+        (type == "PLAY" && queue != null || type == "READ" && queue?.entries?.isEmpty() == true) &&
+        request.createdAt <= now + V2_CLOCK_SKEW_TOLERANCE_MS && request.expiresAt >= now &&
+        request.expiresAt - request.createdAt in 1..V2_QUEUE_OPERATION_TTL_MS) { "Invalid remote queue request" }
+    require(value.toString().toByteArray(Charsets.UTF_8).size <= MAX_V2_QUEUE_BYTES) { "Remote queue request exceeds 128 KiB" }
+    return request
+}
+
+private fun queueTargetAckJson(status: String, sessionId: String, reason: String? = null,
+    observation: EngineObservation? = null, capture: EngineCapture? = null): JSONObject = JSONObject()
+    .put("status", status).put("sessionId", sessionId)
+    .put("payload", when { observation != null -> observationJson(observation); capture != null -> portableCaptureJson(capture); else -> "" })
+    .put("reason", reason ?: "").put("updatedAt", serverTimestamp())
+
+private data class QueueTargetAckV2(val status: String, val sessionId: String, val reason: String?,
+    val observation: EngineObservation? = null, val capture: EngineCapture? = null)
+
+private fun parseQueueTargetAck(value: JSONObject, request: QueueRequestV2): QueueTargetAckV2 {
+    requireV2Keys(value, setOf("status", "sessionId", "payload", "reason", "updatedAt"))
+    val status = value.getString("status")
+    val reason = value.getString("reason").takeIf(String::isNotBlank)
+    val payload = value.opt("payload")
+    val ack = QueueTargetAckV2(status, value.getString("sessionId"), reason,
+        if (payload is JSONObject && request.type == "PLAY") parseObservation(payload) else null,
+        if (payload is JSONObject && request.type == "READ") parsePortableCapture(payload) else null)
+    require(status in setOf("PROCESSING", "COMPLETE", "FAILED", "REJECTED") &&
+        V2_DEVICE_ID.matches(ack.sessionId) && value.getLong("updatedAt") > 0 &&
+        (status !in setOf("COMPLETE") || ack.sessionId == request.targetSessionId &&
+            if (request.type == "PLAY") ack.observation?.let { observation -> observation.ready && observation.playing &&
+                observation.currentOccurrenceId == request.queue?.entries?.firstOrNull()?.id &&
+                observation.recordingId == request.queue?.entries?.firstOrNull()?.recording?.id } == true
+            else ack.capture?.fence == request.targetFence) &&
+        (reason == null || reason.matches(Regex("[a-z0-9_]{1,64}")))) { "Invalid remote queue response" }
+    return ack
 }
 
 private fun moveDecisionJson(request: MoveRequestV2, positionMs: Long, playing: Boolean, now: Long) = JSONObject()
@@ -415,7 +576,7 @@ internal data class InboxMessageV2(val type: String, val refId: String, val crea
 internal fun parseInboxMessage(id: String, value: JSONObject): InboxMessageV2 {
     require(V2_OPERATION_ID.matches(id)); requireV2Keys(value, setOf("type", "refId", "createdAt", "expiresAt"))
     val message = InboxMessageV2(value.getString("type"), value.getString("refId"), value.getLong("createdAt"), value.getLong("expiresAt"))
-    require(message.type in setOf("MOVE", "GROUP") && V2_OPERATION_ID.matches(message.refId) &&
+    require(message.type in setOf("MOVE", "GROUP", "QUEUE", "GROUP_QUEUE") && V2_OPERATION_ID.matches(message.refId) &&
         message.createdAt > 0 && message.expiresAt > message.createdAt && message.expiresAt - message.createdAt <= V2_RECONCILE_MS) {
         "Invalid playback v2 inbox message"
     }
@@ -465,6 +626,7 @@ internal fun parseGroupTimeline(groupId: String, value: JSONObject): GroupTimeli
 /** Estimate the current song position from a timeline heartbeat without restarting an expired song. */
 internal fun groupActivationPosition(timeline: GroupTimeline, now: Long): Long? {
     if (!timeline.playing || timeline.ended) return timeline.positionMs
+    if (now < timeline.issuedAtMs) return null
     val duration = timeline.queue.entries[timeline.cursor].recording.durationMs
     val elapsed = (now - timeline.issuedAtMs).coerceAtLeast(0)
     val position = (timeline.positionMs + elapsed).coerceAtMost(duration)
@@ -482,11 +644,115 @@ internal fun groupMemberJson(member: GroupMemberV2) = JSONObject().put("sessionI
     .put("observedOccurrenceId", member.observedOccurrenceId ?: "")
     .put("observedPositionMs", member.observedPositionMs).put("updatedAt", serverTimestamp())
 
+internal fun groupSyncTimingV1Json(sessionId: String, roundTripP95Ms: Long, jitterMs: Long, clockUncertaintyMs: Long) =
+    JSONObject().put("schema", 1).put("sessionId", sessionId).put("roundTripP95Ms", roundTripP95Ms)
+        .put("jitterMs", jitterMs).put("clockUncertaintyMs", clockUncertaintyMs).put("updatedAt", serverTimestamp())
+
+internal fun parseGroupSyncTimingV1(deviceId: String, value: JSONObject): GroupSyncTimingV1? = runCatching {
+    require(V2_DEVICE_ID.matches(deviceId))
+    requireV2Keys(value, setOf("schema", "sessionId", "roundTripP95Ms", "jitterMs", "clockUncertaintyMs", "updatedAt"))
+    val sessionId = value.getString("sessionId")
+    val rtt = value.getLong("roundTripP95Ms")
+    val jitter = value.getLong("jitterMs")
+    val uncertainty = value.getLong("clockUncertaintyMs")
+    val updatedAt = value.getLong("updatedAt")
+    require(value.getInt("schema") == 1 && V2_DEVICE_ID.matches(sessionId) && rtt in 1..5_000L &&
+        jitter in 0..5_000L && uncertainty in 0..2_000L && updatedAt > 0)
+    GroupSyncTimingV1(deviceId, sessionId, rtt, jitter, uncertainty, updatedAt)
+}.getOrNull()
+
+internal fun parseGroupSyncTimingsV1(value: JSONObject?): List<GroupSyncTimingV1> {
+    if (value == null) return emptyList()
+    require(value.length() <= MAX_CONNECTED_GROUP_MEMBERS)
+    return value.keys().asSequence().mapNotNull { id -> value.optJSONObject(id)?.let { parseGroupSyncTimingV1(id, it) } }.toList()
+}
+
 internal fun groupRequestJson(id: String, sourceDeviceId: String, sourceSessionId: String, expectedEpoch: Long,
     expectedSeq: Long, action: GroupActionV2, positionMs: Long, createdAt: Long, expiresAt: Long) = JSONObject()
     .put("id", id).put("sourceDeviceId", sourceDeviceId).put("sourceSessionId", sourceSessionId)
     .put("expectedEpoch", expectedEpoch).put("expectedSeq", expectedSeq).put("action", action.name)
     .put("positionMs", positionMs).put("createdAt", createdAt).put("expiresAt", expiresAt)
+
+private data class GroupQueueMemberV2(val deviceId: String, val sessionId: String)
+private data class GroupQueueRequestV2(
+    val id: String,
+    val ref: GroupRef,
+    val sourceDeviceId: String,
+    val sourceSessionId: String,
+    val epoch: Long,
+    val expectedSequence: Long,
+    val expectedDigest: String,
+    val queue: TransferQueue,
+    val cohort: List<GroupQueueMemberV2>,
+    val createdAt: Long,
+    val expiresAt: Long,
+)
+private data class GroupQueueStateV2(val status: String, val sequence: Long, val reason: String?, val updatedAt: Long)
+private data class GroupQueueAckV2(val sessionId: String, val status: String, val fence: EngineFence?,
+    val reason: String?, val updatedAt: Long)
+
+private fun groupQueueRequestJson(request: GroupQueueRequestV2): JSONObject = JSONObject().put("schema", 2)
+    .put("id", request.id).put("sourceDeviceId", request.sourceDeviceId).put("sourceSessionId", request.sourceSessionId)
+    .put("epoch", request.epoch).put("expectedSequence", request.expectedSequence).put("expectedDigest", request.expectedDigest)
+    .put("queue", transferQueueJson(request.queue)).put("cohort", JSONArray().also { rows -> request.cohort.forEach { member ->
+        rows.put(JSONObject().put("deviceId", member.deviceId).put("sessionId", member.sessionId))
+    } }).put("createdAt", request.createdAt).put("expiresAt", request.expiresAt).also {
+        require(it.toString().toByteArray(Charsets.UTF_8).size <= MAX_V2_QUEUE_BYTES) { "Shared queue operation exceeds 128 KiB" }
+    }
+
+private fun parseGroupQueueRequest(groupId: String, id: String, value: JSONObject, now: Long): GroupQueueRequestV2 {
+    requireV2Keys(value, setOf("schema", "id", "sourceDeviceId", "sourceSessionId", "epoch", "expectedSequence",
+        "expectedDigest", "queue", "cohort", "createdAt", "expiresAt"))
+    val rows = value.getJSONArray("cohort")
+    require(rows.length() in 2..MAX_CONNECTED_GROUP_MEMBERS)
+    val request = GroupQueueRequestV2(value.getString("id"), GroupRef(groupId, value.getLong("epoch")), value.getString("sourceDeviceId"),
+        value.getString("sourceSessionId"), value.getLong("epoch"), value.getLong("expectedSequence"),
+        value.getString("expectedDigest"), parseTransferQueue(value.getJSONObject("queue")),
+        (0 until rows.length()).map { index ->
+            val row = rows.getJSONObject(index); requireV2Keys(row, setOf("deviceId", "sessionId"))
+            GroupQueueMemberV2(row.getString("deviceId"), row.getString("sessionId"))
+        }, value.getLong("createdAt"), value.getLong("expiresAt"))
+    require(value.getInt("schema") == 2 && request.id == id && V2_OPERATION_ID.matches(id) &&
+        request.epoch > 0 && request.expectedSequence >= 0 && request.expectedDigest.matches(Regex("[a-f0-9]{64}")) &&
+        V2_DEVICE_ID.matches(request.sourceDeviceId) && V2_DEVICE_ID.matches(request.sourceSessionId) &&
+        request.cohort.map { it.deviceId }.toSet().size == request.cohort.size &&
+        request.cohort.map { it.sessionId }.toSet().size == request.cohort.size &&
+        request.cohort.all { V2_DEVICE_ID.matches(it.deviceId) && V2_DEVICE_ID.matches(it.sessionId) } &&
+        request.cohort.any { it.deviceId == request.sourceDeviceId && it.sessionId == request.sourceSessionId } &&
+        request.createdAt <= now + V2_CLOCK_SKEW_TOLERANCE_MS && request.expiresAt >= now &&
+        request.expiresAt - request.createdAt in 1..V2_QUEUE_OPERATION_TTL_MS) { "Invalid shared queue request" }
+    require(value.toString().toByteArray(Charsets.UTF_8).size <= MAX_V2_QUEUE_BYTES) { "Shared queue operation exceeds 128 KiB" }
+    return request
+}
+
+private fun groupQueueStateJson(status: String, sequence: Long = -1L, reason: String? = null) = JSONObject()
+    .put("status", status).put("sequence", sequence).put("reason", reason ?: "").put("updatedAt", serverTimestamp())
+
+private fun parseGroupQueueState(value: JSONObject): GroupQueueStateV2 {
+    requireV2Keys(value, setOf("status", "sequence", "reason", "updatedAt"))
+    val state = GroupQueueStateV2(value.getString("status"), value.getLong("sequence"),
+        value.getString("reason").takeIf(String::isNotBlank), value.getLong("updatedAt"))
+    require(state.status in setOf("PREPARING", "COMMITTED", "COMPLETE", "FAILED", "PARTIAL", "UNKNOWN") &&
+        state.sequence >= -1 && state.updatedAt > 0 && (state.reason == null || state.reason.matches(Regex("[a-z0-9_]{1,64}")))) {
+        "Invalid shared queue operation state"
+    }
+    return state
+}
+
+private fun groupQueueAckJson(sessionId: String, status: String, fence: EngineFence? = null, reason: String? = null) =
+    JSONObject().put("sessionId", sessionId).put("status", status)
+        .put("fence", fence?.let(::engineFenceJson) ?: "").put("reason", reason ?: "").put("updatedAt", serverTimestamp())
+
+private fun parseGroupQueueAck(value: JSONObject): GroupQueueAckV2 {
+    requireV2Keys(value, setOf("sessionId", "status", "fence", "reason", "updatedAt"))
+    val fence = value.opt("fence").let { raw -> if (raw is JSONObject) parseEngineFence(raw) else null }
+    val ack = GroupQueueAckV2(value.getString("sessionId"), value.getString("status"), fence,
+        value.getString("reason").takeIf(String::isNotBlank), value.getLong("updatedAt"))
+    require(V2_DEVICE_ID.matches(ack.sessionId) && ack.status in setOf("READY", "FAILED", "APPLIED", "ABORTED") &&
+        ack.updatedAt > 0 && (ack.status !in setOf("READY", "APPLIED") || ack.fence != null) &&
+        (ack.reason == null || ack.reason.matches(Regex("[a-z0-9_]{1,64}")))) { "Invalid shared queue response" }
+    return ack
+}
 
 internal fun jsonDigest(value: JSONObject): String = MessageDigest.getInstance("SHA-256")
     .digest(canonicalJson(value).toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it.toInt() and 255) }
@@ -523,7 +789,8 @@ private fun quoteCanonicalJsonString(value: String): String = buildString(value.
 }
 
 private fun serverTimestamp() = JSONObject().put(".sv", "timestamp")
-private val V2_CAPABILITIES = setOf(CONNECTED_V2_CAPABILITY_MOVE, CONNECTED_V2_CAPABILITY_GROUP)
+private val V2_CAPABILITIES = setOf(CONNECTED_V2_CAPABILITY_MOVE, CONNECTED_V2_CAPABILITY_GROUP,
+    CONNECTED_V2_CAPABILITY_QUEUE, CONNECTED_V2_CAPABILITY_GROUP_QUEUE, CONNECTED_V2_CAPABILITY_SYNC)
 
 /** Owner-account v2 orchestration; payloads never include local paths, URLs, streams, or credentials. */
 class ConnectedPlaybackV2Client(
@@ -543,6 +810,7 @@ class ConnectedPlaybackV2Client(
     private val stateFlow = MutableStateFlow(ConnectedPlaybackV2State())
     val state: StateFlow<ConnectedPlaybackV2State> = stateFlow.asStateFlow()
     private val mutation = Mutex()
+    private val groupTimelineCommitMutex = Mutex()
     @Volatile private var closed = false
     private var running = false
     private var uid: String? = null
@@ -555,14 +823,36 @@ class ConnectedPlaybackV2Client(
     @Volatile private var localGroup: ConnectedGroupV2? = null
     private var expectedGroupMembers: Set<Pair<String, String>>? = null
     @Volatile private var serverOffsetMs = 0L
+    private val groupSyncRttSamples = mutableListOf<Long>()
+    private val groupSyncClockSamples = mutableListOf<Triple<Long, Long, Long>>() // offset, uncertainty, RTT
+    private var groupSyncTimingRef: GroupRef? = null
+    private var groupSyncTimingAttemptAtMs = 0L
+    private var groupSyncTimingRetryAtMs = 0L
+    private var groupSyncTimingReadAtMs = 0L
+    private var groupSyncTimingCache = emptyList<GroupSyncTimingV1>()
+    private var groupSyncTimingWriteAvailable = true
+    @Volatile private var scheduledGroupApplyJob: Job? = null
+    @Volatile private var scheduledGroupApplyKey: GroupApplyKey? = null
     private var lastV2Devices = emptyList<ConnectedV2Device>()
     private var devicesTruncated = false
     private var lastError: String? = null
+    private var transientPollError: String? = null
     private var pendingGroupSequence: Long? = null
     private var pendingGroupRequestId: String? = null
     private var pendingGroupRequestExpiresAt = 0L
+    @Volatile private var stagedGroupQueueOperationId: String? = null
+    @Volatile private var stagedGroupQueueStageId: String? = null
+    @Volatile private var coordinatingGroupQueueOperationId: String? = null
+    @Volatile private var preparingGroupQueueOperationId: String? = null
+    @Volatile private var queueInboxOperationId: String? = null
+    private val queueOperationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var queueInboxJob: Job? = null
+    @Volatile private var groupQueuePrepareJob: Job? = null
+    @Volatile private var groupQueueCoordinatorJob: Job? = null
     @Volatile private var unresolvedMove: MoveRequestV2? = null
     private var lastLateMoveCheckAt = 0L
+
+    private data class GroupApplyKey(val ref: GroupRef, val sequence: Long, val sessionId: String, val occurrenceId: String)
 
     private fun diagnose(ref: GroupRef, event: String, detail: String = "") {
         val logger = testDiagnosticLogger ?: return
@@ -580,16 +870,21 @@ class ConnectedPlaybackV2Client(
 
     suspend fun run() {
         check(!closed && !running) { "Connected playback v2 client is already stopped or running" }
-        val initial = sessionProvider(); uid = initial.uid; running = true
+        var initial: FirebaseSession? = null
+        running = true
         try {
             while (!closed) {
                 try {
+                    val owner = initial ?: sessionProvider().also { initial = it; uid = it.uid }
                     if (mutation.tryLock()) {
                         try { if (unresolvedMove == null) enforceLocalGroupLease() }
                         finally { mutation.unlock() }
                     }
                     val session = sessionProvider()
-                    check(session.uid == initial.uid) { "Account changed; reconnect connected playback" }
+                    if (session.uid != owner.uid) {
+                        stateFlow.value = stateFlow.value.copy(message = "Account changed; reconnect connected playback")
+                        return
+                    }
                     val observed = bridge.observe().also(::validateEngineObservation)
                     publishDevice(session, observed)
                     val devicesValue = transport.get(session, "users/${session.uid}/playbackV2/devices", query = mapOf(
@@ -619,21 +914,28 @@ class ConnectedPlaybackV2Client(
                     }
                     val groupPending = localGroup?.let { group -> group.status == GroupV2Status.PREPARING ||
                         group.members.any { it.status in setOf(GroupMemberV2Status.INVITED, GroupMemberV2Status.PREPARING, GroupMemberV2Status.READY, GroupMemberV2Status.BUFFERING) } } == true
+                    val queuePending = stateFlow.value.queueOperation?.status == QueueOperationV2Status.PREPARING ||
+                        stateFlow.value.groupQueueOperation?.status in setOf(GroupQueueOperationV2Status.PREPARING,
+                            GroupQueueOperationV2Status.COMMITTED)
+                    val message = lastError ?: stateFlow.value.message.takeUnless { it == transientPollError }
+                    transientPollError = null
                     stateFlow.value = stateFlow.value.copy(devices = lastV2Devices, devicesTruncated = devicesTruncated,
-                        group = localGroup, message = lastError ?: stateFlow.value.message, pending = stateFlow.value.move?.status in setOf(
-                            MoveV2Status.PREPARING, MoveV2Status.PREPARED, MoveV2Status.ACTIVATING) || groupPending || pendingGroupSequence != null,
+                        group = localGroup, message = message, pending = stateFlow.value.move?.status in setOf(
+                            MoveV2Status.PREPARING, MoveV2Status.PREPARED, MoveV2Status.ACTIVATING) || groupPending ||
+                            pendingGroupSequence != null || queuePending,
                         reconcilingMove = unresolvedMove != null)
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: Exception) {
-                    lastError = if (error is FirebaseRequestException) error.message else error.message?.take(200) ?: "Connected playback v2 is unavailable."
+                    transientPollError = if (error is FirebaseRequestException) error.message else error.message?.take(200) ?: "Connected playback v2 is unavailable."
                     stateFlow.value = stateFlow.value.copy(devices = lastV2Devices.map { it.copy(enabled = false) },
-                        group = localGroup, message = lastError)
+                        group = localGroup, message = lastError ?: transientPollError)
                 }
                 if (!closed) delay(V2_POLL_MS)
             }
         } finally {
             runCatching { withContext(NonCancellable) {
-                val session = sessionProvider(); if (session.uid == initial.uid) {
+                val owner = initial ?: return@withContext
+                val session = sessionProvider(); if (session.uid == owner.uid) {
                     val observed = bridge.observe().also(::validateEngineObservation)
                     transport.put(session, "users/${session.uid}/playbackV2/devices/$deviceId",
                         connectedV2DeviceJson(deviceId, safeLabel, observed, bridge.capabilities(), enabled = false))
@@ -643,7 +945,110 @@ class ConnectedPlaybackV2Client(
         }
     }
 
-    fun close() { closed = true; stateFlow.value = stateFlow.value.copy(message = "Connected playback v2 stopped.") }
+    fun close() {
+        closed = true
+        cancelScheduledGroupApply()
+        queueInboxJob?.cancel()
+        groupQueuePrepareJob?.cancel()
+        groupQueueCoordinatorJob?.cancel()
+        queueOperationScope.cancel()
+        stateFlow.value = stateFlow.value.copy(message = "Connected playback v2 stopped.")
+    }
+
+    suspend fun playQueueOn(targetDeviceId: String, expectedTargetSessionId: String,
+        expectedTargetFence: EngineFence, queue: TransferQueue): QueueOperationV2 {
+        validateTransferQueue(queue)
+        return submitRemoteQueueOperation(targetDeviceId, expectedTargetSessionId, expectedTargetFence, queue)
+    }
+
+    suspend fun readRemoteQueue(targetDeviceId: String, expectedTargetSessionId: String,
+        expectedTargetFence: EngineFence): EngineCapture {
+        val result = submitRemoteQueueOperation(targetDeviceId, expectedTargetSessionId, expectedTargetFence, null)
+        return result.capture ?: error(result.reason ?: "Could not read the selected player's queue")
+    }
+
+    private suspend fun submitRemoteQueueOperation(targetDeviceId: String, expectedTargetSessionId: String,
+        expectedTargetFence: EngineFence, queue: TransferQueue?): QueueOperationV2 {
+        val (session, request) = mutation.withLock {
+            check(running && !closed && uid != null) { "Connected playback v2 is not running" }
+            require(unresolvedMove == null) { "Finish reconciling the playback transfer before routing a queue" }
+            val currentSession = sessionProvider(); check(currentSession.uid == uid) { "Account changed; reconnect connected playback" }
+            val target = lastV2Devices.firstOrNull { it.id == targetDeviceId }
+                ?: error("The selected player has no current v2 session")
+            val now = System.currentTimeMillis() + serverOffsetMs
+            require(target.enabled && target.sessionId == expectedTargetSessionId &&
+                target.snapshot.fence == expectedTargetFence && isRecentServerTimestamp(target.updatedAt, now)) {
+                "The selected player changed or went offline; select it again"
+            }
+            require(stateFlow.value.group?.members?.none {
+                it.deviceId == target.id && it.sessionId == target.sessionId && it.status != GroupMemberV2Status.LEFT
+            } != false) {
+                "A Play together member is controlled through the shared player"
+            }
+            require(target.id != deviceId && target.sessionId != bridge.sessionId) { "Choose another player" }
+            require(CONNECTED_V2_CAPABILITY_QUEUE in target.capabilities) {
+                "The selected player cannot route or read its queue; update Echo on that device"
+            }
+            val id = UUID.randomUUID().toString()
+            val type = if (queue == null) "READ" else "PLAY"
+            val request = QueueRequestV2(id, type, deviceId, bridge.sessionId, target.id, target.sessionId,
+                target.snapshot.fence, queue, now, now + V2_QUEUE_OPERATION_TTL_MS)
+            val base = "users/${currentSession.uid}/playbackV2"
+            check(transport.compareAndSet(currentSession, "$base/queueOps/$id/request", queueRequestJson(request), "null_etag")) {
+                "Queue operation ID already exists"
+            }
+            transport.put(currentSession, "$base/inbox/${target.id}/$id", inboxMessage("QUEUE", id, now))
+            stateFlow.value = stateFlow.value.copy(queueOperation = QueueOperationV2(id,
+                QueueOperationV2Status.PREPARING, target.id), pending = true)
+            currentSession to request
+        }
+        return awaitRemoteQueueOperation(session, request)
+    }
+
+    private suspend fun awaitRemoteQueueOperation(session: FirebaseSession, request: QueueRequestV2): QueueOperationV2 {
+        val base = "users/${session.uid}/playbackV2/queueOps/${request.id}"
+        val deadline = request.expiresAt + V2_CLOCK_SKEW_TOLERANCE_MS
+        while (!closed && System.currentTimeMillis() + serverOffsetMs < deadline) {
+            val currentSession = sessionProvider()
+            if (currentSession.uid != session.uid) return finishQueueOperation(request,
+                QueueOperationV2Status.UNKNOWN, "account_changed")
+            val response = transport.get(session, "$base/target").json
+            if (response != null) {
+                val ack = runCatching { parseQueueTargetAck(response, request) }.getOrNull()
+                if (ack != null && ack.status in setOf("COMPLETE", "FAILED", "REJECTED")) {
+                    val status = if (ack.status == "COMPLETE") QueueOperationV2Status.COMPLETE else QueueOperationV2Status.FAILED
+                    return finishQueueOperation(request, status, ack.reason, ack.capture)
+                }
+            }
+            val currentTarget = transport.get(session, "users/${session.uid}/playbackV2/devices/${request.targetDeviceId}").json
+                ?.let { runCatching { parseConnectedV2Device(request.targetDeviceId, it) }.getOrNull() }
+            if (currentTarget == null || currentTarget.sessionId != request.targetSessionId || !currentTarget.enabled ||
+                !isRecentServerTimestamp(currentTarget.updatedAt, System.currentTimeMillis() + serverOffsetMs)) {
+                return finishQueueOperation(request, QueueOperationV2Status.FAILED, "target_offline_or_session_changed")
+            }
+            if (request.type == "PLAY" && queueSnapshotConfirmsStart(currentTarget.snapshot, request)) {
+                return finishQueueOperation(request, QueueOperationV2Status.COMPLETE)
+            }
+            delay(250)
+        }
+        return finishQueueOperation(request, QueueOperationV2Status.UNKNOWN, "target_response_timeout")
+    }
+
+    private fun queueSnapshotConfirmsStart(observation: EngineObservation, request: QueueRequestV2): Boolean =
+        observation.fence.sessionId == request.targetSessionId && observation.ready && observation.playing &&
+            observation.currentOccurrenceId == request.queue?.entries?.firstOrNull()?.id &&
+            observation.recordingId == request.queue?.entries?.firstOrNull()?.recording?.id
+
+    private fun finishQueueOperation(request: QueueRequestV2, status: QueueOperationV2Status,
+        reason: String? = null, capture: EngineCapture? = null): QueueOperationV2 {
+        val result = QueueOperationV2(request.id, status, request.targetDeviceId, reason, capture)
+        stateFlow.value = stateFlow.value.copy(queueOperation = result,
+            pending = status == QueueOperationV2Status.PREPARING || stateFlow.value.move?.status in setOf(
+                MoveV2Status.PREPARING, MoveV2Status.PREPARED, MoveV2Status.ACTIVATING) ||
+                stateFlow.value.groupQueueOperation?.status in setOf(GroupQueueOperationV2Status.PREPARING,
+                    GroupQueueOperationV2Status.COMMITTED) || pendingGroupSequence != null)
+        return result
+    }
 
     suspend fun startTogether(targetDeviceIds: List<String>, replacePlaying: Boolean = false,
         expectedTargetSessions: Map<String, String>? = null) {
@@ -785,8 +1190,15 @@ class ConnectedPlaybackV2Client(
                 stateFlow.value = stateFlow.value.copy(pending = false, message = null, group = localGroup)
                 return
             }
-            if (ready.any { it.status in setOf(GroupMemberV2Status.BUFFERING, GroupMemberV2Status.DISCONNECTED,
-                    GroupMemberV2Status.LEFT) }) {
+            val serverNow = System.currentTimeMillis() + serverOffsetMs
+            val activationKey = scheduledGroupApplyKey
+            val activationStillPending = currentHead?.status == GroupV2Status.ACTIVE &&
+                localGroup?.takeIf { it.ref == ref }?.timeline?.takeIf { it.sequence == currentHead.timelineSequence }
+                    ?.issuedAtMs?.let { serverNow < it + 3_000L ||
+                        activationKey?.ref == ref && activationKey.sequence == currentHead.timelineSequence &&
+                            scheduledGroupApplyJob?.isActive == true } == true
+            if (ready.any { it.status in setOf(GroupMemberV2Status.DISCONNECTED, GroupMemberV2Status.LEFT) ||
+                    it.status == GroupMemberV2Status.BUFFERING && !activationStillPending }) {
                 mutation.withLock { if (groupRef == ref) abortPreparingGroup(session, path, ref,
                     "A selected player could not prepare") }
                 error("A selected player could not prepare for Play together")
@@ -798,10 +1210,17 @@ class ConnectedPlaybackV2Client(
         error("Play together preparation timed out; both independent queues were kept")
     }
 
-    suspend fun requestGroup(action: GroupActionV2, positionMs: Long = 0L) {
+    suspend fun requestGroup(action: GroupActionV2, positionMs: Long = 0L,
+        expectedGroup: GroupRef? = null, expectedTimelineSequence: Long? = null,
+        expectedOccurrenceId: String? = null) {
         check(running && !closed && uid != null) { "Connected playback v2 is not running" }
         check(unresolvedMove == null) { "Finish reconciling the playback transfer before controlling Play together" }
         val ref = groupRef ?: error("This player is not in a Play together session")
+        require(expectedGroup == null && expectedTimelineSequence == null && expectedOccurrenceId == null ||
+            action == GroupActionV2.SEEK && expectedGroup != null && expectedTimelineSequence != null && expectedOccurrenceId != null) {
+            "A guarded shared seek needs its group, timeline, and occurrence"
+        }
+        require(expectedGroup == null || ref == expectedGroup) { "The shared player changed while you were scrubbing; try again" }
         if (action == GroupActionV2.LEAVE) { leaveTogether(); return }
         val group = localGroup ?: error("Play together state is unavailable")
         require(group.status == GroupV2Status.ACTIVE) { "Play together is preparing or reconnecting" }
@@ -812,11 +1231,32 @@ class ConnectedPlaybackV2Client(
         val head = transport.get(session, "$path/head").json?.let(::parseGroupHead) ?: error("Play together state disappeared")
         val timeline = transport.get(session, "$path/timelines/${head.timelineSequence}").json
             ?.let { parseGroupTimeline(ref.groupId, it) } ?: error("Play together timeline is unavailable")
+        require(expectedTimelineSequence == null || timeline.sequence == expectedTimelineSequence &&
+            timeline.queue.entries.getOrNull(timeline.cursor)?.id == expectedOccurrenceId) {
+            "The shared track changed while you were scrubbing; try again"
+        }
         val now = System.currentTimeMillis() + serverOffsetMs
         require(head.epoch == ref.epoch && head.status == GroupV2Status.ACTIVE && head.leaseUntil >= now &&
             timeline.ref.epoch == head.epoch && timeline.sequence == head.timelineSequence &&
             head.timelineDigest == groupTimelineJson(timeline).getString("digest")) {
             "Play together is reconnecting; wait for the current timeline before sending another action"
+        }
+        if (action == GroupActionV2.SYNC) {
+            val members = transport.get(session, "$path/members").json?.let(::parseGroupMembers).orEmpty()
+                .filter { it.epoch == head.epoch && it.status != GroupMemberV2Status.LEFT }
+            val live = freshGroupMembers(members, head.epoch, now)
+            require(members.size in 2..MAX_CONNECTED_GROUP_MEMBERS && live.size == members.size &&
+                members.all { it.status in setOf(GroupMemberV2Status.PLAYING, GroupMemberV2Status.PAUSED) } &&
+                live.map { it.deviceId to it.sessionId }.toSet() == members.map { it.deviceId to it.sessionId }.toSet()) {
+                "Every Play together device must be ready before syncing"
+            }
+            require(members.all { member ->
+                if (member.deviceId == deviceId) member.sessionId == bridge.sessionId &&
+                    CONNECTED_V2_CAPABILITY_SYNC in bridge.capabilities()
+                else lastV2Devices.any { peer -> peer.id == member.deviceId && peer.sessionId == member.sessionId &&
+                    peer.enabled && CONNECTED_V2_CAPABILITY_SYNC in peer.capabilities &&
+                    isRecentServerTimestamp(peer.updatedAt, now) }
+            }) { "Update every Play together device before using Sync" }
         }
         require(action != GroupActionV2.SEEK || positionMs in 0..timeline.queue.entries[timeline.cursor].recording.durationMs) {
             "Seek position is outside the shared recording"
@@ -831,7 +1271,105 @@ class ConnectedPlaybackV2Client(
         pendingGroupRequestExpiresAt = now + groupRequestTtlMs
     }
 
+    suspend fun replaceGroupQueue(expectedGroup: GroupRef, expectedTimelineSequence: Long,
+        queue: TransferQueue): GroupQueueOperationV2 {
+        validateTransferQueue(queue)
+        val orderedQueue = queue.copy(repeatMode = RepeatModeV2.OFF, shuffleEnabled = false)
+        val (session, request) = mutation.withLock {
+            check(running && !closed && uid != null) { "Connected playback v2 is not running" }
+            check(groupRef == expectedGroup && localGroup?.ref == expectedGroup &&
+                localGroup?.status == GroupV2Status.ACTIVE) { "Play together is reconnecting; try again after it is ready" }
+            require(stateFlow.value.groupQueueOperation?.status !in setOf(GroupQueueOperationV2Status.PREPARING,
+                GroupQueueOperationV2Status.COMMITTED)) { "Wait for the current shared queue change to finish" }
+            val currentSession = sessionProvider(); check(currentSession.uid == uid) { "Account changed; reconnect connected playback" }
+            val path = "users/${currentSession.uid}/playbackV2/groups/${expectedGroup.groupId}"
+            val headRead = transport.get(currentSession, "$path/head", etag = true)
+            val head = headRead.json?.let(::parseGroupHead) ?: error("Play together state disappeared")
+            val timeline = transport.get(currentSession, "$path/timelines/${head.timelineSequence}").json
+                ?.let { parseGroupTimeline(expectedGroup.groupId, it) } ?: error("Shared queue is unavailable")
+            val now = System.currentTimeMillis() + serverOffsetMs
+            require(head.epoch == expectedGroup.epoch && head.status == GroupV2Status.ACTIVE && head.leaseUntil >= now &&
+                head.timelineSequence == expectedTimelineSequence && timeline.ref == expectedGroup &&
+                timeline.sequence == expectedTimelineSequence && head.timelineDigest == groupTimelineJson(timeline).getString("digest")) {
+                "The shared queue changed; select the song again"
+            }
+            val members = transport.get(currentSession, "$path/members").json?.let(::parseGroupMembers).orEmpty()
+                .filter { it.epoch == head.epoch && it.status != GroupMemberV2Status.LEFT }
+                .sortedBy { it.deviceId }
+            val liveMembers = freshGroupMembers(members, head.epoch, now)
+            require(members.size in 2..MAX_CONNECTED_GROUP_MEMBERS && liveMembers.size == members.size &&
+                members.all { it.status in setOf(GroupMemberV2Status.PLAYING, GroupMemberV2Status.PAUSED) } &&
+                liveMembers.map { it.deviceId to it.sessionId }.toSet() == members.map { it.deviceId to it.sessionId }.toSet()) {
+                "All Play together devices must be connected before changing the shared queue"
+            }
+            require(liveMembers.any { it.deviceId == deviceId && it.sessionId == bridge.sessionId }) {
+                "This player is no longer a member of Play together"
+            }
+            require(bridge.capabilities().contains(CONNECTED_V2_CAPABILITY_GROUP_QUEUE) && liveMembers.all { member ->
+                if (member.deviceId == deviceId) true else lastV2Devices.any { device ->
+                    device.id == member.deviceId && device.sessionId == member.sessionId && device.enabled &&
+                        CONNECTED_V2_CAPABILITY_GROUP_QUEUE in device.capabilities && isRecentServerTimestamp(device.updatedAt, now)
+                }
+            }) { "Every Play together device must support shared queue changes; update Echo on all players" }
+            require(coordinatingGroupQueueOperationId == null) { "Wait for the current shared queue change to finish" }
+            val id = UUID.randomUUID().toString()
+            val operation = GroupQueueRequestV2(id, expectedGroup, deviceId, bridge.sessionId, expectedGroup.epoch,
+                expectedTimelineSequence, head.timelineDigest, orderedQueue,
+                liveMembers.map { GroupQueueMemberV2(it.deviceId, it.sessionId) }, now, now + V2_QUEUE_OPERATION_TTL_MS)
+            val operationPath = "$path/queueOps/$id"
+            check(transport.compareAndSet(currentSession, "$operationPath/request", groupQueueRequestJson(operation), "null_etag")) {
+                "Shared queue operation ID already exists"
+            }
+            check(transport.compareAndSet(currentSession, "$operationPath/state", groupQueueStateJson("PREPARING"), "null_etag")) {
+                "Shared queue operation state already exists"
+            }
+            for (member in operation.cohort) {
+                transport.put(currentSession, "users/${currentSession.uid}/playbackV2/inbox/${member.deviceId}/$id",
+                    inboxMessage("GROUP_QUEUE", id, now))
+            }
+            stateFlow.value = stateFlow.value.copy(groupQueueOperation = GroupQueueOperationV2(id, expectedGroup,
+                GroupQueueOperationV2Status.PREPARING), pending = true)
+            currentSession to operation
+        }
+        return awaitGroupQueueOperation(session, expectedGroup, request)
+    }
+
+    private suspend fun awaitGroupQueueOperation(session: FirebaseSession, ref: GroupRef,
+        request: GroupQueueRequestV2): GroupQueueOperationV2 {
+        val statePath = "users/${session.uid}/playbackV2/groups/${ref.groupId}/queueOps/${request.id}/state"
+        val deadline = request.expiresAt + V2_CLOCK_SKEW_TOLERANCE_MS
+        while (!closed && System.currentTimeMillis() + serverOffsetMs < deadline) {
+            if (sessionProvider().uid != session.uid) return finishGroupQueueOperation(request, ref,
+                GroupQueueOperationV2Status.UNKNOWN, null, "account_changed")
+            val state = transport.get(session, statePath).json?.let { runCatching { parseGroupQueueState(it) }.getOrNull() }
+            if (state != null && state.status in setOf("COMPLETE", "FAILED", "PARTIAL", "UNKNOWN")) {
+                val status = when (state.status) {
+                    "COMPLETE" -> GroupQueueOperationV2Status.COMPLETE
+                    "FAILED" -> GroupQueueOperationV2Status.FAILED
+                    "PARTIAL" -> GroupQueueOperationV2Status.PARTIAL
+                    else -> GroupQueueOperationV2Status.UNKNOWN
+                }
+                return finishGroupQueueOperation(request, ref, status, state.sequence.takeIf { it >= 0 }, state.reason)
+            }
+            delay(250)
+        }
+        return finishGroupQueueOperation(request, ref, GroupQueueOperationV2Status.UNKNOWN,
+            null, "group_queue_response_timeout")
+    }
+
+    private fun finishGroupQueueOperation(request: GroupQueueRequestV2, ref: GroupRef,
+        status: GroupQueueOperationV2Status, sequence: Long? = null, reason: String? = null): GroupQueueOperationV2 {
+        val result = GroupQueueOperationV2(request.id, ref, status, sequence, reason)
+        val otherPending = stateFlow.value.queueOperation?.status == QueueOperationV2Status.PREPARING ||
+            stateFlow.value.move?.status in setOf(MoveV2Status.PREPARING, MoveV2Status.PREPARED, MoveV2Status.ACTIVATING) ||
+            pendingGroupSequence != null
+        stateFlow.value = stateFlow.value.copy(groupQueueOperation = result,
+            pending = status in setOf(GroupQueueOperationV2Status.PREPARING, GroupQueueOperationV2Status.COMMITTED) || otherPending)
+        return result
+    }
+
     suspend fun leaveTogether() = mutation.withLock {
+        cancelScheduledGroupApply()
         val ref = groupRef ?: return@withLock
         val session = sessionProvider(); check(session.uid == uid) { "Account changed; reconnect connected playback" }
         val path = "users/${session.uid}/playbackV2/groups/${ref.groupId}"
@@ -1278,8 +1816,475 @@ class ConnectedPlaybackV2Client(
             when (message.type) {
                 "MOVE" -> processMoveInbox(session, message.refId)
                 "GROUP" -> processGroupInvite(session, message.refId, messageId)
+                "QUEUE" -> scheduleQueueInbox(session, message.refId)
+                "GROUP_QUEUE" -> processGroupQueueInbox(session, message.refId)
             }
         }
+    }
+
+    private fun scheduleQueueInbox(session: FirebaseSession, operationId: String) {
+        if (queueInboxOperationId == operationId || queueInboxOperationId != null || closed) return
+        queueInboxOperationId = operationId
+        queueInboxJob = queueOperationScope.launch {
+            try { processQueueInbox(session, operationId) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                lastError = error.message?.take(200) ?: "The remote queue request could not be completed."
+                stateFlow.value = stateFlow.value.copy(message = lastError)
+            } finally {
+                if (queueInboxOperationId == operationId) queueInboxOperationId = null
+                if (queueInboxJob?.isCompleted == true) queueInboxJob = null
+            }
+        }
+    }
+
+    private suspend fun processQueueInbox(session: FirebaseSession, operationId: String) {
+        val base = "users/${session.uid}/playbackV2/queueOps/$operationId"
+        val requestJson = transport.get(session, "$base/request").json ?: return
+        val now = System.currentTimeMillis() + serverOffsetMs
+        val request = runCatching { parseQueueRequest(requestJson, operationId, now) }.getOrNull()
+        if (request == null) {
+            transport.put(session, "$base/target", queueTargetAckJson("REJECTED", bridge.sessionId, "invalid_request"))
+            transport.delete(session, "users/${session.uid}/playbackV2/inbox/$deviceId/$operationId")
+            return
+        }
+        val targetPath = "users/${session.uid}/playbackV2/inbox/$deviceId/$operationId"
+        val responsePath = "$base/target"
+        val previous = transport.get(session, responsePath).json
+        if (previous != null && previous.optString("status") in setOf("COMPLETE", "FAILED", "REJECTED")) {
+            transport.delete(session, targetPath)
+            return
+        }
+        if (request.targetDeviceId != deviceId || request.targetSessionId != bridge.sessionId || request.expiresAt < now) {
+            transport.put(session, responsePath, queueTargetAckJson("REJECTED", bridge.sessionId, "target_session_changed_or_expired"))
+            transport.delete(session, targetPath)
+            return
+        }
+        if (groupRef != null || localGroup != null || unresolvedMove != null ||
+            CONNECTED_V2_CAPABILITY_QUEUE !in bridge.capabilities()) {
+            transport.put(session, responsePath, queueTargetAckJson("REJECTED", bridge.sessionId,
+                if (groupRef != null || localGroup != null) "target_in_together" else "queue_capability_unavailable"))
+            transport.delete(session, targetPath)
+            return
+        }
+        if (bridge.fence() != request.targetFence) {
+            transport.put(session, responsePath, queueTargetAckJson("REJECTED", bridge.sessionId, "stale_target_fence"))
+            transport.delete(session, targetPath)
+            return
+        }
+        try {
+            transport.put(session, responsePath, queueTargetAckJson("PROCESSING", bridge.sessionId))
+            if (request.type == "READ") {
+                val capture = bridge.capture().also(::validateEngineCapture)
+                require(capture.fence == request.targetFence && bridge.fence() == request.targetFence) {
+                    "The target changed while reading its queue"
+                }
+                transport.put(session, responsePath, queueTargetAckJson("COMPLETE", bridge.sessionId, capture = capture))
+            } else {
+                val queue = request.queue ?: error("The replacement queue is missing")
+                val prepared = bridge.prepare(operationId, queue, request.targetFence).also(::validateEngineObservation)
+                require(prepared.ready && prepared.fence.sessionId == request.targetSessionId) {
+                    "The target could not prepare this queue"
+                }
+                val started = bridge.activateQueueReplacement(operationId, 0L, play = true).also(::validateEngineObservation)
+                require(started.ready && started.fence.sessionId == request.targetSessionId && started.playing &&
+                    started.currentOccurrenceId == queue.entries.first().id &&
+                    started.recordingId == queue.entries.first().recording.id) {
+                    "The target could not confirm the requested queue"
+                }
+                transport.put(session, responsePath, queueTargetAckJson("COMPLETE", bridge.sessionId, observation = started))
+            }
+            transport.delete(session, targetPath)
+        } catch (cancelled: CancellationException) {
+            runCatching { bridge.abort(operationId) }
+            throw cancelled
+        }
+        catch (error: Exception) {
+            runCatching { bridge.abort(operationId) }
+            val reason = when {
+                error.message?.contains("offline", ignoreCase = true) == true -> "offline_mode_enabled"
+                error.message?.contains("resolve", ignoreCase = true) == true -> "recording_unavailable"
+                else -> "queue_operation_failed"
+            }
+            runCatching { transport.put(session, responsePath, queueTargetAckJson("FAILED", bridge.sessionId, reason)) }
+            runCatching { transport.delete(session, targetPath) }
+        }
+    }
+
+    private suspend fun processGroupQueueInbox(session: FirebaseSession, operationId: String) {
+        val ref = groupRef ?: return
+        if (localGroup?.ref != ref) return
+        val path = "users/${session.uid}/playbackV2/groups/${ref.groupId}"
+        val operationPath = "$path/queueOps/$operationId"
+        val inboxPath = "users/${session.uid}/playbackV2/inbox/$deviceId/$operationId"
+        val requestJson = transport.get(session, "$operationPath/request").json ?: return
+        val now = System.currentTimeMillis() + serverOffsetMs
+        val request = runCatching { parseGroupQueueRequest(ref.groupId, operationId, requestJson, now) }.getOrNull()
+        if (request == null) {
+            transport.delete(session, inboxPath)
+            return
+        }
+        val state = transport.get(session, "$operationPath/state").json?.let {
+            runCatching { parseGroupQueueState(it) }.getOrNull()
+        } ?: return
+        val headRead = transport.get(session, "$path/head", etag = true)
+        val head = headRead.json?.let { runCatching { parseGroupHead(it) }.getOrNull() } ?: return
+        val coordinator = head.coordinatorDeviceId == deviceId && head.coordinatorSessionId == bridge.sessionId
+        val stageId = groupQueueStageId(request)
+        if (state.status == "UNKNOWN") {
+            stateFlow.value = stateFlow.value.copy(groupQueueOperation = GroupQueueOperationV2(operationId, ref,
+                GroupQueueOperationV2Status.UNKNOWN, state.sequence.takeIf { it >= 0 }, state.reason))
+            val currentTimeline = head.takeIf { it.epoch == request.epoch && it.status == GroupV2Status.ACTIVE &&
+                it.timelineSequence == request.expectedSequence + 1 }
+                ?.let { transport.get(session, "$path/timelines/${it.timelineSequence}").json }
+                ?.let { runCatching { parseGroupTimeline(ref.groupId, it) }.getOrNull() }
+            val operationTimelineMatches = currentTimeline != null && currentTimeline.queue == request.queue &&
+                head.timelineDigest == groupTimelineJson(currentTimeline).getString("digest")
+            if (operationTimelineMatches && stagedGroupQueueOperationId == operationId) {
+                val committedTimeline = requireNotNull(currentTimeline)
+                val member = transport.get(session, "$path/members/$deviceId").json
+                    ?.let { runCatching { parseGroupMember(deviceId, it) }.getOrNull() }
+                val memberApplied = member != null && member.sessionId == bridge.sessionId &&
+                    member.epoch == ref.epoch && member.lastAppliedSequence >= committedTimeline.sequence &&
+                    member.observedOccurrenceId == request.queue.entries.first().id && member.status == GroupMemberV2Status.PLAYING
+                val observation = bridge.observe().also(::validateEngineObservation)
+                if (!memberApplied || observation.currentOccurrenceId != request.queue.entries.first().id || !observation.playing) {
+                    if (now < request.expiresAt) return
+                    runCatching { bridge.abort(stageId) }
+                }
+            } else if (stagedGroupQueueOperationId == operationId) {
+                runCatching { bridge.abort(stageId) }
+            }
+            if (stagedGroupQueueOperationId == operationId) {
+                stagedGroupQueueOperationId = null
+                stagedGroupQueueStageId = null
+            }
+            if (coordinatingGroupQueueOperationId == operationId) coordinatingGroupQueueOperationId = null
+            transport.delete(session, inboxPath)
+            return
+        }
+        if (state.status in setOf("FAILED", "PARTIAL", "COMPLETE")) {
+            val terminalStatus = when (state.status) {
+                "COMPLETE" -> GroupQueueOperationV2Status.COMPLETE
+                "FAILED" -> GroupQueueOperationV2Status.FAILED
+                else -> GroupQueueOperationV2Status.PARTIAL
+            }
+            stateFlow.value = stateFlow.value.copy(groupQueueOperation = GroupQueueOperationV2(operationId, ref,
+                terminalStatus, state.sequence.takeIf { it >= 0 }, state.reason))
+            if (state.status == "PARTIAL" && state.sequence >= 0) {
+                val member = transport.get(session, "$path/members/$deviceId").json
+                    ?.let { runCatching { parseGroupMember(deviceId, it) }.getOrNull() }
+                val applied = member != null && member.sessionId == bridge.sessionId && member.epoch == ref.epoch &&
+                    member.lastAppliedSequence >= state.sequence && member.observedOccurrenceId == request.queue.entries.first().id &&
+                    member.status == GroupMemberV2Status.PLAYING
+                stateFlow.value = stateFlow.value.copy(groupQueueOperation = GroupQueueOperationV2(operationId, ref,
+                    GroupQueueOperationV2Status.PARTIAL, state.sequence, state.reason))
+                if (!applied) return
+                val observation = bridge.observe().also(::validateEngineObservation)
+                if (observation.currentOccurrenceId != request.queue.entries.first().id || !observation.playing) return
+                transport.put(session, "$operationPath/acks/$deviceId",
+                    groupQueueAckJson(bridge.sessionId, "APPLIED", observation.fence))
+            } else if (stagedGroupQueueOperationId == operationId && state.status == "FAILED") {
+                runCatching { bridge.abort(stageId) }
+            }
+            if (state.status != "PARTIAL" || state.sequence < 0 || stagedGroupQueueOperationId == operationId) {
+                stagedGroupQueueOperationId = null
+                stagedGroupQueueStageId = null
+            }
+            if (coordinatingGroupQueueOperationId == operationId) coordinatingGroupQueueOperationId = null
+            transport.delete(session, inboxPath)
+            return
+        }
+        val statePath = "$operationPath/state"
+        if (state.status == "COMMITTED") {
+            stateFlow.value = stateFlow.value.copy(groupQueueOperation = GroupQueueOperationV2(operationId, ref,
+                GroupQueueOperationV2Status.COMMITTED, state.sequence), pending = true)
+            val member = transport.get(session, "$path/members/$deviceId").json
+                ?.let { runCatching { parseGroupMember(deviceId, it) }.getOrNull() }
+            if (member != null && member.sessionId == bridge.sessionId && member.epoch == ref.epoch &&
+                member.lastAppliedSequence >= state.sequence && member.observedOccurrenceId == request.queue.entries.first().id &&
+                member.status == GroupMemberV2Status.PLAYING) {
+                val observation = bridge.observe().also(::validateEngineObservation)
+                if (observation.currentOccurrenceId == request.queue.entries.first().id && observation.playing) {
+                    transport.put(session, "$operationPath/acks/$deviceId",
+                        groupQueueAckJson(bridge.sessionId, "APPLIED", observation.fence))
+                    if (stagedGroupQueueOperationId == operationId) {
+                        stagedGroupQueueOperationId = null
+                        stagedGroupQueueStageId = null
+                    }
+                    transport.delete(session, inboxPath)
+                }
+            }
+            if (coordinator) scheduleGroupQueueCoordinator(session, path, operationPath, request)
+            return
+        }
+        if (state.status != "PREPARING") return
+        if (request.epoch != ref.epoch || request.expiresAt < now ||
+            request.cohort.none { it.deviceId == deviceId && it.sessionId == bridge.sessionId }) {
+            if (coordinator) failGroupQueueOperation(session, operationPath, request, "stale_group_or_expired")
+            else {
+                if (preparingGroupQueueOperationId == operationId) groupQueuePrepareJob?.cancel()
+                if (stagedGroupQueueOperationId == operationId) {
+                    runCatching { bridge.abort(stageId) }
+                    stagedGroupQueueOperationId = null
+                    stagedGroupQueueStageId = null
+                }
+                transport.put(session, "$operationPath/acks/$deviceId",
+                    groupQueueAckJson(bridge.sessionId, "FAILED", reason = "stale_group_or_expired"))
+            }
+            return
+        }
+        if (coordinator && coordinatingGroupQueueOperationId != null && coordinatingGroupQueueOperationId != operationId) {
+            failGroupQueueOperation(session, operationPath, request, "another_queue_change_pending")
+            return
+        }
+        if (coordinator) coordinatingGroupQueueOperationId = operationId
+        stateFlow.value = stateFlow.value.copy(groupQueueOperation = GroupQueueOperationV2(operationId, ref,
+            GroupQueueOperationV2Status.PREPARING), pending = true)
+        if (stagedGroupQueueOperationId == operationId) refreshGroupQueueReadyAck(session, operationPath, request)
+        if (stagedGroupQueueOperationId != operationId && preparingGroupQueueOperationId != operationId) {
+            if (groupQueuePrepareJob?.isActive == true) {
+                if (coordinator) failGroupQueueOperation(session, operationPath, request, "another_queue_change_pending")
+                else transport.put(session, "$operationPath/acks/$deviceId",
+                    groupQueueAckJson(bridge.sessionId, "FAILED", reason = "another_queue_change_pending"))
+                return
+            }
+            preparingGroupQueueOperationId = operationId
+            groupQueuePrepareJob = queueOperationScope.launch {
+                try { prepareGroupQueueMember(session, path, operationPath, request) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) {
+                    val reason = error.message?.takeIf { it.matches(Regex("[a-z0-9_]{1,64}")) } ?: "member_prepare_failed"
+                    runCatching { transport.put(session, "$operationPath/acks/$deviceId",
+                        groupQueueAckJson(bridge.sessionId, "FAILED", reason = reason)) }
+                } finally {
+                    if (preparingGroupQueueOperationId == operationId) preparingGroupQueueOperationId = null
+                    if (groupQueuePrepareJob?.isCompleted == true) groupQueuePrepareJob = null
+                }
+            }
+        }
+        if (coordinator) scheduleGroupQueueCoordinator(session, path, operationPath, request)
+    }
+
+    private fun scheduleGroupQueueCoordinator(session: FirebaseSession, path: String, operationPath: String,
+        request: GroupQueueRequestV2) {
+        if (groupQueueCoordinatorJob?.isActive == true && coordinatingGroupQueueOperationId == request.id) return
+        if (groupQueueCoordinatorJob?.isActive == true) return
+        coordinatingGroupQueueOperationId = request.id
+        groupQueueCoordinatorJob = queueOperationScope.launch {
+            try {
+                while (!closed && groupRef == request.ref && System.currentTimeMillis() + serverOffsetMs <= request.expiresAt + V2_CLOCK_SKEW_TOLERANCE_MS) {
+                    val currentSession = sessionProvider()
+                    if (currentSession.uid != session.uid) break
+                    try { coordinateGroupQueueOperation(currentSession, path, operationPath, request) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (error: Exception) {
+                        transientPollError = error.message?.take(200) ?: "Shared queue status is being reconciled."
+                    }
+                    val state = runCatching {
+                        transport.get(currentSession, "$operationPath/state").json?.let(::parseGroupQueueState)
+                    }.getOrNull()
+                    if (state?.status in setOf("COMPLETE", "FAILED", "PARTIAL", "UNKNOWN")) break
+                    delay(V2_POLL_MS)
+                }
+            } finally {
+                if (coordinatingGroupQueueOperationId == request.id) coordinatingGroupQueueOperationId = null
+                if (groupQueueCoordinatorJob?.isCompleted == true) groupQueueCoordinatorJob = null
+            }
+        }
+    }
+
+    private suspend fun refreshGroupQueueReadyAck(session: FirebaseSession, operationPath: String,
+        request: GroupQueueRequestV2) {
+        val ackPath = "$operationPath/acks/$deviceId"
+        val ack = transport.get(session, ackPath).json?.let { runCatching { parseGroupQueueAck(it) }.getOrNull() } ?: return
+        if (ack.sessionId != bridge.sessionId || ack.status != "READY" || ack.fence == null) return
+        val currentFence = bridge.fence()
+        if (currentFence != ack.fence || stagedGroupQueueStageId != groupQueueStageId(request)) {
+            transport.put(session, ackPath, groupQueueAckJson(bridge.sessionId, "FAILED", reason = "target_changed_after_prepare"))
+            return
+        }
+        transport.put(session, ackPath, groupQueueAckJson(bridge.sessionId, "READY", currentFence))
+    }
+
+    private fun groupQueueStageId(request: GroupQueueRequestV2) =
+        "${request.ref.groupId}-${request.ref.epoch}-${request.expectedSequence + 1}"
+
+    private suspend fun groupQueueCohortMatches(session: FirebaseSession, path: String,
+        head: GroupHeadV2, request: GroupQueueRequestV2, now: Long): Boolean {
+        val rows = transport.get(session, "$path/members").json?.let {
+            runCatching { parseGroupMembers(it) }.getOrNull()
+        } ?: return false
+        val current = rows.filter { it.epoch == head.epoch && it.status != GroupMemberV2Status.LEFT }
+        val live = freshGroupMembers(current, head.epoch, now)
+        return current.size == request.cohort.size && live.size == current.size &&
+            current.all { it.status in setOf(GroupMemberV2Status.PLAYING, GroupMemberV2Status.PAUSED) &&
+                it.lastAppliedSequence == request.expectedSequence } &&
+            current.map { it.deviceId to it.sessionId }.toSet() == request.cohort.map { it.deviceId to it.sessionId }.toSet()
+    }
+
+    private suspend fun prepareGroupQueueMember(session: FirebaseSession, path: String, operationPath: String,
+        request: GroupQueueRequestV2) {
+        val ref = request.ref
+        val stageId = groupQueueStageId(request)
+        val ackPath = "$operationPath/acks/$deviceId"
+        val previous = transport.get(session, ackPath).json?.let { runCatching { parseGroupQueueAck(it) }.getOrNull() }
+        if (previous?.status == "FAILED" && previous.sessionId == bridge.sessionId) return
+        try {
+            val now = System.currentTimeMillis() + serverOffsetMs
+            val headRead = transport.get(session, "$path/head", etag = true)
+            val head = headRead.json?.let(::parseGroupHead) ?: error("group_changed")
+            val timeline = transport.get(session, "$path/timelines/${head.timelineSequence}").json
+                ?.let { runCatching { parseGroupTimeline(ref.groupId, it) }.getOrNull() } ?: error("group_changed")
+            require(head.status == GroupV2Status.ACTIVE && head.epoch == ref.epoch &&
+                head.timelineSequence == request.expectedSequence && head.timelineDigest == request.expectedDigest &&
+                timeline.sequence == request.expectedSequence && groupTimelineJson(timeline).getString("digest") == request.expectedDigest) {
+                "group_changed"
+            }
+            require(groupQueueCohortMatches(session, path, head, request, now)) { "group_membership_changed" }
+            require(CONNECTED_V2_CAPABILITY_GROUP_QUEUE in bridge.capabilities()) { "group_queue_unsupported" }
+            val member = transport.get(session, "$path/members/$deviceId").json
+                ?.let { runCatching { parseGroupMember(deviceId, it) }.getOrNull() } ?: error("group_member_missing")
+            require(member.sessionId == bridge.sessionId && member.epoch == ref.epoch &&
+                request.cohort.any { it.deviceId == deviceId && it.sessionId == member.sessionId }) { "group_session_changed" }
+            val targetFence = previous?.takeIf { it.sessionId == bridge.sessionId && it.status == "READY" }?.fence
+                ?: bridge.fence()
+            require(bridge.fence() == targetFence) { "target_changed" }
+            val prepared = bridge.prepare(stageId, request.queue, targetFence, ref).also(::validateEngineObservation)
+            require(prepared.ready && prepared.fence.sessionId == bridge.sessionId && bridge.fence() == targetFence) {
+                "group_prepare_failed"
+            }
+            val freshState = transport.get(session, "$operationPath/state").json?.let(::parseGroupQueueState)
+            val latestHead = transport.get(session, "$path/head").json?.let(::parseGroupHead)
+            require(freshState?.status == "PREPARING" && latestHead?.epoch == ref.epoch &&
+                latestHead.timelineSequence == request.expectedSequence && latestHead.timelineDigest == request.expectedDigest &&
+                groupQueueCohortMatches(session, path, latestHead, request, System.currentTimeMillis() + serverOffsetMs)) {
+                "group_changed_during_prepare"
+            }
+            transport.put(session, ackPath, groupQueueAckJson(bridge.sessionId, "READY", targetFence))
+            stagedGroupQueueOperationId = request.id
+            stagedGroupQueueStageId = stageId
+        } catch (cancelled: CancellationException) {
+            runCatching { bridge.abort(stageId) }
+            throw cancelled
+        }
+        catch (error: Exception) {
+            runCatching { bridge.abort(stageId) }
+            val reason = error.message?.takeIf { it.matches(Regex("[a-z0-9_]{1,64}")) } ?: "member_prepare_failed"
+            runCatching { transport.put(session, ackPath, groupQueueAckJson(bridge.sessionId, "FAILED", reason = reason)) }
+        }
+    }
+
+    private suspend fun coordinateGroupQueueOperation(session: FirebaseSession, path: String, operationPath: String,
+        request: GroupQueueRequestV2) {
+        val statePath = "$operationPath/state"
+        val now = System.currentTimeMillis() + serverOffsetMs
+        var state = transport.get(session, statePath).json?.let(::parseGroupQueueState) ?: return
+        val latestHeadRead = transport.get(session, "$path/head", etag = true)
+        val latestHead = latestHeadRead.json?.let(::parseGroupHead) ?: return
+        if (latestHead.coordinatorDeviceId != deviceId || latestHead.coordinatorSessionId != bridge.sessionId) return
+        if (state.status == "PREPARING" && latestHead.epoch == request.epoch &&
+            latestHead.timelineSequence > request.expectedSequence) {
+            // The timeline has advanced but the operation state never recorded its commit.
+            // Queue equality cannot prove which concurrent operation produced that timeline.
+            val reason = if (latestHead.timelineSequence == request.expectedSequence + 1) {
+                val advanced = transport.get(session, "$path/timelines/${latestHead.timelineSequence}").json
+                    ?.let { runCatching { parseGroupTimeline(request.ref.groupId, it) }.getOrNull() }
+                if (advanced?.queue == request.queue) "commit_identity_unverified" else "timeline_advanced_during_operation"
+            } else "timeline_advanced_during_operation"
+            transport.put(session, statePath, groupQueueStateJson("UNKNOWN", latestHead.timelineSequence, reason))
+            finishGroupQueueOperation(request, request.ref, GroupQueueOperationV2Status.UNKNOWN,
+                latestHead.timelineSequence, reason)
+            coordinatingGroupQueueOperationId = null
+            return
+        }
+        if (state.status == "PREPARING") {
+            if (now >= request.expiresAt) {
+                failGroupQueueOperation(session, operationPath, request, "prepare_timeout")
+                return
+            }
+            val liveTimeline = transport.get(session, "$path/timelines/${latestHead.timelineSequence}").json
+                ?.let { runCatching { parseGroupTimeline(request.ref.groupId, it) }.getOrNull() } ?: return
+            if (latestHead.epoch != request.epoch || latestHead.status != GroupV2Status.ACTIVE ||
+                latestHead.timelineSequence != request.expectedSequence || latestHead.timelineDigest != request.expectedDigest ||
+                groupTimelineJson(liveTimeline).getString("digest") != request.expectedDigest ||
+                !groupQueueCohortMatches(session, path, latestHead, request, now)) {
+                failGroupQueueOperation(session, operationPath, request, "group_changed_before_commit")
+                return
+            }
+            val ackRows = mutableMapOf<String, GroupQueueAckV2>()
+            for (member in request.cohort) {
+                val ack = transport.get(session, "$operationPath/acks/${member.deviceId}").json
+                    ?.let { runCatching { parseGroupQueueAck(it) }.getOrNull() }
+                if (ack?.status == "FAILED" && ack.sessionId == member.sessionId) {
+                    failGroupQueueOperation(session, operationPath, request, ack.reason ?: "member_prepare_failed")
+                    return
+                }
+                if (ack == null || ack.sessionId != member.sessionId || ack.status != "READY" ||
+                    ack.fence?.sessionId != member.sessionId || now - ack.updatedAt > V2_DEVICE_LEASE_MS) return
+                ackRows[member.deviceId] = ack
+            }
+            val capable = request.cohort.all { member ->
+                if (member.deviceId == deviceId) CONNECTED_V2_CAPABILITY_GROUP_QUEUE in bridge.capabilities()
+                else lastV2Devices.any { it.id == member.deviceId && it.sessionId == member.sessionId && it.enabled &&
+                    CONNECTED_V2_CAPABILITY_GROUP_QUEUE in it.capabilities && isRecentServerTimestamp(it.updatedAt, now) }
+            }
+            if (!capable) {
+                failGroupQueueOperation(session, operationPath, request, "group_queue_capability_changed")
+                return
+            }
+            val commitTime = System.currentTimeMillis() + serverOffsetMs
+            val startAt = groupSyncDeadline(commitTime, request.cohort.map { it.sessionId }.toSet(),
+                localGroup?.syncTiming.orEmpty().map { it.sample() }, pollIntervalMs = V2_POLL_MS.toLong()).startAtMs
+            val timeline = GroupTimeline(request.ref, request.expectedSequence + 1,
+                request.queue, 0, 0L, true, false, startAt)
+            if (!commitGroupTimeline(session, path, latestHeadRead, latestHead, timeline)) {
+                val afterRead = transport.get(session, "$path/head", etag = true)
+                val after = afterRead.json?.let { runCatching { parseGroupHead(it) }.getOrNull() }
+                val afterTimeline = after?.takeIf { it.groupId == request.ref.groupId && it.epoch == request.epoch &&
+                    it.status == GroupV2Status.ACTIVE && it.timelineSequence == timeline.sequence &&
+                    it.timelineDigest == groupTimelineJson(timeline).getString("digest") }
+                    ?.let { transport.get(session, "$path/timelines/${it.timelineSequence}").json }
+                    ?.let { runCatching { parseGroupTimeline(timeline.ref.groupId, it) }.getOrNull() }
+                if (afterTimeline == null || afterTimeline != timeline) {
+                    failGroupQueueOperation(session, operationPath, request, "group_commit_failed")
+                    return
+                }
+            }
+            transport.put(session, statePath, groupQueueStateJson("COMMITTED", timeline.sequence))
+            state = GroupQueueStateV2("COMMITTED", timeline.sequence, null, now)
+            stateFlow.value = stateFlow.value.copy(groupQueueOperation = GroupQueueOperationV2(request.id, timeline.ref,
+                GroupQueueOperationV2Status.COMMITTED, timeline.sequence), pending = true)
+        }
+        if (state.status == "COMMITTED") {
+            if (now >= request.expiresAt) {
+                transport.put(session, statePath, groupQueueStateJson("PARTIAL", state.sequence, "member_activation_unconfirmed"))
+                finishGroupQueueOperation(request, groupRef ?: return, GroupQueueOperationV2Status.PARTIAL,
+                    state.sequence, "member_activation_unconfirmed")
+                coordinatingGroupQueueOperationId = null
+                return
+            }
+            for (member in request.cohort) {
+                val ack = transport.get(session, "$operationPath/acks/${member.deviceId}").json
+                    ?.let { runCatching { parseGroupQueueAck(it) }.getOrNull() }
+                if (ack == null || ack.sessionId != member.sessionId || ack.status != "APPLIED") return
+            }
+            transport.put(session, statePath, groupQueueStateJson("COMPLETE", state.sequence))
+            finishGroupQueueOperation(request, groupRef ?: return, GroupQueueOperationV2Status.COMPLETE, state.sequence)
+            coordinatingGroupQueueOperationId = null
+        }
+    }
+
+    private suspend fun failGroupQueueOperation(session: FirebaseSession, operationPath: String,
+        request: GroupQueueRequestV2, reason: String) {
+        transport.put(session, "$operationPath/state", groupQueueStateJson("FAILED", -1L,
+            reason.takeIf { it.matches(Regex("[a-z0-9_]{1,64}")) } ?: "group_queue_failed"))
+        runCatching { bridge.abort(groupQueueStageId(request)) }
+        stagedGroupQueueOperationId = null
+        stagedGroupQueueStageId = null
+        coordinatingGroupQueueOperationId = null
+        finishGroupQueueOperation(request, request.ref, GroupQueueOperationV2Status.FAILED, null,
+            reason.takeIf { it.matches(Regex("[a-z0-9_]{1,64}")) } ?: "group_queue_failed")
     }
 
     private suspend fun processMoveInbox(session: FirebaseSession, operationId: String) {
@@ -1584,24 +2589,29 @@ class ConnectedPlaybackV2Client(
             return
         }
         heartbeatGroupMember(session, path, timeline, currentMembers.firstOrNull { it.deviceId == deviceId })
+        val syncTiming = refreshGroupSyncTiming(session, path, ref, currentMembers, now)
         val visibleMembers = currentMembers.map { member -> if (now - member.updatedAt > V2_DEVICE_LEASE_MS && member.status != GroupMemberV2Status.LEFT)
             member.copy(status = GroupMemberV2Status.DISCONNECTED) else member }
         localGroup = ConnectedGroupV2(ref, head.coordinatorDeviceId, head.coordinatorSessionId, head.leaseUntil,
-            head.timelineSequence, head.status, timeline, visibleMembers)
+            head.timelineSequence, head.status, timeline, visibleMembers, syncTiming)
         if (head.coordinatorDeviceId == deviceId && head.coordinatorSessionId == bridge.sessionId) {
             if (head.status == GroupV2Status.PREPARING) {
                 if (!activateGroupWhenReady(session, path, headRead, head, timeline, currentMembers)) renewGroupLease(session, path, headRead, head)
             }
             else if (head.status == GroupV2Status.ACTIVE) {
-                val observed = bridge.observe().also(::validateEngineObservation)
-                val ended = if (observed.ended && !timeline.ended && observed.currentOccurrenceId == timeline.queue.entries[timeline.cursor].id) {
-                    val next = dev.echo.core.connected.advanceGroupTimeline(timeline,
-                        dev.echo.core.connected.GroupTimelineAction.NATURAL_END, 0, System.currentTimeMillis() + serverOffsetMs)
-                    next != null && commitGroupTimeline(session, path, headRead, head, next)
-                } else false
-                val committed = ended || processGroupRequests(session, path, head, timeline)
-                if (committed) return
-                if (!committed) renewGroupLease(session, path, headRead, head)
+                if (coordinatingGroupQueueOperationId != null) {
+                    renewGroupLease(session, path, headRead, head)
+                } else {
+                    val observed = bridge.observe().also(::validateEngineObservation)
+                    val ended = if (observed.ended && !timeline.ended && observed.currentOccurrenceId == timeline.queue.entries[timeline.cursor].id) {
+                        val next = dev.echo.core.connected.advanceGroupTimeline(timeline,
+                            dev.echo.core.connected.GroupTimelineAction.NATURAL_END, 0, System.currentTimeMillis() + serverOffsetMs)
+                        next != null && commitGroupTimeline(session, path, headRead, head, next)
+                    } else false
+                    val committed = ended || processGroupRequests(session, path, head, timeline)
+                    if (committed) return
+                    if (!committed) renewGroupLease(session, path, headRead, head)
+                }
             }
         }
         applyGroupTimeline(session, path, head, timeline)
@@ -1622,6 +2632,7 @@ class ConnectedPlaybackV2Client(
         val group = localGroup ?: return
         if (group.status != GroupV2Status.ACTIVE || group.leaseUntil <= 0L ||
             System.currentTimeMillis() + serverOffsetMs < group.leaseUntil) return
+        cancelScheduledGroupApply()
         localGroup = group.copy(status = GroupV2Status.FENCED)
         stateFlow.value = stateFlow.value.copy(group = localGroup, pending = false,
             message = "The Play together lease expired while disconnected. Playback was paused; reconnect or leave to recover.")
@@ -1643,69 +2654,94 @@ class ConnectedPlaybackV2Client(
             return false
         }
         val initial = groupSourceCapture
-        val playState = if (initial != null) {
-            // Both native engines reject capture while their coordinator preload is staged.
-            // The unchanged revision fence protects the captured traversal without recapturing it.
-            val fresh = bridge.observe().also(::validateEngineObservation)
-            diagnose(timeline.ref, "coordinator_source_observed", "fenceMatches=${fresh.fence == initial.fence} occurrenceMatches=${fresh.currentOccurrenceId == initial.queue.entries.firstOrNull()?.id}")
-            if (fresh.fence != initial.fence || fresh.currentOccurrenceId != initial.queue.entries.firstOrNull()?.id) {
-                abortPreparingGroup(session, path, timeline.ref, "Source changed while preparing the group")
-                return false
-            }
-            fresh.positionMs to fresh.playing
-        } else {
-            val current = bridge.observe().also(::validateEngineObservation)
-            require(current.fence.sessionId == bridge.sessionId) { "Coordinator session changed during takeover" }
-            current.positionMs to false
-        }
-        // The native observation above can block behind a serialized player operation.
         // Re-read the head and exact READY cohort before committing ACTIVE so a follower
-        // cancellation or epoch change during that wait cannot activate stale membership.
+        // cancellation or epoch change during the preparation phase cannot activate stale membership.
         val latestHeadRead = transport.get(session, "$path/head", etag = true)
         val latestHead = latestHeadRead.json?.let { runCatching { parseGroupHead(it) }.getOrNull() }
         val latestMembers = transport.get(session, "$path/members").json
             ?.let { runCatching { parseGroupMembers(it) }.getOrNull() }.orEmpty()
             .filter { it.epoch == head.epoch }
-        val now = System.currentTimeMillis() + serverOffsetMs
+        val readyCheckedAt = System.currentTimeMillis() + serverOffsetMs
         if (latestHead == null || latestHead.epoch != head.epoch || latestHead.status != GroupV2Status.PREPARING ||
-            latestHead.leaseUntil < now || latestHead.timelineSequence != head.timelineSequence ||
+            latestHead.leaseUntil < readyCheckedAt || latestHead.timelineSequence != head.timelineSequence ||
             latestHead.timelineDigest != head.timelineDigest ||
             !groupMembershipMatches(expectedGroupMembers.orEmpty(), latestMembers) ||
             latestMembers.any { it.status != GroupMemberV2Status.READY }) {
             diagnose(timeline.ref, "coordinator_ready_recheck_rejected", "head=${latestHead?.status} members=${latestMembers.joinToString { it.status.name }}")
             return false
         }
-        val active = timeline.copy(sequence = timeline.sequence + 1, positionMs = playState.first,
-            playing = playState.second, ended = false, issuedAtMs = now)
-        diagnose(timeline.ref, "coordinator_activate_commit_start", "sequence=${active.sequence}")
+        // Anchor the projected source position and common activation deadline to one fresh
+        // observation after the exact READY cohort has been rechecked.
+        val activationObservation = bridge.observe().also(::validateEngineObservation)
+        if (activationObservation.fence.sessionId != bridge.sessionId) {
+            abortPreparingGroup(session, path, timeline.ref, "Coordinator session changed during preparation")
+            return false
+        }
+        diagnose(timeline.ref, "coordinator_source_observed", "initial=${initial != null} fenceMatches=${initial == null || activationObservation.fence == initial.fence}")
+        if (initial != null && (activationObservation.fence != initial.fence ||
+                activationObservation.currentOccurrenceId != initial.queue.entries.firstOrNull()?.id)) {
+            abortPreparingGroup(session, path, timeline.ref, "Source changed while preparing the group")
+            return false
+        }
+        val observedAtServerMs = System.currentTimeMillis() + serverOffsetMs
+        val start = groupSyncDeadline(observedAtServerMs, latestMembers.map { it.sessionId }.toSet(),
+            localGroup?.syncTiming.orEmpty().map { it.sample() }, pollIntervalMs = V2_POLL_MS.toLong())
+        val activationPlaying = initial != null && activationObservation.playing
+        val active = timeline.copy(sequence = timeline.sequence + 1,
+            positionMs = groupSyncPositionAt(activationObservation.positionMs, observedAtServerMs, start.startAtMs,
+                timeline.queue.entries[timeline.cursor].recording.durationMs, activationPlaying),
+            playing = activationPlaying, ended = false, issuedAtMs = start.startAtMs)
+        diagnose(timeline.ref, "coordinator_activate_commit_start", "sequence=${active.sequence} leadMs=${start.startAtMs - observedAtServerMs}")
         if (!commitGroupTimeline(session, path, latestHeadRead, latestHead, active, GroupV2Status.ACTIVE)) {
             diagnose(timeline.ref, "coordinator_activate_commit_rejected", "sequence=${active.sequence}")
             return false
         }
         diagnose(timeline.ref, "coordinator_activate_committed", "sequence=${active.sequence}")
+        latestMembers.firstOrNull { it.deviceId == deviceId && it.sessionId == bridge.sessionId }?.let { self ->
+            val activeHead = latestHead.copy(timelineSequence = active.sequence,
+                timelineDigest = groupTimelineJson(active).getString("digest"), status = GroupV2Status.ACTIVE)
+            scheduleGroupTimeline(session, "$path/members/$deviceId", activeHead, active,
+                GroupApplyKey(active.ref, active.sequence, bridge.sessionId, active.queue.entries[active.cursor].id),
+                self, activationObservation, activateStaged = true)
+        }
         groupSourceCapture = null
         return true
     }
 
-    private suspend fun applyGroupTimeline(session: FirebaseSession, path: String, head: GroupHeadV2, timeline: GroupTimeline) {
+    private suspend fun applyGroupTimeline(session: FirebaseSession, path: String, head: GroupHeadV2, timeline: GroupTimeline,
+        scheduled: Boolean = false) {
         if (head.status != GroupV2Status.ACTIVE || head.epoch != groupRef?.epoch) return
+        val expectedOccurrence = timeline.queue.entries[timeline.cursor].id
+        val applyKey = GroupApplyKey(timeline.ref, timeline.sequence, bridge.sessionId, expectedOccurrence)
+        if (!scheduled && scheduledGroupApplyKey == applyKey && scheduledGroupApplyJob?.isActive == true) return
+        if (scheduledGroupApplyKey != applyKey) cancelScheduledGroupApply()
         val memberPath = "$path/members/$deviceId"
         val member = transport.get(session, memberPath).json?.let { runCatching { parseGroupMember(deviceId, it) }.getOrNull() } ?: return
         if (member.sessionId != bridge.sessionId || member.epoch != head.epoch || member.status == GroupMemberV2Status.LEFT ||
             member.lastAppliedSequence >= timeline.sequence) return
         diagnose(timeline.ref, "timeline_apply_start", "head=${head.status} member=${member.status} sequence=${timeline.sequence}")
-        val nativeGroupNeedsActivation = member.status == GroupMemberV2Status.READY
-        val expectedOccurrence = timeline.queue.entries[timeline.cursor].id
+        val expectedStageId = "${timeline.ref.groupId}-${timeline.ref.epoch}-${timeline.sequence}"
+        val stagedGroupQueueActivation = stagedGroupQueueOperationId != null && stagedGroupQueueStageId == expectedStageId
+        val nativeGroupNeedsActivation = member.status == GroupMemberV2Status.READY || stagedGroupQueueActivation
         try {
             val current = bridge.observe().also(::validateEngineObservation)
-            val activationPosition = groupActivationPosition(timeline, System.currentTimeMillis() + serverOffsetMs)
+            val serverNow = System.currentTimeMillis() + serverOffsetMs
+            if (!scheduled && serverNow < timeline.issuedAtMs && current.ready &&
+                (nativeGroupNeedsActivation || current.currentOccurrenceId == expectedOccurrence)) {
+                transport.put(session, memberPath, groupMemberJson(member.copy(status = GroupMemberV2Status.BUFFERING)))
+                scheduleGroupTimeline(session, memberPath, head, timeline, applyKey, member, current,
+                    activateStaged = nativeGroupNeedsActivation,
+                    activateOperationId = if (stagedGroupQueueActivation) expectedStageId else timeline.ref.groupId)
+                return
+            }
+            val activationPosition = groupActivationPosition(timeline, serverNow)
             if (timeline.playing && !timeline.ended && activationPosition == null) {
                 transport.put(session, memberPath, groupMemberJson(member.copy(status = GroupMemberV2Status.BUFFERING)))
                 return
             }
             val positionMs = activationPosition ?: timeline.positionMs
             if (!nativeGroupNeedsActivation && current.currentOccurrenceId == expectedOccurrence && current.ready && current.playing == timeline.playing &&
-                kotlin.math.abs(current.positionMs - positionMs) <= V2_OBSERVATION_TOLERANCE_MS) {
+                kotlin.math.abs(current.positionMs - positionMs) <= V2_GROUP_SYNC_DRIFT_TOLERANCE_MS) {
                 updateGroupMemberObserved(session, memberPath, member, timeline, current)
                 return
             }
@@ -1801,6 +2837,62 @@ class ConnectedPlaybackV2Client(
         }
     }
 
+    private fun cancelScheduledGroupApply() {
+        scheduledGroupApplyJob?.cancel()
+        scheduledGroupApplyJob = null
+        scheduledGroupApplyKey = null
+    }
+
+    private fun scheduleGroupTimeline(session: FirebaseSession, memberPath: String, head: GroupHeadV2,
+        timeline: GroupTimeline, key: GroupApplyKey, member: GroupMemberV2, current: EngineObservation,
+        activateStaged: Boolean = false, activateOperationId: String = timeline.ref.groupId) {
+        val nowServer = System.currentTimeMillis() + serverOffsetMs
+        if (member.sessionId != key.sessionId || member.epoch != key.ref.epoch || member.lastAppliedSequence >= key.sequence ||
+            head.epoch != key.ref.epoch || head.status != GroupV2Status.ACTIVE || head.timelineSequence != key.sequence ||
+            head.timelineDigest != groupTimelineJson(timeline).getString("digest") || timeline.ref != key.ref ||
+            timeline.issuedAtMs <= nowServer || !current.ready ||
+            (!activateStaged && current.currentOccurrenceId != key.occurrenceId)) return
+        if (scheduledGroupApplyKey == key && scheduledGroupApplyJob?.isActive == true) return
+        cancelScheduledGroupApply()
+        scheduledGroupApplyKey = key
+        val startPosition = timeline.positionMs
+        val projectedPosition = if (activateStaged) startPosition else groupSyncPositionAt(current.positionMs, nowServer,
+            timeline.issuedAtMs, timeline.queue.entries[timeline.cursor].recording.durationMs, current.playing)
+        val applyTransport = !activateStaged && (current.currentOccurrenceId != key.occurrenceId || current.playing != timeline.playing ||
+            kotlin.math.abs(projectedPosition - startPosition) > V2_GROUP_SYNC_DRIFT_TOLERANCE_MS)
+        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeline.issuedAtMs - nowServer)
+        scheduledGroupApplyJob = queueOperationScope.launch {
+            try {
+                while (!closed && scheduledGroupApplyKey == key) {
+                    val remainingNanos = deadlineNanos - System.nanoTime()
+                    if (remainingNanos <= 0) break
+                    delay(TimeUnit.NANOSECONDS.toMillis(remainingNanos).coerceAtLeast(1L).coerceAtMost(50L))
+                }
+                if (closed || scheduledGroupApplyKey != key || groupRef != key.ref || bridge.sessionId != key.sessionId ||
+                    localGroup?.timeline?.sequence != key.sequence) return@launch
+                val started = if (activateStaged) bridge.activate(activateOperationId, startPosition,
+                    timeline.playing && !timeline.ended).also(::validateEngineObservation)
+                else if (applyTransport) bridge.applyGroupTransport(key.ref, key.occurrenceId, startPosition,
+                    timeline.playing && !timeline.ended, timeline.ended).also(::validateEngineObservation)
+                else bridge.observe().also(::validateEngineObservation)
+                require(started.ready && started.currentOccurrenceId == key.occurrenceId &&
+                    kotlin.math.abs(started.positionMs - startPosition) <= V2_OBSERVATION_TOLERANCE_MS &&
+                    started.playing == (timeline.playing && !timeline.ended)) { "The scheduled shared start was not confirmed" }
+                updateGroupMemberObserved(session, memberPath, member, timeline, started)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                lastError = "A Play together player started late and is catching up to the shared timeline."
+                runCatching { transport.put(session, memberPath, groupMemberJson(member.copy(status = GroupMemberV2Status.BUFFERING))) }
+            }
+            finally {
+                if (scheduledGroupApplyKey == key) {
+                    scheduledGroupApplyKey = null
+                    scheduledGroupApplyJob = null
+                }
+            }
+        }
+    }
+
     private suspend fun updateGroupMemberObserved(session: FirebaseSession, memberPath: String, member: GroupMemberV2,
         timeline: GroupTimeline, observation: EngineObservation) {
         val status = if (observation.playing) GroupMemberV2Status.PLAYING else GroupMemberV2Status.PAUSED
@@ -1828,6 +2920,70 @@ class ConnectedPlaybackV2Client(
         lastGroupHeartbeat = now
     }
 
+    private suspend fun refreshGroupSyncTiming(session: FirebaseSession, path: String, ref: GroupRef,
+        members: List<GroupMemberV2>, serverNow: Long): List<GroupSyncTimingV1> {
+        val localNow = System.currentTimeMillis()
+        if (groupSyncTimingRef != ref) {
+            groupSyncTimingRef = ref
+            groupSyncRttSamples.clear()
+            groupSyncClockSamples.clear()
+            groupSyncTimingCache = emptyList()
+            groupSyncTimingAttemptAtMs = 0
+            groupSyncTimingRetryAtMs = 0
+            groupSyncTimingReadAtMs = 0
+            groupSyncTimingWriteAvailable = true
+        }
+        if (groupSyncTimingWriteAvailable && localNow >= groupSyncTimingRetryAtMs &&
+            localNow - groupSyncTimingAttemptAtMs >= V2_GROUP_SYNC_TIMING_PUBLISH_MS) {
+            groupSyncTimingAttemptAtMs = localNow
+            val sorted = groupSyncRttSamples.sorted()
+            val bestClock = groupSyncClockSamples.minByOrNull { it.third }
+            val startedAt = System.currentTimeMillis()
+            val startedNanos = System.nanoTime()
+            try {
+                val written = transport.putWithResponse(session, "$path/syncTimingV1/$deviceId",
+                    groupSyncTimingV1Json(bridge.sessionId, sorted.lastOrNull() ?: 0L,
+                        if (sorted.size > 1) sorted.last() - sorted.first() else 0L,
+                        bestClock?.second ?: 2_000L))
+                val writeElapsedMs = ((System.nanoTime() - startedNanos) / 1_000_000L).coerceAtLeast(0)
+                groupSyncRttSamples += writeElapsedMs.coerceAtMost(5_000L)
+                while (groupSyncRttSamples.size > V2_GROUP_SYNC_MAX_SAMPLES) groupSyncRttSamples.removeAt(0)
+                var serverTimestamp = written.json?.optLong("updatedAt", 0L) ?: 0L
+                var endedAt = System.currentTimeMillis()
+                var clockRoundTripMs = writeElapsedMs
+                if (serverTimestamp <= 0) {
+                    val readback = transport.get(session, "$path/syncTimingV1/$deviceId").json
+                    serverTimestamp = readback?.optLong("updatedAt", 0L) ?: 0L
+                    endedAt = System.currentTimeMillis()
+                    clockRoundTripMs = ((System.nanoTime() - startedNanos) / 1_000_000L).coerceAtLeast(writeElapsedMs)
+                }
+                if (serverTimestamp > 0) {
+                    val uncertaintyMs = (clockRoundTripMs + 1) / 2
+                    val offsetMs = estimateServerOffsetMs(serverTimestamp, startedAt, endedAt)
+                    groupSyncClockSamples += Triple(offsetMs, uncertaintyMs.coerceAtMost(2_000L), writeElapsedMs)
+                    while (groupSyncClockSamples.size > V2_GROUP_SYNC_MAX_SAMPLES) groupSyncClockSamples.removeAt(0)
+                    groupSyncClockSamples.minByOrNull { it.third }?.let { serverOffsetMs = it.first }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                // New sync timing is optional until the additive rules are deployed.
+                groupSyncTimingWriteAvailable = false
+                groupSyncTimingRetryAtMs = localNow + V2_GROUP_SYNC_TIMING_RETRY_MS
+            }
+        }
+        if (localNow - groupSyncTimingReadAtMs >= V2_GROUP_SYNC_TIMING_PUBLISH_MS) {
+            groupSyncTimingReadAtMs = localNow
+            groupSyncTimingCache = runCatching {
+                parseGroupSyncTimingsV1(transport.get(session, "$path/syncTimingV1").json)
+            }.getOrDefault(emptyList())
+        }
+        val sessions = members.filter { it.epoch == ref.epoch && it.status != GroupMemberV2Status.LEFT }
+            .associate { it.deviceId to it.sessionId }
+        return groupSyncTimingCache.filter { timing ->
+            sessions[timing.deviceId] == timing.sessionId && serverNow - timing.sampledAtMs in 0..15_000L
+        }
+    }
+
     private suspend fun processGroupRequests(session: FirebaseSession, path: String, head: GroupHeadV2, timeline: GroupTimeline): Boolean {
         val rows = transport.get(session, "$path/requests", query = mapOf("orderBy" to "\"createdAt\"", "limitToLast" to "32")).json ?: return false
         val now = System.currentTimeMillis() + serverOffsetMs
@@ -1847,6 +3003,24 @@ class ConnectedPlaybackV2Client(
                 member.status !in allowedMemberStatuses) {
                 transport.delete(session, "$path/requests/$id")
                 continue
+            }
+            var syncMemberSessions = emptySet<String>()
+            if (request.action == GroupActionV2.SYNC) {
+                val memberRows = transport.get(session, "$path/members").json
+                    ?.let { runCatching { parseGroupMembers(it) }.getOrNull() } ?: continue
+                val cohort = memberRows.filter { it.epoch == head.epoch && it.status != GroupMemberV2Status.LEFT }
+                syncMemberSessions = cohort.map { it.sessionId }.toSet()
+                val live = freshGroupMembers(cohort, head.epoch, now)
+                val supported = cohort.all { candidate ->
+                    if (candidate.deviceId == deviceId) candidate.sessionId == bridge.sessionId &&
+                        CONNECTED_V2_CAPABILITY_SYNC in bridge.capabilities()
+                    else lastV2Devices.any { peer -> peer.id == candidate.deviceId && peer.sessionId == candidate.sessionId &&
+                        peer.enabled && CONNECTED_V2_CAPABILITY_SYNC in peer.capabilities &&
+                        isRecentServerTimestamp(peer.updatedAt, now) }
+                }
+                if (cohort.size !in 2..MAX_CONNECTED_GROUP_MEMBERS || live.size != cohort.size ||
+                    cohort.any { it.status !in setOf(GroupMemberV2Status.PLAYING, GroupMemberV2Status.PAUSED) } ||
+                    live.map { it.deviceId to it.sessionId }.toSet() != cohort.map { it.deviceId to it.sessionId }.toSet() || !supported) continue
             }
             // Keep a valid current-sequence request until this member has applied the committed timeline.
             if (member.lastAppliedSequence < timeline.sequence) return false
@@ -1879,14 +3053,26 @@ class ConnectedPlaybackV2Client(
                 GroupActionV2.SEEK -> dev.echo.core.connected.GroupTimelineAction.SEEK
                 GroupActionV2.NEXT -> dev.echo.core.connected.GroupTimelineAction.NEXT
                 GroupActionV2.PREVIOUS -> dev.echo.core.connected.GroupTimelineAction.PREVIOUS
+                GroupActionV2.SYNC -> dev.echo.core.connected.GroupTimelineAction.SEEK
                 GroupActionV2.LEAVE -> continue
             }
             val observation = bridge.observe().also(::validateEngineObservation)
             if (!observation.ready || observation.fence.sessionId != head.coordinatorSessionId ||
                 observation.currentOccurrenceId != timeline.queue.entries[timeline.cursor].id) continue
-            val base = if (request.action in setOf(GroupActionV2.PLAY, GroupActionV2.PAUSE))
-                timeline.copy(positionMs = observation.positionMs) else timeline
-            val next = runCatching { dev.echo.core.connected.advanceGroupTimeline(base, action, request.positionMs, now) }.getOrNull()
+            val sync = request.action == GroupActionV2.SYNC
+            // Observation may wait behind native player work. Sample the server-clock anchor
+            // immediately after it returns; derive both T and the projected position from it.
+            val observedAtServerMs = System.currentTimeMillis() + serverOffsetMs
+            val syncDeadline = if (sync) groupSyncDeadline(observedAtServerMs,
+                syncMemberSessions, localGroup?.syncTiming.orEmpty().map { it.sample() }) else null
+            val base = if (request.action in setOf(GroupActionV2.PLAY, GroupActionV2.PAUSE) || sync)
+                timeline.copy(positionMs = observation.positionMs, playing = observation.playing, ended = false) else timeline
+            val actionPosition = if (sync) groupSyncPositionAt(observation.positionMs, observedAtServerMs, syncDeadline!!.startAtMs,
+                timeline.queue.entries[timeline.cursor].recording.durationMs, observation.playing) else request.positionMs
+            val actionTime = syncDeadline?.startAtMs ?: observedAtServerMs
+            if (syncDeadline != null) diagnose(timeline.ref, "sync_deadline_selected",
+                "adaptive=${syncDeadline.adaptive} leadMs=${syncDeadline.startAtMs - observedAtServerMs} members=${syncMemberSessions.size}")
+            val next = runCatching { dev.echo.core.connected.advanceGroupTimeline(base, action, actionPosition, actionTime) }.getOrNull()
             if (next != null && commitGroupTimeline(session, path, transport.get(session, "$path/head", etag = true), head, next)) {
                 transport.delete(session, "$path/requests/$id")
                 return true
@@ -1915,8 +3101,10 @@ class ConnectedPlaybackV2Client(
             diagnose(ref, "lease_renew_skip_no_etag")
             return
         }
-        val committed = transport.compareAndSet(session, "$path/head", groupHeadJson(renewed.groupId, renewed.epoch,
-            renewed.coordinatorDeviceId, renewed.coordinatorSessionId, renewed.leaseUntil, timeline, renewed.status), etag)
+        val committed = groupTimelineCommitMutex.withLock {
+            transport.compareAndSet(session, "$path/head", groupHeadJson(renewed.groupId, renewed.epoch,
+                renewed.coordinatorDeviceId, renewed.coordinatorSessionId, renewed.leaseUntil, timeline, renewed.status), etag)
+        }
         diagnose(ref, if (committed) "lease_renew_cas_success" else "lease_renew_cas_rejected",
             "status=${head.status} oldUntil=${head.leaseUntil} newUntil=${renewed.leaseUntil}")
         if (!committed) {
@@ -1993,7 +3181,13 @@ class ConnectedPlaybackV2Client(
     }
 
     private suspend fun commitGroupTimeline(session: FirebaseSession, path: String, headRead: RtdbV2Value,
-        expectedHead: GroupHeadV2, timeline: GroupTimeline, status: GroupV2Status = expectedHead.status): Boolean {
+        expectedHead: GroupHeadV2, timeline: GroupTimeline, status: GroupV2Status = expectedHead.status): Boolean =
+        groupTimelineCommitMutex.withLock {
+            commitGroupTimelineLocked(session, path, headRead, expectedHead, timeline, status)
+        }
+
+    private suspend fun commitGroupTimelineLocked(session: FirebaseSession, path: String, headRead: RtdbV2Value,
+        expectedHead: GroupHeadV2, timeline: GroupTimeline, status: GroupV2Status): Boolean {
         val observedHead = headRead.json?.let { runCatching { parseGroupHead(it) }.getOrNull() } ?: return false
         if (timeline.ref.groupId != expectedHead.groupId || timeline.ref.epoch != expectedHead.epoch ||
             timeline.sequence != expectedHead.timelineSequence + 1 || expectedHead.coordinatorDeviceId != deviceId ||
@@ -2013,16 +3207,42 @@ class ConnectedPlaybackV2Client(
         }
         val next = expectedHead.copy(leaseUntil = System.currentTimeMillis() + serverOffsetMs + V2_GROUP_LEASE_MS,
             timelineSequence = timeline.sequence, timelineDigest = digest, status = status)
-        val success = transport.compareAndSet(session, "$path/head", groupHeadJson(next.groupId, next.epoch, next.coordinatorDeviceId,
+        val updated = transport.compareAndSet(session, "$path/head", groupHeadJson(next.groupId, next.epoch, next.coordinatorDeviceId,
             next.coordinatorSessionId, next.leaseUntil, timeline, next.status), headRead.etag ?: return false)
-        if (success) {
+        if (updated) {
             if (localGroup?.ref?.epoch == next.epoch) {
                 localGroup = localGroup?.copy(leaseUntil = next.leaseUntil, timelineSequence = timeline.sequence,
                     status = status, timeline = timeline)
             }
             return true
         }
-        val fresh = transport.get(session, "$path/head").json?.let { runCatching { parseGroupHead(it) }.getOrNull() }
+        val freshRead = transport.get(session, "$path/head", etag = true)
+        val fresh = freshRead.json?.let { runCatching { parseGroupHead(it) }.getOrNull() }
+        if (fresh != null && fresh.groupId == next.groupId && fresh.epoch == next.epoch &&
+            fresh.coordinatorDeviceId == next.coordinatorDeviceId && fresh.coordinatorSessionId == next.coordinatorSessionId &&
+            fresh.status == status && fresh.timelineSequence == timeline.sequence && fresh.timelineDigest == digest) {
+            if (localGroup?.ref?.epoch == fresh.epoch) {
+                localGroup = localGroup?.copy(leaseUntil = fresh.leaseUntil, timelineSequence = timeline.sequence,
+                    status = status, timeline = timeline)
+            }
+            return true
+        }
+        if (fresh != null && fresh.groupId == expectedHead.groupId && fresh.epoch == expectedHead.epoch &&
+            fresh.coordinatorDeviceId == expectedHead.coordinatorDeviceId && fresh.coordinatorSessionId == expectedHead.coordinatorSessionId &&
+            fresh.status == expectedHead.status && fresh.timelineSequence == expectedHead.timelineSequence &&
+            fresh.timelineDigest == expectedHead.timelineDigest && fresh.leaseUntil >= System.currentTimeMillis() + serverOffsetMs) {
+            val retry = fresh.copy(leaseUntil = System.currentTimeMillis() + serverOffsetMs + V2_GROUP_LEASE_MS,
+                timelineSequence = timeline.sequence, timelineDigest = digest, status = status)
+            if (transport.compareAndSet(session, "$path/head", groupHeadJson(retry.groupId, retry.epoch,
+                    retry.coordinatorDeviceId, retry.coordinatorSessionId, retry.leaseUntil, timeline, status),
+                    freshRead.etag ?: return false)) {
+                if (localGroup?.ref?.epoch == retry.epoch) {
+                    localGroup = localGroup?.copy(leaseUntil = retry.leaseUntil, timelineSequence = timeline.sequence,
+                        status = status, timeline = timeline)
+                }
+                return true
+            }
+        }
         if (fresh != null && (fresh.epoch != expectedHead.epoch || fresh.coordinatorDeviceId != deviceId || fresh.coordinatorSessionId != bridge.sessionId)) {
             localGroup = localGroup?.copy(status = GroupV2Status.FENCED)
         }

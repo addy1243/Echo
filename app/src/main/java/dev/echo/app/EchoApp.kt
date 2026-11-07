@@ -55,8 +55,9 @@ private val Ink = Color(0xFF101014)
 
 @Composable
 fun EchoApp(vm: EchoViewModel) {
-    dev.echo.app.account.AccountSyncHost(vm)
+    if (!BuildConfig.STAGING) dev.echo.app.account.AccountSyncHost(vm)
     val connected by vm.connectedPlaybackState.collectAsStateWithLifecycle()
+    val connectedV2 by vm.connectedPlaybackV2State.collectAsStateWithLifecycle()
     val selectedPlaybackTargetId by vm.selectedConnectedPlaybackTargetId.collectAsStateWithLifecycle()
     val connectedPlaybackEnabled by vm.connectedPlaybackEnabled.collectAsStateWithLifecycle()
     val nav = rememberNavController()
@@ -114,7 +115,8 @@ fun EchoApp(vm: EchoViewModel) {
                     IconButton(onClick = { nav.navigate("settings") { launchSingleTop = true } }) { Icon(Icons.Default.Settings, "Settings") }
                 }) },
             bottomBar = { if (route != "player") Column {
-                if (vm.current != null || selectedPlaybackTargetId != null) MiniPlayer(vm, tracks) { nav.navigate("player") { launchSingleTop = true } }
+                if (vm.current != null || selectedPlaybackTargetId != null || connectedV2.group != null ||
+                    connectedPlaybackEnabled && connected.devices.isNotEmpty() || BuildConfig.STAGING && connected.devices.isNotEmpty()) PlayerDock(vm, tracks) { nav.navigate("player") { launchSingleTop = true } }
                 Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).navigationBarsPadding().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                     listOf(Triple("home", "Home", Icons.Default.Home), Triple("search", "Search", Icons.Default.Search), Triple("library", "Library", Icons.Default.LibraryMusic), Triple("profile", "Profile", Icons.Default.Person)).forEach { (key, label, icon) ->
                         Column(Modifier.weight(1f).fillMaxHeight().testTag("tab-$key").selectable(selected = activeTab == key, role = Role.Tab, onClick = {
@@ -126,6 +128,7 @@ fun EchoApp(vm: EchoViewModel) {
                     }
                 }
             } },
+            floatingActionButton = { if (BuildConfig.STAGING && route != "player") StageAdminControls(vm.stage) }
         ) { padding ->
             Column(Modifier.fillMaxSize().padding(padding)) {
                 (credentialError ?: historyError)?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) }
@@ -149,7 +152,7 @@ fun EchoApp(vm: EchoViewModel) {
                         val id = back.arguments?.getString("id").orEmpty()
                         PlaylistScreen(vm, id, playlists.find { it.id == id }, tracks, playlists, favorites)
                     }
-                    composable("player") { PlayerScreen(vm, tracks, playlists, favorites) { nav.popBackStack() } }
+                    composable("player") { FullPlayer(vm, tracks, playlists, favorites) { nav.popBackStack() } }
                     composable("profile") { ProfileScreen(vm) }
                     composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }, { nav.navigate("profile") }) }
                     composable("licenses") { LicensesScreen() }
@@ -165,7 +168,7 @@ fun EchoApp(vm: EchoViewModel) {
     vm: EchoViewModel, tracks: List<Track>, playlists: List<Playlist>, favorites: Set<String>, recent: List<Track>,
     scan: () -> Unit, discover: (Int) -> Unit, openPlaylist: (String) -> Unit, library: () -> Unit, search: () -> Unit,
 ) {
-    LaunchedEffect(Unit) { if (vm.newMusicResults.isEmpty()) vm.refreshDiscovery() }
+    LaunchedEffect(Unit) { if (!BuildConfig.STAGING && vm.newMusicResults.isEmpty()) vm.refreshDiscovery() }
     val suggestions = vm.discoveryResults.ifEmpty { vm.newMusicResults }
     val preview = suggestions.ifEmpty { tracks.filter { it.sourceUri != null } }.take(5)
     val liked = tracks.filter { it.id in favorites && it.sourceUri != null }
@@ -192,9 +195,13 @@ fun EchoApp(vm: EchoViewModel) {
             }
         } else item(key = "discovery-empty") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (vm.discoveryLoading) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Finding songs for you…") }
-                else Text("Discoveries couldn't load. Try again, or search for an artist.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(enabled = !vm.discoveryLoading, onClick = vm::refreshDiscovery) { Text("Refresh discoveries") }
+                if (BuildConfig.STAGING) {
+                    Text("Stage preview · add demo players with Admin, then open Stage Mix to try queue routing.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    if (vm.discoveryLoading) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Finding songs for you…") }
+                    else Text("Discoveries couldn't load. Try again, or search for an artist.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(enabled = !vm.discoveryLoading, onClick = vm::refreshDiscovery) { Text("Refresh discoveries") }
+                }
             }
         }
         item(key = "discover-mixes") { LazyRow(Modifier.testTag("home-mixes"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -290,7 +297,10 @@ fun EchoApp(vm: EchoViewModel) {
         Column(Modifier.weight(1f)) {
             Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
             Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-            Text(if (track.sourceUri == null) "Choose a recording in its playlist" else "${track.provider} · ${time(track.durationMs)}", color = if (track.sourceUri == null) MaterialTheme.colorScheme.error else Violet, style = MaterialTheme.typography.labelSmall)
+            val detail = if (BuildConfig.STAGING && track.provider == "stage") "Silent Stage demo · routes to the focused player"
+                else if (track.sourceUri == null) "Choose a recording in its playlist" else "${track.provider} · ${time(track.durationMs)}"
+            Text(detail, color = if (track.sourceUri == null && track.provider != "stage") MaterialTheme.colorScheme.error else Violet,
+                style = MaterialTheme.typography.labelSmall)
         }
         Box {
             IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Options for ${track.title}") }
@@ -321,10 +331,12 @@ fun EchoApp(vm: EchoViewModel) {
 @Composable private fun SearchScreen(vm: EchoViewModel, tracks: List<Track>, playlists: List<Playlist>, favorites: Set<String>) {
     var query by rememberSaveable { mutableStateOf("") }
     var source by rememberSaveable { mutableIntStateOf(2) }
+    var youtubeMode by rememberSaveable { mutableIntStateOf(0) }
+    var importLink by remember { mutableStateOf<String?>(null) }
     val history by vm.settings.searchHistory.collectAsStateWithLifecycle(emptyList())
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionTitle("Find your next favorite") }
-        item { OutlinedTextField(query, { query = it }, label = { Text("Songs, artists or albums") }, leadingIcon = { Icon(Icons.Default.Search, null) }, modifier = Modifier.fillMaxWidth(), singleLine = true) }
+        item { OutlinedTextField(query, { query = it }, label = { Text("Songs, artists, albums or playlist titles") }, leadingIcon = { Icon(Icons.Default.Search, null) }, modifier = Modifier.fillMaxWidth(), singleLine = true) }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Library", "Licensed audio", "YouTube").forEachIndexed { index, label -> FilterChip(source == index, { source = index }, label = { Text(label) }, modifier = Modifier.testTag("search-source-$index")) } } }
         if (vm.isSearching) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         if (source == 0) {
@@ -339,15 +351,31 @@ fun EchoApp(vm: EchoViewModel) {
             items(vm.onlineResults, key = { it.id }) { TrackRow(it, vm, playlists, favorites) { vm.playSelected(it) } }
         } else {
             item { Text("Find music on YouTube and play it in Echo. No API key needed. Some recordings may be unavailable.", style = MaterialTheme.typography.bodySmall) }
-            item { Button(enabled = query.isNotBlank(), onClick = { vm.searchYouTube(query) }) { Text("Search YouTube") } }
+            item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(youtubeMode == 0, { youtubeMode = 0; if (query.isNotBlank()) vm.searchYouTube(query) }, label = { Text("Songs") })
+                FilterChip(youtubeMode == 1, { youtubeMode = 1; if (query.isNotBlank()) vm.searchYouTubePlaylists(query) }, label = { Text("Playlists") })
+            } }
+            item { Button(enabled = query.isNotBlank(), onClick = { if (youtubeMode == 0) vm.searchYouTube(query) else vm.searchYouTubePlaylists(query) }) {
+                Text(if (youtubeMode == 0) "Search YouTube songs" else "Search YouTube playlists")
+            } }
             if (vm.searchedQuery.isNotBlank()) item { Text("Results for “${vm.searchedQuery}”", style = MaterialTheme.typography.bodySmall) }
-            items(vm.youtubeResults, key = { it.id }) { TrackRow(it, vm, playlists, favorites) { vm.playSelected(it) } }
+            if (youtubeMode == 0) items(vm.youtubeResults, key = { it.id }) { TrackRow(it, vm, playlists, favorites) { vm.playSelected(it) } }
+            else {
+                if (vm.youtubePlaylistResults.isEmpty() && vm.searchedQuery.isNotBlank() && !vm.isSearching)
+                    item { EmptyState("No playlists found", "Try a different title or search for a song.") }
+                items(vm.youtubePlaylistResults, key = { it.id }) { result ->
+                    ListItem(headlineContent = { Text(result.title) }, supportingContent = {
+                        Text(listOf(result.uploader, result.total?.let { "$it songs" }).filterNotNull().filter { it.isNotBlank() }.joinToString(" · "))
+                    }, trailingContent = { Text("Preview") }, modifier = Modifier.clickable { importLink = result.url })
+                }
+            }
         }
     }
+    importLink?.let { link -> PublicPlaylistDialog(vm, initialLink = link, close = { importLink = null }, imported = { importLink = null }) }
 }
 
 @Composable private fun DiscoveryScreen(vm: EchoViewModel, playlists: List<Playlist>, favorites: Set<String>, initialTab: Int = 0) {
-    LaunchedEffect(Unit) { if (vm.newMusicResults.isEmpty()) vm.refreshDiscovery() }
+    LaunchedEffect(Unit) { if (!BuildConfig.STAGING && vm.newMusicResults.isEmpty()) vm.refreshDiscovery() }
     var tab by rememberSaveable { mutableIntStateOf(initialTab.coerceIn(0, 1)) }
     val songs = if (tab == 0) vm.discoveryResults else vm.newMusicResults
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -375,9 +403,9 @@ fun EchoApp(vm: EchoViewModel) {
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionTitle("Your collection") }
-        item { Button(enabled = !vm.busy, onClick = { linkImport = true }) { Icon(Icons.Default.Link, null); Spacer(Modifier.width(8.dp)); Text("Import Spotify link") } }
+        item { Button(enabled = !vm.busy, onClick = { linkImport = true }) { Icon(Icons.Default.Link, null); Spacer(Modifier.width(8.dp)); Text("Import public playlist link") } }
         item { OutlinedButton(enabled = !vm.busy, onClick = { importPlaylist.launch(arrayOf("text/csv", "application/json", "text/plain", "application/vnd.ms-excel", "text/comma-separated-values")) }) { Text("Import Spotify playlist file") } }
-        item { Text("Paste a public Spotify playlist link, or choose an Exportify CSV / Spotify playlist JSON. Preview the available song count first. Choose recordings in the imported playlist to play them.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Paste a public YouTube or Spotify playlist link, or choose an Exportify CSV / Spotify playlist JSON. YouTube songs can play when available; Spotify imports need recording selection.", style = MaterialTheme.typography.bodySmall) }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { FilledTonalButton(onClick = { create = true }) { Text("New playlist") }; OutlinedButton(onClick = addFile) { Text("Add file") }; IconButton(onClick = scan) { Icon(Icons.Default.Sync, "Scan device") } } }
         item { ScrollableTabRow(tab, edgePadding = 0.dp) { listOf("Tracks", "Liked", "Playlists", "Albums", "Artists").forEachIndexed { i, title -> Tab(tab == i, { tab = i }, text = { Text(title) }) } } }
         when (tab) {
@@ -394,33 +422,38 @@ fun EchoApp(vm: EchoViewModel) {
         }
     }
     if (create) NameDialog("New playlist", "", { create = false }) { name -> create = false; vm.runAction { openPlaylist(vm.library.createPlaylist(name)) } }
-    if (linkImport) SpotifyLinkDialog(vm, { linkImport = false }) { linkImport = false; tab = 2 }
+    if (linkImport) PublicPlaylistDialog(vm, initialLink = "", close = { linkImport = false }) { linkImport = false; tab = 2 }
     group?.let { (title, songs) -> AlertDialog(onDismissRequest = { group = null }, title = { Text(title) }, text = { LazyColumn { items(songs) { TrackRow(it, vm, playlists, favorites) { vm.play(songs, songs.indexOf(it)); group = null } } } }, confirmButton = { TextButton(onClick = { group = null }) { Text("Close") } }) }
 }
 
-@Composable private fun SpotifyLinkDialog(vm: EchoViewModel, close: () -> Unit, imported: () -> Unit) {
-    var link by rememberSaveable { mutableStateOf("") }
-    var preview by remember { mutableStateOf<dev.echo.data.spotify.SpotifyLinkPreview?>(null) }
+private data class PublicPlaylistPreview(val name: String, val tracks: List<dev.echo.core.Track>, val total: Long?, val spotify: Boolean, val hasMore: Boolean) {
+    val complete get() = !hasMore && total != null && total == tracks.size.toLong()
+}
+
+@Composable private fun PublicPlaylistDialog(vm: EchoViewModel, initialLink: String, close: () -> Unit, imported: () -> Unit) {
+    var link by rememberSaveable(initialLink) { mutableStateOf(initialLink) }
+    var preview by remember { mutableStateOf<PublicPlaylistPreview?>(null) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var autoMatch by rememberSaveable { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
-    AlertDialog(onDismissRequest = close, title = { Text("Import Spotify link") }, text = {
+    AlertDialog(onDismissRequest = close, title = { Text("Import public playlist link") }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(link, { link = it; preview = null; error = null }, enabled = !loading, label = { Text("Playlist share link") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(link, { link = it; preview = null; error = null }, enabled = !loading, label = { Text("YouTube or Spotify playlist link") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             preview?.let { result ->
                 Text(result.name, style = MaterialTheme.typography.titleMedium)
                 Text(when {
-                    result.complete -> "${result.tracks.size} of ${result.total} listed tracks available."
-                    result.total != null -> "Only ${result.tracks.size} of ${result.total} tracks are exposed. This imports only those ${result.tracks.size}."
-                    else -> "${result.tracks.size} tracks available. The full playlist count couldn't be verified; songs may be missing."
+                    result.hasMore -> "At least ${result.tracks.size} songs found; more entries remain. This imports only these ${result.tracks.size}."
+                    result.complete -> "${result.tracks.size} of ${result.total} songs available."
+                    result.total != null -> "Only ${result.tracks.size} of ${result.total} songs are available. This imports only those ${result.tracks.size}."
+                    else -> "${result.tracks.size} songs available. The full playlist count couldn't be verified; entries may be missing."
                 })
-                Text("Check this count against Spotify; public pages can omit songs. This snapshot won't sync Spotify changes.", style = MaterialTheme.typography.bodySmall)
-                Row(Modifier.toggleable(value = autoMatch, enabled = !loading, role = Role.Checkbox, onValueChange = { autoMatch = it }), verticalAlignment = Alignment.CenterVertically) { Checkbox(autoMatch, null, enabled = !loading); Text("Auto-match clear recordings", style = MaterialTheme.typography.bodySmall) }
+                Text(if (result.spotify) "Spotify imports contain metadata only and won't sync later changes." else "YouTube playlist entries are saved as playable recording links when available.", style = MaterialTheme.typography.bodySmall)
+                if (result.spotify) Row(Modifier.toggleable(value = autoMatch, enabled = !loading, role = Role.Checkbox, onValueChange = { autoMatch = it }), verticalAlignment = Alignment.CenterVertically) { Checkbox(autoMatch, null, enabled = !loading); Text("Auto-match clear recordings", style = MaterialTheme.typography.bodySmall) }
                 LazyColumn(Modifier.heightIn(max = 140.dp)) { itemsIndexed(result.tracks.take(4)) { _, track -> Text("${track.title} · ${track.artist}", modifier = Modifier.padding(vertical = 4.dp), maxLines = 2, overflow = TextOverflow.Ellipsis) } }
             }
         }
@@ -431,18 +464,22 @@ fun EchoApp(vm: EchoViewModel) {
             scope.launch {
                 try {
                     val result = preview
-                    if (result == null) preview = vm.spotifyLinks.preview(link)
+                    if (result == null) {
+                        val spotify = runCatching { java.net.URI(link.trim()).host.equals("open.spotify.com", true) }.getOrDefault(false)
+                        preview = if (spotify) vm.spotifyLinks.preview(link).let { PublicPlaylistPreview(it.name, it.tracks, it.total?.toLong(), true, false) }
+                            else vm.previewYouTubePlaylist(link).let { PublicPlaylistPreview(it.name, it.tracks, it.total, false, it.hasMore) }
+                    }
                     else {
                         val id = UUID.randomUUID().toString()
                         vm.library.importPlaylist(id, result.name, result.tracks)
-                        if (autoMatch) vm.matchPlaylistAutomatically(id)
+                        if (result.spotify && autoMatch) vm.matchPlaylistAutomatically(id)
                         imported()
                     }
                 } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
                 catch (failure: Exception) { error = failure.message ?: "Playlist import failed. Try a file export." }
                 finally { loading = false }
             }
-        }) { Text(preview?.let { "Import ${it.tracks.size} tracks" } ?: "Preview playlist") }
+        }) { Text(preview?.let { "Import ${it.tracks.size} songs" } ?: "Preview playlist") }
     }, dismissButton = { TextButton(onClick = close) { Text("Cancel") } })
 }
 
@@ -456,7 +493,8 @@ fun EchoApp(vm: EchoViewModel) {
     var queueMenu by remember { mutableStateOf(false) }
     val offlineSettings by vm.offlineSettings.collectAsStateWithLifecycle()
     val downloads by vm.offlineSongs.collectAsStateWithLifecycle()
-    val firstPlayable = firstPlayableIndex(songs, offlineSettings.offlineOnly, downloads.filter { it.status == "saved" }.map { it.trackId }.toSet())
+    val firstPlayable = if (BuildConfig.STAGING && vm.selectedConnectedPlaybackTargetId.value != null) songs.indices.firstOrNull() ?: -1
+        else firstPlayableIndex(songs, offlineSettings.offlineOnly, downloads.filter { it.status == "saved" }.map { it.trackId }.toSet())
     LazyColumn(Modifier.testTag("playlist-feed"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Hero(playlist?.name ?: "Playlist", "${songs.size} tracks · made for your moments") }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -522,44 +560,6 @@ fun EchoApp(vm: EchoViewModel) {
     }) } } }, confirmButton = { TextButton(onClick = { match = null }) { Text("Cancel") } }) }
 }
 
-@Composable internal fun MiniPlayer(vm: EchoViewModel, tracks: List<Track>, open: () -> Unit) {
-    val state by vm.connectedPlaybackState.collectAsStateWithLifecycle()
-    val connectedV2 by vm.connectedPlaybackV2State.collectAsStateWithLifecycle()
-    val group = connectedV2.group
-    val selectedId by vm.selectedConnectedPlaybackTargetId.collectAsStateWithLifecycle()
-    val cachedRemote by vm.selectedConnectedPlaybackDevice.collectAsStateWithLifecycle()
-    val remote = if (selectedId == null) null else state.devices.firstOrNull { it.id == selectedId } ?: cachedRemote
-    val remoteSelected = selectedId != null
-    val canControl = remote != null && remote.player.title != null && vm.canControlConnectedDevice(remote)
-    val liveRemote = remote?.let { candidate -> state.devices.firstOrNull { it.id == candidate.id && it.sessionId == candidate.sessionId && it.controlEnabled } }
-    val title = if (remoteSelected) remote?.player?.title ?: if (liveRemote != null) "Ready for playback" else "Reconnecting to player" else vm.current?.mediaMetadata?.title?.toString().orEmpty()
-    val artist = if (remoteSelected) remote?.player?.artist.orEmpty() else vm.current?.mediaMetadata?.artist?.toString().orEmpty()
-    val artwork = if (remoteSelected) connectedArtworkUri(remote?.player?.trackId, tracks) else vm.current?.mediaMetadata?.artworkUri?.toString()
-    val playing = if (remoteSelected) remote?.player?.isPlaying == true else group?.timeline?.playing ?: vm.playing
-    val position = if (remoteSelected) remote?.player?.positionMs ?: 0L else vm.position
-    val duration = if (remoteSelected) remote?.player?.durationMs ?: 0L else vm.duration
-    Surface(Modifier.fillMaxWidth().padding(horizontal = 8.dp).testTag("mini-player").clickable(onClick = open), shape = RoundedCornerShape(12.dp), color = Color(0xFF302B3D)) {
-        Column {
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Artwork(artwork, 42); Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(artist, style = MaterialTheme.typography.bodySmall, maxLines = 1) }
-                IconButton(enabled = if (remoteSelected) canControl else vm.current != null, onClick = {
-                    if (remoteSelected) remote?.let { vm.sendConnectedPlaybackCommand(it, if (playing) dev.echo.data.firebase.ConnectedPlaybackAction.PAUSE else dev.echo.data.firebase.ConnectedPlaybackAction.PLAY) }
-                    else vm.toggle()
-                }) { if (!remoteSelected && vm.buffering) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) else Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    if (remoteSelected) "${if (playing) "Pause" else "Play"} on ${remote?.label ?: "selected player"}" else if (playing) "Pause" else "Play") }
-                IconButton(enabled = if (remoteSelected) canControl else group != null || vm.controller?.hasNextMediaItem() == true, onClick = {
-                    if (remoteSelected) remote?.let { vm.sendConnectedPlaybackCommand(it, dev.echo.data.firebase.ConnectedPlaybackAction.NEXT) }
-                    else if (group != null) vm.controlTogether(dev.echo.data.firebase.GroupActionV2.NEXT)
-                    else vm.controller?.seekToNextMediaItem()
-                }) { Icon(Icons.Default.SkipNext, if (remoteSelected) "Next on ${remote?.label ?: "selected player"}" else "Next") }
-            }
-            LinearProgressIndicator(progress = { if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f }, modifier = Modifier.fillMaxWidth().height(2.dp))
-            ConnectedPlayerControls(vm, compact = true)
-        }
-    }
-}
-
 @Composable private fun SettingsScreen(vm: EchoViewModel, openHistory: () -> Unit, openDownloads: () -> Unit, openLicenses: () -> Unit, openProfile: () -> Unit) {
     val updateStatus by vm.updater.status.collectAsStateWithLifecycle()
     val connected by vm.spotify.connected.collectAsStateWithLifecycle()
@@ -597,8 +597,8 @@ fun EchoApp(vm: EchoViewModel) {
             Text("Update download: ${downloading.percent}%")
             TextButton(onClick = vm::cancelUpdate) { Text("Cancel update download") }
         }
-        item { Text("Spotify playlist files", style = MaterialTheme.typography.titleMedium) }
-        item { Text("Import from Library using a public Spotify share link, CSV or Spotify playlist JSON. Links preview the available track count first. Clear recordings can match automatically; ambiguous songs need a choice. Imports don't include Spotify audio or automatic sync.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Playlist imports", style = MaterialTheme.typography.titleMedium) }
+        item { Text("Import from Library using a public YouTube or Spotify playlist link, or Spotify CSV/JSON. Link imports preview available counts first. Spotify entries have no audio and may need a recording choice; links never sync automatically.", style = MaterialTheme.typography.bodySmall) }
         if (connected) item { OutlinedButton(onClick = { vm.runAction("Disconnected") { vm.spotify.disconnect() } }) { Text("Disconnect previous Spotify session") } }
         item { HorizontalDivider(); SectionTitle("Playback & storage") }
         item { OfflineSettingsSection(vm) }
@@ -613,9 +613,9 @@ fun EchoApp(vm: EchoViewModel) {
             OutlinedButton(onClick = { importBackup.launch(arrayOf("application/json")) }) { Text("Import backup") }
         } }
         item { Text("Backups contain library metadata, playlists, likes and local matches. Import merges tracks and replaces playlists with matching IDs. Audio files and API credentials are excluded.", style = MaterialTheme.typography.bodySmall) }
-        item { Text("Original source quality · normal speed\nDownloads and listening history stay on this device.\nPlaylists can sync privately with your Google account.\nDark theme · Android Auto browsing through Media3.") }
+        item { Text(if (BuildConfig.STAGING) "Echo Stage uses an isolated demo library and simulated players.\nDark theme · Android Auto browsing through Media3." else "Original source quality · normal speed\nDownloads and listening history stay on this device.\nPlaylists can sync privately with your Google account.\nDark theme · Android Auto browsing through Media3.") }
         item { OutlinedButton(onClick = { vm.runAction("Artwork cache cleared") { coil.Coil.imageLoader(context).memoryCache?.clear(); coil.Coil.imageLoader(context).diskCache?.clear() } }) { Text("Clear artwork cache") } }
-        item { Text("Android Auto requires testing on a phone and Desktop Head Unit. See playback/VALIDATION.md in the project.", style = MaterialTheme.typography.bodySmall) }
+        item { Text("Android Auto needs a compatible host and Desktop Head Unit for validation. See docs/ARCHITECTURE.md in the project.", style = MaterialTheme.typography.bodySmall) }
     }
 }
 

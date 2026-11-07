@@ -25,6 +25,8 @@ internal class DesktopAudioSource(initial: PlayableSource, private val refresh: 
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
     @Volatile private var source = initial
     private var refreshed = false
+    @Volatile var terminalResponseCode: Int? = null
+        private set
     val uri: String = "http://127.0.0.1:${server.address.port}$token"
     init {
         server.executor = executor
@@ -48,6 +50,7 @@ internal class DesktopAudioSource(initial: PlayableSource, private val refresh: 
             request.method(exchange.requestMethod, null)
             client.newCall(request.build()).execute().use { response ->
                 if (response.code == 403 && attempt == 0 && refreshOnce()) return@use
+                if (response.code in 400..499 && response.code != 416) terminalResponseCode = response.code
                 if (response.code !in setOf(200, 206, 416)) { exchange.sendResponseHeaders(if (response.code == 429) 429 else 502, -1); return }
                 listOf("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges").forEach { header ->
                     response.header(header)?.let { exchange.responseHeaders.set(header, it) }

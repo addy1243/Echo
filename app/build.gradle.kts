@@ -18,12 +18,24 @@ android {
         versionName = providers.gradleProperty("echoVersionName").orElse("0.2.3").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "SPOTIFY_CLIENT_ID", "\"$spotifyClientId\"")
+        buildConfigField("boolean", "STAGING", "false")
+        manifestPlaceholders["spotifyRedirectScheme"] = "echomusic"
     }
     buildFeatures { compose = true; buildConfig = true }
     sourceSets["main"].assets.srcDir(rootProject.file("licenses"))
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17; isCoreLibraryDesugaringEnabled = true }
     kotlinOptions { jvmTarget = "17" }
-    buildTypes { release { isMinifyEnabled = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro") } }
+    buildTypes {
+        release { isMinifyEnabled = true; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro") }
+        create("stage") {
+            initWith(getByName("debug"))
+            matchingFallbacks += listOf("debug")
+            applicationIdSuffix = ".stage"
+            versionNameSuffix = "-stage"
+            buildConfigField("boolean", "STAGING", "true")
+            manifestPlaceholders["spotifyRedirectScheme"] = "echomusic-stage"
+        }
+    }
 }
 kapt { correctErrorTypes = true }
 dependencies {

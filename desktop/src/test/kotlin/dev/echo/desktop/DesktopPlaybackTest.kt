@@ -8,6 +8,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DesktopPlaybackTest {
+    @Test fun transientPlaybackRetryUsesOneThreeSixThenCapsAtOneMinute() {
+        assertEquals(1_000L, desktopPlaybackRetryDelayMs(1))
+        assertEquals(3_000L, desktopPlaybackRetryDelayMs(2))
+        assertEquals(6_000L, desktopPlaybackRetryDelayMs(3))
+        assertEquals(12_000L, desktopPlaybackRetryDelayMs(4))
+        assertEquals(24_000L, desktopPlaybackRetryDelayMs(5))
+        assertEquals(48_000L, desktopPlaybackRetryDelayMs(6))
+        assertEquals(60_000L, desktopPlaybackRetryDelayMs(7))
+        assertEquals(60_000L, desktopPlaybackRetryDelayMs(20))
+    }
+
     @Test fun playNextPreservesCurrentPositionDuplicatesAndWrappedUpcoming() {
         val a = song("aaaaaaaaaaa"); val b = song("bbbbbbbbbbb"); val c = song("ccccccccccc")
         val state = DesktopPlaybackState(listOf(a, b, a), index = 1, repeatMode = DesktopRepeatMode.ALL,

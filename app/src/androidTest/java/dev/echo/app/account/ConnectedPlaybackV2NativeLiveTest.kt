@@ -73,6 +73,7 @@ class ConnectedPlaybackV2NativeLiveTest {
         val automaticSyncWasEnabled = accounts.automatic.value
         val localPreferences = context.getSharedPreferences("connected-playback", 0)
         val wasEnabled = localPreferences.getBoolean("enabled", false)
+        val wasTestSuppressed = localPreferences.getBoolean("test-suppressed", false)
         val historyBefore = readHistoryBaseline(context)
         val historyRowsBefore = playbackHistoryDigest(context)
         val queuePreferences = context.getSharedPreferences("echo_queue", 0)
@@ -101,6 +102,9 @@ class ConnectedPlaybackV2NativeLiveTest {
             accounts.setAutomatic(false)
             check(localPreferences.edit().putBoolean("enabled", false).commit()) {
                 "Could not disable connected playback before the recovery-only check"
+            }
+            check(localPreferences.edit().putBoolean("test-suppressed", true).commit()) {
+                "Could not isolate the recovery-only check from automatic connected playback"
             }
             val recoveryFile = java.io.File(context.noBackupFilesDir, "connected-playback-v2-recovery.json")
             require(recoveryFile.length() in 1..(16 * 1024 * 1024))
@@ -191,7 +195,7 @@ class ConnectedPlaybackV2NativeLiveTest {
         } finally {
             try { scenario?.close() }
             finally {
-                try { localPreferences.edit().putBoolean("enabled", wasEnabled).commit() }
+                try { localPreferences.edit().putBoolean("enabled", wasEnabled).putBoolean("test-suppressed", wasTestSuppressed).commit() }
                 finally { accounts.setAutomatic(automaticSyncWasEnabled) }
             }
         }
@@ -309,6 +313,7 @@ class ConnectedPlaybackV2NativeLiveTest {
         val automaticSyncWasEnabled = accounts.automatic.value
         val localPreferences = context.getSharedPreferences("connected-playback", 0)
         val wasEnabled = localPreferences.getBoolean("enabled", false)
+        val wasTestSuppressed = localPreferences.getBoolean("test-suppressed", false)
         assumeTrue("Do not run the paired fixture while a user sleep timer is active",
             appEntryPoint.sleepTimerController().remainingMs.value == null)
         assumeTrue("Do not run while frequent-song caching is enabled", !appEntryPoint.offlineRepository().settings.first().autoCache)
@@ -324,9 +329,16 @@ class ConnectedPlaybackV2NativeLiveTest {
             historyBaseline.ids.size < 4_900 && historyBaseline.oldestPlayedAt?.let {
                 System.currentTimeMillis() - it < 89L * 24 * 60 * 60 * 1000
             } != false)
+        check(localPreferences.edit().putBoolean("test-suppressed", true).commit()) {
+            "Could not isolate the native acceptance fixture from automatic connected playback"
+        }
         accounts.setAutomatic(false)
         var scenario = try { ActivityScenario.launch(MainActivity::class.java) }
-        catch (error: Throwable) { accounts.setAutomatic(automaticSyncWasEnabled); throw error }
+        catch (error: Throwable) {
+            localPreferences.edit().putBoolean("test-suppressed", wasTestSuppressed).commit()
+            accounts.setAutomatic(automaticSyncWasEnabled)
+            throw error
+        }
         lateinit var viewModel: EchoViewModel
         scenario.onActivity { viewModel = ViewModelProvider(it)[EchoViewModel::class.java] }
         var bridge: NativePlaybackBridgeV2? = null
@@ -353,12 +365,8 @@ class ConnectedPlaybackV2NativeLiveTest {
         var nativeAcceptancePassed = false
         var productionPreflightPassed = false
         try {
-            // Keep the saved account's background publisher out of the acceptance fixture. The
-            // explicit production client below uses the existing account only when opted in.
-            if (wasEnabled) {
-                viewModel.setConnectedPlaybackEnabled(false)
-                withTimeout(15_000) { while (participation.enabled) delay(50) }
-            }
+            // The test owns its explicit demo/production client. Keep the app's automatic
+            // publisher isolated even when a real account is signed in on this emulator.
             val native = withTimeout(20_000) {
                 while (participation.nativeBridge == null) delay(50)
                 requireNotNull(participation.nativeBridge)
@@ -758,10 +766,8 @@ class ConnectedPlaybackV2NativeLiveTest {
                 }
             } finally {
                 try {
-                    if (wasEnabled) {
-                        viewModel.setConnectedPlaybackEnabled(true)
-                        runCatching { viewModel.runConnectedPlayback() }
-                    } else localPreferences.edit().putBoolean("enabled", false).commit()
+                    localPreferences.edit().putBoolean("enabled", wasEnabled)
+                        .putBoolean("test-suppressed", wasTestSuppressed).commit()
                 } finally {
                     try { scenario.close() } finally {
                         accounts.setAutomatic(automaticSyncWasEnabled)

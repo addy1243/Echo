@@ -13,9 +13,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import dev.echo.app.EchoViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /** The launcher and foreground scheduler live above navigation so leaving Profile cannot lose consent. */
 @Composable internal fun AccountSyncHost(vm: EchoViewModel) {
+    if (dev.echo.app.BuildConfig.STAGING) return
     val chooser = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         vm.completeGoogleSignIn(if (result.resultCode == android.app.Activity.RESULT_OK) result.data else null)
     }
@@ -47,15 +50,24 @@ import kotlinx.coroutines.delay
         }
     }
     val email by vm.googleAccounts.email.collectAsStateWithLifecycle()
-    val connectedPlaybackEnabled by vm.connectedPlaybackEnabled.collectAsStateWithLifecycle()
-    LaunchedEffect(lifecycle, vm, email, connectedPlaybackEnabled) {
-        if (email != null && connectedPlaybackEnabled) {
-            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { vm.runConnectedPlayback() }
-        } else vm.stopConnectedPlayback()
+    LaunchedEffect(vm, email) {
+        if (email != null) {
+            // The media service owns connected playback after this foreground handoff.
+            // Keep retrying controller startup while the app composition is alive, but do not
+            // stop the service-owned session merely because the Activity goes to background.
+            while (true) { vm.runConnectedPlayback(); delay(2_000) }
+        } else withContext(NonCancellable) { vm.stopConnectedPlaybackAndAwait() }
     }
 }
 
 @Composable internal fun AccountSection(vm: EchoViewModel) {
+    if (dev.echo.app.BuildConfig.STAGING) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Stage account disabled", style = MaterialTheme.typography.titleLarge)
+            Text("This Stage install is separate from Echo Music. Admin adds local demo players; no Google account or cloud sync is used.")
+        }
+        return
+    }
     val email by vm.googleAccounts.email.collectAsStateWithLifecycle()
     val automatic by vm.googleAccounts.automatic.collectAsStateWithLifecycle()
     var confirmSync by remember { mutableStateOf(false) }

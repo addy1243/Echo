@@ -5,6 +5,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.echo.data.provider.YouTubeProvider
 import dev.echo.data.spotify.SpotifyPlaylistLinks
 import java.io.File
 import javax.swing.JFileChooser
@@ -14,10 +15,11 @@ import kotlin.coroutines.resume
 import kotlinx.coroutines.*
 
 @Composable
-fun DesktopImportDialog(store: DesktopLibrary, onChanged: () -> Unit, onError: (String) -> Unit, onDismiss: () -> Unit) {
+fun DesktopImportDialog(store: DesktopLibrary, onChanged: () -> Unit, onError: (String) -> Unit, onDismiss: () -> Unit, initialLink: String? = null) {
     val scope = rememberCoroutineScope()
     val links = remember { SpotifyPlaylistLinks() }
-    var link by remember { mutableStateOf("") }
+    val youtube = remember { YouTubeProvider() }
+    var link by remember(initialLink) { mutableStateOf(initialLink.orEmpty()) }
     var pending by remember { mutableStateOf<DesktopPlaylistImport?>(null) }
     var description by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -33,21 +35,32 @@ fun DesktopImportDialog(store: DesktopLibrary, onChanged: () -> Unit, onError: (
             finally { busy = false }
         }
     }
-    AlertDialog(onDismissRequest = ::cancel, title = { Text("Import Spotify playlist") }, text = {
+    AlertDialog(onDismissRequest = ::cancel, title = { Text("Import public playlist") }, text = {
         Column(Modifier.width(540.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Import a public Spotify link, Exportify CSV or Spotify account-data playlist JSON. Songs need a playable recording after import.")
+            Text("Import a public YouTube or Spotify playlist link, Exportify CSV or Spotify account-data playlist JSON. Spotify songs need a playable recording after import.")
             OutlinedTextField(link, onValueChange = { link = it; pending = null; error = null },
-                label = { Text("Public Spotify playlist link") }, singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
+                label = { Text("YouTube or Spotify playlist link") }, singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(enabled = !busy && link.isNotBlank(), onClick = { preview {
                     val requested = link
-                    val exposed = links.preview(requested)
-                    val count = when {
-                        exposed.total == null -> "${exposed.tracks.size} exposed songs; total unknown. This may be a partial playlist."
-                        exposed.complete -> "${exposed.tracks.size} of ${exposed.total} songs exposed."
-                        else -> "${exposed.tracks.size} of ${exposed.total} songs exposed. Only these songs will be imported."
+                    if (runCatching { java.net.URI(requested.trim()).host.equals("open.spotify.com", true) }.getOrDefault(false)) {
+                        val exposed = links.preview(requested)
+                        val count = when {
+                            exposed.total == null -> "${exposed.tracks.size} exposed songs; total unknown. This may be a partial playlist."
+                            exposed.complete -> "${exposed.tracks.size} of ${exposed.total} songs exposed."
+                            else -> "${exposed.tracks.size} of ${exposed.total} songs exposed. Only these songs will be imported."
+                        }
+                        desktopSpotifyImport(exposed, requested) to "${exposed.name}\n$count"
+                    } else {
+                        val exposed = youtube.playlist(requested)
+                        val count = when {
+                            exposed.hasMore -> "At least ${exposed.tracks.size} songs found; more entries remain. Only these will be imported."
+                            exposed.total == null -> "${exposed.tracks.size} songs; total unknown. This may be partial."
+                            exposed.complete -> "${exposed.tracks.size} of ${exposed.total} songs available."
+                            else -> "${exposed.tracks.size} of ${exposed.total} songs available. Only these will be imported."
+                        }
+                        desktopYouTubeImport(exposed, requested) to "${exposed.name}\n$count"
                     }
-                    desktopSpotifyImport(exposed, requested) to "${exposed.name}\n$count"
                 } }) { Text("Preview link") }
                 OutlinedButton(enabled = !busy, onClick = { preview {
                     val file = chooseSpotifyFile() ?: return@preview DesktopPlaylistImport(emptyList()) to "No file selected"
@@ -59,7 +72,7 @@ fun DesktopImportDialog(store: DesktopLibrary, onChanged: () -> Unit, onError: (
             if (busy) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Reading playlist…") }
             if (pending != null) Text(description)
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Text("Imports create new playlists and preserve song order and duplicates. This imports metadata, with no Spotify audio or automatic Spotify sync.")
+            Text("Imports create new playlists and preserve song order and duplicates. Spotify imports are metadata snapshots with no audio or automatic sync.")
         }
     }, confirmButton = {
         Button(enabled = !busy && pending?.playlists?.isNotEmpty() == true, onClick = {

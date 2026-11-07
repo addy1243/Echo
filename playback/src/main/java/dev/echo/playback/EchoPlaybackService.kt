@@ -34,13 +34,17 @@ import dev.echo.core.connected.EngineCapture
 import dev.echo.core.connected.EngineFence
 import dev.echo.core.connected.EngineObservation
 import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_GROUP
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_GROUP_QUEUE
 import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_MOVE
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_QUEUE
+import dev.echo.core.connected.CONNECTED_V2_CAPABILITY_SYNC
 import dev.echo.core.connected.GroupRef
 import dev.echo.core.connected.NativePlaybackBridgeV2
 import dev.echo.core.connected.PortableRecording
 import dev.echo.core.connected.QueueOccurrence
 import dev.echo.core.connected.RepeatModeV2
 import dev.echo.core.connected.TransferQueue
+import dev.echo.core.connected.portableTransferQueue
 import dev.echo.core.connected.validateEngineCapture
 import dev.echo.core.connected.validateEngineFence
 import dev.echo.core.connected.validateEngineObservation
@@ -64,6 +68,8 @@ import javax.inject.Inject
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -81,8 +87,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import org.json.JSONArray
-import org.json.JSONObject
 
 @AndroidEntryPoint
 @UnstableApi
@@ -195,7 +199,6 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
         session = builder.build()
         connectedParticipation.attachNativeBridge(this)
         connectedParticipation.updateDisplacedMoveOperationId(runCatching { latestDisplacedMoveOperationId() }.getOrNull())
-        if (connectedParticipation.enabled) scope.launch { startConnectedParticipation() }
         scope.launch {
             while (true) {
                 // A timer belongs to this device's independent queue, not a shared group timeline.
@@ -460,7 +463,8 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
         engineFence()
     }
 
-    override suspend fun capabilities(): Set<String> = setOf(CONNECTED_V2_CAPABILITY_MOVE, CONNECTED_V2_CAPABILITY_GROUP)
+    override suspend fun capabilities(): Set<String> = setOf(CONNECTED_V2_CAPABILITY_MOVE, CONNECTED_V2_CAPABILITY_GROUP,
+        CONNECTED_V2_CAPABILITY_QUEUE, CONNECTED_V2_CAPABILITY_GROUP_QUEUE, CONNECTED_V2_CAPABILITY_SYNC)
 
     override suspend fun observe(): EngineObservation = withContext(Dispatchers.Main.immediate) { observeNow() }
 
@@ -556,11 +560,14 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
         check(!offline.settings.value.offlineOnly) { "Turn off Offline mode before preparing shared playback" }
         v2PreparingOperationId = operationId
         try {
-            val items = queue.entries.map { entry ->
+            // Group activation stages only the current recording. Keep the full portable
+            // metadata queue for later timeline changes without resolving every future song.
+            val entriesToPrepare = if (group != null) queue.entries.take(1) else queue.entries
+            val items = entriesToPrepare.map { entry ->
                 val track = portableAndroidTrack(entry.recording)
                 resolve(track) ?: error("Could not prepare ${track.title} on this device")
             }
-            val activeItems = if (group != null) items.take(1) else items
+            val activeItems = items
             val stagingPlayer = buildPlaybackEngine(requestAudioFocus = false)
             try {
                 stagingPlayer.volume = 0f
@@ -603,7 +610,14 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
         }
     }
 
-    override suspend fun activate(operationId: String, positionMs: Long, play: Boolean): EngineObservation = withContext(Dispatchers.Main.immediate) {
+    override suspend fun activate(operationId: String, positionMs: Long, play: Boolean): EngineObservation =
+        activateStagedQueue(operationId, positionMs, play, preserveMoveBackup = true)
+
+    override suspend fun activateQueueReplacement(operationId: String, positionMs: Long, play: Boolean): EngineObservation =
+        activateStagedQueue(operationId, positionMs, play, preserveMoveBackup = false)
+
+    private suspend fun activateStagedQueue(operationId: String, positionMs: Long, play: Boolean,
+        preserveMoveBackup: Boolean): EngineObservation = withContext(Dispatchers.Main.immediate) {
         val stage = v2Stage?.takeIf { it.operationId == operationId }
             ?: error("Playback preparation expired. Try again.")
         if (engineFence() != stage.expectedTarget) {
@@ -619,11 +633,11 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
         val previousEnded = v2GroupEnded
         val priorPlayer = player
         val priorVolume = priorPlayer.volume
-        if (stage.group == null || creatingGroupBackup) {
+        if (stage.group == null && preserveMoveBackup || creatingGroupBackup) {
             val backup = capturePlaybackBackup()
             persistRecovery(backupKey, backup)
-            if (stage.group == null) displacedV2[operationId] = backup
-            else groupV2Backups[stage.group.groupId] = backup
+            if (stage.group == null && preserveMoveBackup) displacedV2[operationId] = backup
+            else stage.group?.let { groupV2Backups[it.groupId] = backup }
         }
         if (engineFence() != stage.expectedTarget) {
             if (stage.group == null) displacedV2.remove(operationId)
@@ -668,7 +682,7 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
                 positionMs = stagedPlayer.currentPosition.coerceAtLeast(0), playing = stagedPlayer.isPlaying,
                 ready = stagedPlayer.playbackState == Player.STATE_READY, ended = false)
             validateEngineObservation(observed)
-            if (stage.group == null) connectedParticipation.updateDisplacedMoveOperationId(latestDisplacedMoveOperationId())
+            if (stage.group == null && preserveMoveBackup) connectedParticipation.updateDisplacedMoveOperationId(latestDisplacedMoveOperationId())
             v2ActivatingOperationId = null
             priorPlayer.release()
             observed
@@ -1129,6 +1143,32 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
         else -> tracksFor(parentId)?.map(Track::toMediaItem)
     }
 
+    private suspend fun portableQueueFromArgs(args: Bundle): TransferQueue {
+        val ids = args.getStringArrayList(QueueCommands.TRACK_IDS) ?: error("Missing playlist occurrences")
+        require(ids.isNotEmpty() && ids.size <= 10_000 && ids.sumOf { it.length.toLong() } <= 100_000 &&
+            ids.all { it.isNotBlank() && it.length <= 512 }) { "The selected playlist queue is too large or invalid" }
+        val startIndex = args.getInt(QueueCommands.START_INDEX, -1)
+        require(startIndex in ids.indices) { "Select a song before routing the queue" }
+        val tracks = repository.tracks.first().associateBy(Track::id)
+        val occurrences = ids.map { id -> tracks[id] ?: error("A selected song is no longer in this library") }
+        return portableTransferQueue(occurrences, startIndex)
+    }
+
+    private fun queueCaptureJson(capture: EngineCapture): String {
+        val value = JSONObject().put("fence", JSONObject().put("sessionId", capture.fence.sessionId)
+            .put("queueRevision", capture.fence.queueRevision).put("occurrenceRevision", capture.fence.occurrenceRevision)
+            .put("transportRevision", capture.fence.transportRevision))
+            .put("queue", JSONObject().put("entries", JSONArray().also { rows -> capture.queue.entries.forEach { entry ->
+                rows.put(JSONObject().put("id", entry.id).put("recording", JSONObject().put("id", entry.recording.id)
+                    .put("title", entry.recording.title).put("artist", entry.recording.artist)
+                    .put("durationMs", entry.recording.durationMs)))
+            } }).put("repeatMode", capture.queue.repeatMode.name).put("shuffleEnabled", capture.queue.shuffleEnabled))
+            .put("positionMs", capture.positionMs).put("playing", capture.playing)
+        val serialized = value.toString()
+        require(serialized.toByteArray(Charsets.UTF_8).size <= 128 * 1024) { "The selected player's queue is too large to display" }
+        return serialized
+    }
+
     private inner class LibraryCallback : MediaLibrarySession.Callback {
         override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
             if (controller.packageName != packageName && !controller.isTrusted) return MediaSession.ConnectionResult.reject()
@@ -1144,6 +1184,9 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
                     .add(SessionCommand(QueueCommands.CONNECTED_MOVE, Bundle.EMPTY))
                     .add(SessionCommand(QueueCommands.CONNECTED_TOGETHER, Bundle.EMPTY))
                     .add(SessionCommand(QueueCommands.CONNECTED_GROUP_ACTION, Bundle.EMPTY))
+                    .add(SessionCommand(QueueCommands.CONNECTED_PLAY_QUEUE_ON, Bundle.EMPTY))
+                    .add(SessionCommand(QueueCommands.CONNECTED_READ_REMOTE_QUEUE, Bundle.EMPTY))
+                    .add(SessionCommand(QueueCommands.CONNECTED_REPLACE_GROUP_QUEUE, Bundle.EMPTY))
                     .add(SessionCommand(QueueCommands.CONNECTED_RESTORE_PREVIOUS, Bundle.EMPTY))
                     .add(SessionCommand(QueueCommands.CONNECTED_REMOTE_COMMAND, Bundle.EMPTY)).build())
             }
@@ -1213,9 +1256,67 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
                     }
                     QueueCommands.CONNECTED_GROUP_ACTION -> {
                         val action = GroupActionV2.valueOf(args.getString(QueueCommands.CONNECTED_ACTION).orEmpty())
+                        val expectedGroupId = args.getString(QueueCommands.CONNECTED_GROUP_ID)
+                        val expectedGroup = expectedGroupId?.let {
+                            GroupRef(it, args.getLong(QueueCommands.CONNECTED_GROUP_EPOCH))
+                        }
                         (connectedV2 ?: error("Connected playback is still starting")).requestGroup(action,
-                            args.getLong(QueueCommands.CONNECTED_POSITION, 0L))
+                            args.getLong(QueueCommands.CONNECTED_POSITION, 0L), expectedGroup,
+                            args.getLong(QueueCommands.CONNECTED_GROUP_SEQUENCE).takeIf {
+                                args.containsKey(QueueCommands.CONNECTED_GROUP_SEQUENCE)
+                            }, args.getString(QueueCommands.CONNECTED_GROUP_OCCURRENCE_ID))
                         return@future SessionResult(SessionResult.RESULT_SUCCESS)
+                    }
+                    QueueCommands.CONNECTED_PLAY_QUEUE_ON -> {
+                        val targetId = args.getString(QueueCommands.CONNECTED_TARGET_ID).orEmpty()
+                        val targetSession = args.getString(QueueCommands.CONNECTED_TARGET_SESSION).orEmpty()
+                        val targetFence = EngineFence(args.getString(QueueCommands.CONNECTED_TARGET_FENCE_SESSION).orEmpty(),
+                            args.getLong(QueueCommands.CONNECTED_TARGET_QUEUE_REVISION, -1L),
+                            args.getLong(QueueCommands.CONNECTED_TARGET_OCCURRENCE_REVISION, -1L),
+                            args.getLong(QueueCommands.CONNECTED_TARGET_TRANSPORT_REVISION, -1L)).also(::validateEngineFence)
+                        require(targetSession == targetFence.sessionId) { "The selected player's session changed; select it again" }
+                        val queue = portableQueueFromArgs(args)
+                        val result = (connectedV2 ?: error("Connected playback is still starting")).playQueueOn(
+                            targetId, targetSession, targetFence, queue)
+                        return@future SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                            putString(QueueCommands.CONNECTED_OPERATION_ID, result.id)
+                            putString(QueueCommands.CONNECTED_OPERATION_STATUS, result.status.name)
+                            putString(QueueCommands.CONNECTED_OPERATION_REASON, result.reason.orEmpty())
+                        })
+                    }
+                    QueueCommands.CONNECTED_READ_REMOTE_QUEUE -> {
+                        val targetId = args.getString(QueueCommands.CONNECTED_TARGET_ID).orEmpty()
+                        val targetSession = args.getString(QueueCommands.CONNECTED_TARGET_SESSION).orEmpty()
+                        val targetFence = EngineFence(args.getString(QueueCommands.CONNECTED_TARGET_FENCE_SESSION).orEmpty(),
+                            args.getLong(QueueCommands.CONNECTED_TARGET_QUEUE_REVISION, -1L),
+                            args.getLong(QueueCommands.CONNECTED_TARGET_OCCURRENCE_REVISION, -1L),
+                            args.getLong(QueueCommands.CONNECTED_TARGET_TRANSPORT_REVISION, -1L)).also(::validateEngineFence)
+                        require(targetSession == targetFence.sessionId) { "The selected player's session changed; select it again" }
+                        val client = connectedV2 ?: error("Connected playback is still starting")
+                        val capture = client.readRemoteQueue(targetId, targetSession, targetFence)
+                        val operation = client.state.value.queueOperation
+                        return@future SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                            putString(QueueCommands.CONNECTED_OPERATION_ID, operation?.id.orEmpty())
+                            putString(QueueCommands.CONNECTED_OPERATION_STATUS, "COMPLETE")
+                            putString(QueueCommands.CONNECTED_QUEUE_CAPTURE_JSON, queueCaptureJson(capture))
+                        })
+                    }
+                    QueueCommands.CONNECTED_REPLACE_GROUP_QUEUE -> {
+                        val groupId = args.getString(QueueCommands.CONNECTED_GROUP_ID).orEmpty()
+                        val epoch = args.getLong(QueueCommands.CONNECTED_GROUP_EPOCH, -1L)
+                        val sequence = args.getLong(QueueCommands.CONNECTED_GROUP_SEQUENCE, -1L)
+                        require(groupId.matches(Regex("[0-9a-fA-F-]{36}")) && epoch > 0 && sequence >= 0) {
+                            "Play together changed; reopen its queue and try again"
+                        }
+                        val queue = portableQueueFromArgs(args)
+                        val result = (connectedV2 ?: error("Connected playback is still starting")).replaceGroupQueue(
+                            GroupRef(groupId, epoch), sequence, queue)
+                        return@future SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply {
+                            putString(QueueCommands.CONNECTED_OPERATION_ID, result.id)
+                            putString(QueueCommands.CONNECTED_OPERATION_STATUS, result.status.name)
+                            putString(QueueCommands.CONNECTED_OPERATION_REASON, result.reason.orEmpty())
+                            putLong(QueueCommands.CONNECTED_OPERATION_SEQUENCE, result.sequence ?: -1L)
+                        })
                     }
                     QueueCommands.CONNECTED_REMOTE_COMMAND -> {
                         check(v2Group == null && v2PreparingOperationId == null && v2Stage == null && v2ActivatingOperationId == null) {

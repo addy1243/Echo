@@ -1,5 +1,12 @@
 # Release history
 
+## 0.2.4 / Android code15 and Windows 0.2.4 — current release
+
+- Add public YouTube playlist-title search and public playlist-link preview/import on Android and Windows. Preserve available song order and duplicate occurrences, and show partial or unknown totals before confirmation.
+- Keep long Windows upcoming queues scrollable inside the compact queue picker. Spotify playlist imports remain public-link/file based; Spotify title search, Spotify audio, and automatic playlist sync are not included.
+- 249 JVM tests, Android release build/lint, Windows MSI packaging/identity, and runtime-license inventory checks passed. Emulator UI, live playlist imports, large-queue performance, and end-to-end Windows in-app updating are not established by the release record.
+- Exact source, artifact hashes, and limitations are in [the 0.2.4 release record](docs/releases/0.2.4.md).
+
 ## 0.2.3 / Android code14 and Windows 0.2.3 — published 2026-11-01
 
 - Move the current recording, position and remaining playback queue between connected devices, preserving duplicate occurrences and pausing the source after confirmed destination playback.
@@ -9,20 +16,20 @@
 
 ## 0.2.2 / Android code13 and Windows 0.2.2 — published 2026-10-29
 
-[Published combined release](https://github.com/addy1243/Echo/releases/tag/v0.2.2); see [the complete release record](docs/releases/0.2.2.md).
+[Published combined release](https://github.com/addy1243/Echo/releases/tag/v0.2.2); see [the complete release record](https://github.com/addy1243/Echo/releases/tag/v0.2.2).
 
 - Add unified-player controls for selecting this device or a reachable existing player, with remote reconnect status and controls. Players keep independent audio sessions and queues.
 - Move playback, Play together, and audio-output selection are not available; no audio transfer or synchronized playback is provided.
 
 ## 0.2.1 / Android code12 and Windows 0.2.1 — published 2026-10-29
 
-- Add opt-in connected playback on Android and Windows: current-song metadata, independent device players and remote play/pause/previous/next/seek through the same project's Realtime Database. Session/track/queue guards, expiring commands, acknowledgments, owner-only rules and foreground/lifecycle limits are described in [connected playback](docs/CONNECTED_PLAYBACK.md). Live emulator/native-Windows control acceptance passed.
+- Add opt-in connected playback on Android and Windows: current-song metadata, independent device players and remote play/pause/previous/next/seek through the same project's Realtime Database. Session/track/queue guards, expiring commands, acknowledgments, owner-only rules and foreground/lifecycle limits are described in [connected playback](docs/IMP.md#playback-queue-and-connected-devices). Live emulator/native-Windows control acceptance passed.
 - Load desktop new-music discovery even before a library exists, refresh artist seeds after sync, and discard obsolete search results.
 - Keep the immutable 0.2.0 release and existing libraries/credentials intact. Update both devices from the [published 0.2.1 release](https://github.com/addy1243/Echo/releases/tag/v0.2.1).
 
 ## 0.2.0 — Android code11 and Windows 0.2.0 — published 2026-10-28
 
-[Published combined release](https://github.com/addy1243/Echo/releases/tag/v0.2.0); public asset sizes and digests are verified. See [the complete release record](docs/releases/0.2.0.md).
+[Published combined release](https://github.com/addy1243/Echo/releases/tag/v0.2.0); public asset sizes and digests are verified. See [the complete release record](https://github.com/addy1243/Echo/releases/tag/v0.2.0).
 
 - Firebase playlists/favorites/saved-track/history sync on Android and desktop, with explicit consent, automatic foreground sync, conflict preservation, ordered duplicates, unlike/delete markers and history-clear revisions. Normal Android-emulator sign-in and canonical Android/desktop/cloud equality passed; no phone was accessed.
 - Desktop sidebar navigation and native YouTube/local playback, Smart shuffle, queue/repeat/sleep controls, Spotify link/file preview/import, guarded recording matching, discovery/save mixes and private offline downloads.
@@ -32,7 +39,7 @@
 
 ## 0.1.9 / versionCode 10 — published 2026-10-27
 
-[Published release](https://github.com/addy1243/Echo/releases/tag/v0.1.9) · [Complete release record](docs/releases/0.1.9.md). Exact APK source: `2c32cb911541dd384f5abff11ff952cdc4a6dc8b`; later documentation does not replace published assets.
+[Published release](https://github.com/addy1243/Echo/releases/tag/v0.1.9) · [Complete release record](https://github.com/addy1243/Echo/releases/tag/v0.1.9). Exact APK source: `2c32cb911541dd384f5abff11ff952cdc4a6dc8b`; later documentation does not replace published assets.
 
 - Validation: 89 JVM tests and application lint passed; real emulator checks cover queue gestures, background downloads, offline playback and public code10 updates. The published APK was installed in place on the dedicated emulator.
 - Post-release acceptance: the owner confirmed Android Google sign-in works on 2026-10-27. Drive playlist transfers and two-device sync remain unverified.
@@ -46,19 +53,19 @@
 
 - Published [v0.1.8](https://github.com/addy1243/Echo/releases/tag/v0.1.8) with same-key `EchoMusic-9.apk` and exact corresponding source at commit2bb31c6; preserved code8 as the emulator upgrade baseline. The real public download passed checksum, identity and installer-handoff checks without silent installation.
 - Verified GitHub repository write access, APK identity/version/signing certificate, and build/unit/lint checks. Added an opt-in Android check of the actual newer candidate against the installed app.
-- Owner approved GPL-3.0-or-later. Replaced bundled proprietary Google identity SDKs with Android account selection/token authorization and verified Google userinfo, retained separate Drive consent, added packaged runtime notices/source access and matching dependency-source packaging. Live owner Google authorization remains unverified; see [release readiness](docs/RELEASE_READINESS.md).
+- Owner approved GPL-3.0-or-later. Replaced bundled proprietary Google identity SDKs with Android account selection/token authorization and verified Google userinfo, retained separate Drive consent, added packaged runtime notices/source access and matching dependency-source packaging. Live owner Google authorization remains unverified; see [release readiness](.agents/skills/echo-windows-shipping/SKILL.md).
 
 ## 0.1.7 development work included in 0.1.8 — 2026-10-26
 
 - Playlist Add to queue offers playlist order, Shuffle and Smart shuffle while preserving current playback and prior upcoming songs. Search taps play only the selected song before continuing the existing queue, including actual shuffled traversal. New Shuffle sessions choose a random playable occurrence and retain every occurrence in repeat-off mode; Smart shuffle randomizes fresh-session anchors while retaining active playback when applicable.
-- Service-owned sleep timer with 15/30/45/60-minute choices, visible countdown, replacement and cancellation. Expiry pauses without clearing queue/position, including while the screen is off; service destruction clears the timer. See [queue behavior](docs/QUEUE_ACTIONS.md) and [timer semantics](docs/SLEEP_TIMER.md).
+- Service-owned sleep timer with 15/30/45/60-minute choices, visible countdown, replacement and cancellation. Expiry pauses without clearing queue/position, including while the screen is off; service destruction clears the timer. See [queue behavior](docs/IMP.md#playback-queue-and-connected-devices) and [timer semantics](docs/IMP.md#playback-queue-and-connected-devices).
 
 - Add-to-playlist controls in the full player and playback queue, including session recommendations, with a shared picker/new-playlist action.
 - Higher-resolution recognized Google artwork variants for large artwork, with original fallback; quality remains source-dependent.
 - Private pinned offline downloads, cancel/retry/remove/keep controls, a Downloads screen and offline playback mode. Separate opt-in frequent-song cache follows qualified listening evidence and unmetered connectivity. Per-song/download/cache/free-space limits and complete-file integrity checks apply. Transfers require the app process; interrupted downloads restart via Retry.
 - Durable start/skip/complete/interruption/error logs, listening-time accounting, history display/confirmed clearing and conservative preference nudges within related-song suggestions. Explicit non-destructive Room v1→v2 migration preserves existing library data.
 - Optional Google account sign-in/out and private Drive playlist sync, manually or periodically while foreground. Concurrent edits become conflict copies; local file identities are device-qualified and cloud snapshots exclude audio, credentials, likes and listening logs. Local data remains on sign-out.
-- The owner-supplied public Web client ID is configured and enables Google sign-in; live sign-in and two-device sync are not validated. See [account setup](docs/ACCOUNTS.md), [offline design](docs/OFFLINE.md), [history](docs/HISTORY_NOTES.md) and [executed validation](docs/INTEGRATION_STATUS.md).
+- The owner-supplied public Web client ID is configured and enables Google sign-in; live sign-in and two-device sync are not validated. See [account setup](docs/IMP.md#accounts-sync-and-music-sources), [offline design](docs/IMP.md#library-offline-history-and-ui-invariants), [history](docs/IMP.md#library-offline-history-and-ui-invariants) and [executed validation](docs/IMP.md#current-release-and-active-work).
 - No GitHub release published and no physical phone data reset or installation performed by this change.
 
 ## Unreleased — 2026-10-25
@@ -109,7 +116,7 @@ Historical Android source defaults for the changes below: **0.1.6 / versionCode 
 - Navigation, Home history, local WAV controls, notification/screen-off playback and browser checks passed. The local service-recreation check required an isolated run because a preceding UI test retained a controller.
 - Runtime checks used the debug build. Phone/car behavior and minified-release playback were not checked in this task. Individual recordings or future YouTube changes can still fail.
 - Mixed queues containing deleted local files and Commons API-error parsing remain known follow-up work. Spotify imports do not automatically match YouTube recordings.
-- No GitHub release was published by this YouTube implementation. See [integration evidence](docs/INTEGRATION_STATUS.md) and [publishing instructions](docs/UPDATES.md).
+- No GitHub release was published by this YouTube implementation. See [integration evidence](docs/IMP.md#current-release-and-active-work) and [publishing instructions](.agents/skills/echo-windows-shipping/SKILL.md).
 
 ## 0.1.1 / versionCode 2 — earlier updater preview, 2026-10-25
 
@@ -117,4 +124,4 @@ Historical Android source defaults for the changes below: **0.1.6 / versionCode 
 - Added APK size, SHA-256, package/version/SDK and signing-certificate checks with private staging and pending-update recovery.
 - Recorded passing build/lint, four updater unit tests and four focused Android updater checks. End-to-end replacement through a published newer GitHub asset remained unverified in that snapshot.
 
-See [the historical status record](docs/INTEGRATION_STATUS.md) for earlier foundation and device validation. This changelog does not infer published releases from local build versions.
+See [the historical status record](docs/IMP.md#current-release-and-active-work) for earlier foundation and device validation. This changelog does not infer published releases from local build versions.

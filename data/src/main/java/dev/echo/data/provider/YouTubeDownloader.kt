@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
 
 internal const val YOUTUBE_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-class YouTubeRequestException(message: String) : IOException(message)
+class YouTubeRequestException(message: String, val retryable: Boolean = false) : IOException(message)
 
 internal class YouTubeDownloader(private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -42,6 +42,8 @@ internal class YouTubeDownloader(private val client: OkHttpClient = OkHttpClient
         return client.newCall(builder.build()).execute().use { response ->
             if (response.code == 429)
                 throw YouTubeRequestException("YouTube is rate limiting requests (HTTP 429). Wait before trying again.")
+            if (response.code in 500..599)
+                throw YouTubeRequestException("YouTube is temporarily unavailable (HTTP ${response.code}).", retryable = true)
             if (response.request.url.encodedPath.startsWith("/sorry"))
                 throw ReCaptchaException("YouTube requires a browser verification. Try again later.", "https://www.youtube.com/")
             if (response.code == 401 || response.code == 403)

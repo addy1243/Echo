@@ -82,4 +82,29 @@ class ConnectedSessionV2Test {
         assertEquals(71_000L, pausedAfterSeek.positionMs)
         assertEquals(71_000L, advanceGroupTimeline(pausedAfterSeek, GroupTimelineAction.PLAY, 0, 12)!!.positionMs)
     }
+
+    @Test fun groupSyncUsesSlowestFreshSessionAndFallsBackWhenTimingIsUnknown() {
+        val now = 10_000L
+        val fast = GroupSyncTimingSample("fast", 20, 5, 10, now)
+        val slow = GroupSyncTimingSample("slow", 500, 80, 20, now)
+        val adaptive = groupSyncDeadline(now, setOf("fast", "slow"), listOf(fast, slow))
+        assertTrue(adaptive.adaptive)
+        assertEquals(15_350L, adaptive.startAtMs)
+        assertTrue(adaptive.startAtMs - now >= 8 * slow.roundTripP95Ms + slow.jitterMs +
+            slow.clockUncertaintyMs + 1_000L + 250L)
+        assertTrue(adaptive.startAtMs <= now + 8_000L)
+        val fallback = groupSyncDeadline(now, setOf("fast", "slow"), listOf(fast))
+        assertTrue(!fallback.adaptive)
+        assertEquals(18_000L, fallback.startAtMs)
+        val warmup = groupSyncDeadline(now, setOf("fast", "slow"), listOf(fast.copy(roundTripP95Ms = 0), slow))
+        assertTrue(!warmup.adaptive)
+        assertEquals(18_000L, warmup.startAtMs)
+        assertTrue(!groupSyncDeadline(now, setOf("fast", "slow"), listOf(fast, slow.copy(sampledAtMs = now - 15_001))).adaptive)
+    }
+
+    @Test fun groupSyncProjectsCoordinatorPositionToCommonStart() {
+        assertEquals(71_500L, groupSyncPositionAt(71_000, 10_000, 10_500, 120_000, playing = true))
+        assertEquals(71_000L, groupSyncPositionAt(71_000, 10_000, 10_500, 120_000, playing = false))
+        assertEquals(120_000L, groupSyncPositionAt(119_900, 10_000, 10_500, 120_000, playing = true))
+    }
 }

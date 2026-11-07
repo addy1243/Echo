@@ -11,10 +11,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.schabi.newpipe.extractor.NewPipe
+import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
+import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.search.SearchInfo
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeSearchQueryHandlerFactory
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.AudioTrackType
@@ -45,6 +48,59 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
                 throw YouTubeRequestException("YouTube search could not be read. Try again later or update Echo.")
             info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull(::youtubeTrack)
                 .distinctBy(Track::id).take(20)
+        }
+    }
+
+    suspend fun searchPlaylists(query: String): List<YouTubePlaylistSearchResult> {
+        val term = query.trim()
+        if (term.isEmpty()) return emptyList()
+        require(term.length <= 200) { "Search using 200 characters or fewer" }
+        return extract {
+            val service = ServiceList.YouTube
+            val handler = service.searchQHFactory.fromQuery(term,
+                listOf(YoutubeSearchQueryHandlerFactory.PLAYLISTS), "")
+            val info = SearchInfo.getInfo(service, handler)
+            info.errors.forEach { throwKnownYouTubeError(it) }
+            if (info.relatedItems.isEmpty() && info.errors.isNotEmpty())
+                throw YouTubeRequestException("YouTube playlist search could not be read. Try again later or update Echo.")
+            info.relatedItems.filterIsInstance<PlaylistInfoItem>().mapNotNull { item ->
+                if (item.playlistType != null && item.playlistType != PlaylistInfo.PlaylistType.NORMAL) return@mapNotNull null
+                val id = runCatching { youtubePlaylistId(item.url) }.getOrNull() ?: return@mapNotNull null
+                val title = item.name?.trim().orEmpty()
+                if (title.isEmpty() || title.length > 200) return@mapNotNull null
+                YouTubePlaylistSearchResult(id, title, youtubePlaylistUrl(id), item.uploaderName.orEmpty(), item.streamCount.takeIf { it > 0 })
+            }.distinctBy { it.id }.take(20)
+        }
+    }
+
+    suspend fun playlist(link: String): YouTubePlaylistPreview {
+        val id = youtubePlaylistId(link)
+        val url = youtubePlaylistUrl(id)
+        return extract {
+            val info = PlaylistInfo.getInfo(ServiceList.YouTube, url)
+            info.errors.forEach(::throwKnownYouTubeError)
+            require(info.id == id && info.playlistType == PlaylistInfo.PlaylistType.NORMAL) {
+                "Paste a public YouTube playlist link, not a mix or restricted list"
+            }
+            require(info.name.isNotBlank() && info.name.length <= 200) { "YouTube returned an invalid playlist name" }
+            val total = info.streamCount.takeIf { it >= 0 }
+            require(total == null || total <= MAX_PLAYLIST_TRACKS) { "YouTube playlists are limited to 50,000 songs" }
+            val tracks = mutableListOf<Track>()
+            tracks += info.relatedItems.mapNotNull(::youtubeTrack)
+            var page: Page? = info.nextPage
+            var pages = 1
+            val seenPages = mutableSetOf<PlaylistPageIdentity>()
+            while (page != null && tracks.size < MAX_PLAYLIST_TRACKS && pages < MAX_PLAYLIST_PAGES) {
+                if (!seenPages.add(page.identity())) break
+                val next = PlaylistInfo.getMoreItems(ServiceList.YouTube, url, page)
+                next.errors.forEach(::throwKnownYouTubeError)
+                tracks += next.items.mapNotNull(::youtubeTrack)
+                require(tracks.size <= MAX_PLAYLIST_TRACKS) { "YouTube playlists are limited to 50,000 songs" }
+                page = next.nextPage
+                pages++
+            }
+            require(tracks.isNotEmpty()) { "No public songs are available in this YouTube playlist" }
+            YouTubePlaylistPreview(info.name, tracks, total, hasMore = page != null)
         }
     }
 
@@ -87,7 +143,9 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 throwKnownYouTubeError(error)
-                throw YouTubeRequestException("YouTube could not be reached or its response changed. Check your connection and try again; an Echo update may be needed.")
+                generateSequence<Throwable>(error) { it.cause }.filterIsInstance<YouTubeRequestException>().firstOrNull()?.let { throw it }
+                val retryable = generateSequence<Throwable>(error) { it.cause }.any { it is java.io.IOException }
+                throw YouTubeRequestException("YouTube could not be reached or its response changed. Check your connection and try again; an Echo update may be needed.", retryable)
             }
         }
     }
@@ -97,6 +155,35 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
         var initialized = false
     }
 }
+
+data class YouTubePlaylistPreview(val name: String, val tracks: List<Track>, val total: Long?, val hasMore: Boolean = false) {
+    val complete: Boolean get() = !hasMore && total != null && total == tracks.size.toLong()
+}
+
+data class YouTubePlaylistSearchResult(val id: String, val title: String, val url: String, val uploader: String, val total: Long?)
+
+private data class PlaylistPageIdentity(
+    val url: String?, val id: String?, val ids: List<String>?, val cookies: Map<String, String>?, val bodyHash: Int?,
+)
+
+private fun Page.identity() = PlaylistPageIdentity(url, id, ids, cookies, body?.contentHashCode())
+
+private const val MAX_PLAYLIST_TRACKS = 50_000
+private const val MAX_PLAYLIST_PAGES = 500
+
+internal fun youtubePlaylistId(input: String): String {
+    val url = input.trim().toHttpUrlOrNull()
+    require(url != null && url.isHttps && url.port == 443 && url.username.isEmpty() && url.password.isEmpty() &&
+        url.fragment == null && url.host in setOf("youtube.com", "www.youtube.com", "music.youtube.com") &&
+        url.encodedPath in setOf("/playlist", "/watch") && url.queryParameterValues("list").size == 1) {
+        "Paste a full public YouTube playlist link"
+    }
+    val id = url.queryParameter("list")
+    require(id != null && id.matches(Regex("[A-Za-z0-9_-]{10,80}"))) { "This is not a valid YouTube playlist link" }
+    return id
+}
+
+private fun youtubePlaylistUrl(id: String) = "https://www.youtube.com/playlist?list=$id"
 
 internal fun youtubeWatchUrl(id: String) = "https://www.youtube.com/watch?v=$id"
 

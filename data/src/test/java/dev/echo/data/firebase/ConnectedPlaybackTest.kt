@@ -1,11 +1,14 @@
 package dev.echo.data.firebase
 
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.delay
+import java.util.concurrent.atomic.AtomicInteger
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
@@ -18,6 +21,46 @@ import org.junit.Test
 
 class ConnectedPlaybackTest {
     private val session = FirebaseSession("user_one", "owner@example.com", "synthetic-id-token", "synthetic-refresh-token", 9_999_999_999_999)
+
+    @Test fun retriesInitialSessionFailureUntilPresencePublishes(): Unit = runBlocking {
+        val attempts = AtomicInteger()
+        val client = ConnectedPlaybackClient(
+            databaseUrl = "https://echo-85da4-default-rtdb.asia-southeast1.firebasedatabase.app",
+            deviceId = "device_retry", label = "Retry player",
+            sessionProvider = { if (attempts.incrementAndGet() == 1) error("temporary refresh failure") else session },
+            snapshot = { ConnectedPlayerSnapshot(null, null, null, false, 0, 0, "t", "q") },
+            executeCommand = {}, httpClient = OkHttpClient.Builder().addInterceptor { chain ->
+                Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                    .body("{}".toResponseBody()).build()
+            }.build(),
+        )
+        val job = launch { client.run() }
+        try {
+            withTimeout(8_000) { client.state.first { it.message == "Waiting for another Echo device." } }
+            assertTrue(attempts.get() > 1)
+        } finally { client.close(); job.cancelAndJoin() }
+    }
+
+    @Test fun cancellationDuringInitialSessionRefreshDoesNotPublishPresence(): Unit = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val writes = AtomicInteger()
+        val client = ConnectedPlaybackClient(
+            databaseUrl = "https://echo-85da4-default-rtdb.asia-southeast1.firebasedatabase.app",
+            deviceId = "device_cancel", label = "Cancel player",
+            sessionProvider = { entered.complete(Unit); awaitCancellation() },
+            snapshot = { ConnectedPlayerSnapshot(null, null, null, false, 0, 0, "t", "q") },
+            executeCommand = {}, httpClient = OkHttpClient.Builder().addInterceptor { chain ->
+                writes.incrementAndGet()
+                Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                    .body("{}".toResponseBody()).build()
+            }.build(),
+        )
+        val job = launch { client.run() }
+        entered.await()
+        client.close()
+        job.cancelAndJoin()
+        assertEquals(0, writes.get())
+    }
 
     @Test fun acceptsOnlyTheConfiguredRealtimeDatabaseHost() {
         val client = makeClient("https://echo-85da4-default-rtdb.asia-southeast1.firebasedatabase.app/")
