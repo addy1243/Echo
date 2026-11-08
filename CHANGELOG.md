@@ -1,5 +1,13 @@
 # Release history
 
+## 0.2.5 / Android code16 and Windows 0.2.5
+
+[Echo 0.2.5 release](https://github.com/addy1243/Echo/releases/tag/v0.2.5); see [the release record](docs/releases/0.2.5.md).
+
+- Browse independent playback devices from the Windows card deck and Android swipeable mini-player; new playback requests follow the selected device.
+- Improve Play together timing using fresh network timing estimates and a common scheduled start, with an 8-second fallback when estimates are unavailable. Queue replacement now applies to the active target.
+- Retry transient audio failures with bounded backoff while keeping playback errors visible; Windows can stay active in the tray and Android playback continues through its media service.
+- Keep Stage Admin demo devices in the Stage build only; the production Android APK contains no Stage/Admin UI.
 ## 0.2.4 / Android code15 and Windows 0.2.4 — published 2026-11-03
 
 [Published combined release](https://github.com/addy1243/Echo/releases/tag/v0.2.4); see [the complete release record](docs/releases/0.2.4.md).
