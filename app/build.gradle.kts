@@ -14,8 +14,8 @@ android {
         applicationId = "dev.echo.music"
         minSdk = 26
         targetSdk = 36
-        versionCode = providers.gradleProperty("echoVersionCode").orElse("18").get().toInt()
-        versionName = providers.gradleProperty("echoVersionName").orElse("0.2.7").get()
+        versionCode = providers.gradleProperty("echoVersionCode").orElse("17").get().toInt()
+        versionName = providers.gradleProperty("echoVersionName").orElse("0.2.6").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "SPOTIFY_CLIENT_ID", "\"$spotifyClientId\"")
         buildConfigField("boolean", "STAGING", "false")

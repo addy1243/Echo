@@ -86,7 +86,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi)
             packageName = "EchoMusic"
-            packageVersion = "0.2.7"
+            packageVersion = "0.2.6"
             windows {
                 iconFile.set(project.file("resources/echo.ico"))
                 installationPath = "EchoMusicDesktop"
@@ -178,8 +178,8 @@ tasks.register<JavaExec>("msiCheck") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("dev.echo.desktop.DesktopMsiCheckKt")
-    args(providers.gradleProperty("echoMsiPath").getOrElse(layout.buildDirectory.file("compose/binaries/main/msi/EchoMusic-0.2.7.msi").get().asFile.absolutePath),
-        providers.gradleProperty("echoMsiVersion").getOrElse("0.2.7"))
+    args(providers.gradleProperty("echoMsiPath").getOrElse(layout.buildDirectory.file("compose/binaries/main/msi/EchoMusic-0.2.6.msi").get().asFile.absolutePath),
+        providers.gradleProperty("echoMsiVersion").getOrElse("0.2.6"))
 }
 
 tasks.register<JavaExec>("publishedWindowsUpdateCheck") {

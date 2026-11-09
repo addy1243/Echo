@@ -1,6 +1,6 @@
 # Release history
 
-## 0.2.7 — 2026-11-09
+## 0.2.6 — 2026-11-09
 
 - Windows Now Playing expands from the mini-player into a rounded, bottom-aligned panel with a volume slider.
 - The Windows queue slides in from the right, shows artwork, and stays with the active player view.
