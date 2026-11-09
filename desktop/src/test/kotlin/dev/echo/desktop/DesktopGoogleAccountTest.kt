@@ -156,6 +156,23 @@ class DesktopGoogleAccountTest {
         assertNull(bundledDesktopGoogleClient("123-synthetic.apps.googleusercontent.com\nsynthetic-value"))
     }
 
+    @Test fun provisionedProfileCanSaveAndReloadItsClientIdentity() = runBlocking {
+        assumeTrue(System.getProperty("os.name").startsWith("Windows"))
+        val resource = DesktopGoogleAccount::class.java.getResourceAsStream("/echo-desktop-oauth-client")
+            ?.use { it.readNBytes(4353).toString(Charsets.UTF_8) }
+        assumeTrue(resource != null)
+        val client = checkNotNull(bundledDesktopGoogleClient(checkNotNull(resource)))
+        val path = temporary.root.toPath().resolve("provisioned.dpapi")
+        val account = DesktopGoogleAccount(path)
+        account.signOut()
+        assertTrue(account.state.value.message.orEmpty().startsWith("Signed out"))
+        val saved = JSONObject(String(Crypt32Util.cryptUnprotectData(Files.readAllBytes(path))))
+        assertEquals(client.clientId, saved.getString("client_id"))
+        assertEquals(client.projectId, saved.getString("project_id"))
+        assertFalse(saved.has("client_secret"))
+        assertTrue(DesktopGoogleAccount(path).state.value.clientConfigured)
+    }
+
     @Test fun missingDesktopConfigurationStopsBeforeOpeningBrowser() = runBlocking {
         assumeTrue(DesktopGoogleAccount::class.java.getResource("/echo-desktop-oauth-client") == null)
         val path = temporary.root.toPath().resolve("unconfigured.dpapi")

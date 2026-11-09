@@ -299,6 +299,9 @@ class DesktopGoogleAccount(
     private suspend fun commit(next: JSONObject) = withContext(Dispatchers.IO) {
         require(System.getProperty("os.name").startsWith("Windows")) { "Protected Google sign-in currently requires Windows" }
         if (!next.has("client_id")) next.put("client_id", clientId())
+        if (!next.has("project_id")) {
+            bundledClient?.takeIf { it.clientId == next.getString("client_id") }?.let { next.put("project_id", it.projectId) }
+        }
         requireDesktopGoogleClient(next.getString("client_id"), next.optString("project_id"))
         next.put("version", 1)
         val encrypted = Crypt32Util.cryptProtectData(next.toString().toByteArray(Charsets.UTF_8))
@@ -327,12 +330,14 @@ internal fun desktopGoogleErrorMessage(status: Int, body: JSONObject): String {
         error == "invalid_client" || error == "invalid_request" && description.contains("client_secret", true) &&
             description.contains("missing", true) -> DESKTOP_GOOGLE_SETUP_MESSAGE
         error == "invalid_grant" -> "Google's sign-in code expired or was rejected. Start a fresh sign-in or reconnect Drive."
-        error == "redirect_uri_mismatch" -> "Google rejected Echo's desktop callback. Import the matching Desktop OAuth configuration and try again."
+        error == "redirect_uri_mismatch" -> DESKTOP_GOOGLE_REDIRECT_SETUP_MESSAGE
         status in setOf(401, 403) || error == "access_denied" -> "Google access expired or was denied. Sign in or connect Drive again."
         status == 429 -> "Google is rate limiting requests. Wait before trying again."
         else -> "Google authorization failed (HTTP $status). Check the Desktop client and consent setup."
     }
 }
+
+internal const val DESKTOP_GOOGLE_REDIRECT_SETUP_MESSAGE = "Google rejected Echo's desktop callback. Import the matching Desktop OAuth configuration and try again."
 internal data class DesktopGoogleCallback(val code: String?, val denied: Boolean)
 
 internal fun desktopGoogleCallback(query: String?, expectedState: String): DesktopGoogleCallback {

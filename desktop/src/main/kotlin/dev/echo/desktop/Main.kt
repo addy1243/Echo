@@ -1128,7 +1128,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                         google.signOut()
                     } }) { Text("Sign out") }
                 }
-                if (!google.hasBundledClientConfiguration || !account.clientConfigured || account.message == DESKTOP_GOOGLE_SETUP_MESSAGE) {
+                if (!google.hasBundledClientConfiguration || !account.clientConfigured ||
+                    account.message == DESKTOP_GOOGLE_SETUP_MESSAGE || account.message == DESKTOP_GOOGLE_REDIRECT_SETUP_MESSAGE) {
                     TextButton(onClick = { accountAction {
                         chooseFiles(true, "Choose Echo Desktop OAuth client JSON").firstOrNull()?.let { google.importClientJson(it) }
                     } }) { Text("Import Desktop OAuth configuration") }
