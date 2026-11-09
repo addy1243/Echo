@@ -1,5 +1,7 @@
 # Echo Music
 
+Download [Echo 0.2.6 for Android or Windows](https://github.com/addy1243/Echo/releases/tag/v0.2.6-final). The [release record](docs/releases/0.2.6.md) lists the artifacts and verification.
+
 Echo 0.2.4 adds public YouTube playlist-title search and public playlist-link preview/import on Android and Windows. Search results open the existing preview-and-confirm flow; capped or partial results are identified before import. Spotify imports remain public-link or playlist-file based, without Spotify title search, audio or automatic sync. See [integration details](docs/INTEGRATIONS.md).
 
 The Android app uses Media3 and supports a local library, playlists, queues, search, key-free YouTube playback, downloads, optional account sync, and connected playback. The Windows desktop app uses Compose, LibVLC, local library storage, imports, and an in-app MSI updater. Windows requires 64-bit VLC 3 to be installed separately.
