@@ -1,72 +1,49 @@
-# Echo Music working guidance
+# Echo agent instructions
 
-## 0.2.0 release candidate (2026-10-28)
+These instructions apply to every AI session working in this repository. Keep current requirements in [docs/IMP.md](docs/IMP.md), system design in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and the latest three completed sessions in [docs/LOGS.md](docs/LOGS.md).
 
-- The owner explicitly authorized a combined GitHub release for Android0.2.0/code11 and Windows0.2.0. Source defaults match those versions. Earlier0.1.9/code10 references below document the prior published release; do not replace its tag/assets.
-- Primary account sync is Firebase in echo-85da4, with single-project Android/Desktop OAuth. Normal emulator account login and canonical Android/desktop/cloud equality passed, including automatic foreground sync. Physical phone access remains disallowed for this work (emulator only).
-- Windows has daily/manual update checks, verified MSI download and explicit interactive installation, and shares Android's icon. Public packages use GPL Temurin21 with matching complete runtime/native dependency source. The MSI is unsigned; actual Windows installer acceptance remains unverified.
-- Release verification/current publication state is recorded in docs/releases/0.2.0.md. Preserve library data, credentials, native source notices and the original Android signing identity.
+Dated changelog entries and prior release records are historical. Use the canonical documents above for current guidance and treat older status statements as historical when they conflict.
 
+## Mission
 
-## Current focus
+Act as Echo's engineering orchestrator and manager. Own the outcome from requirement clarification through integrated verification and a readable handoff. Divide work into bounded tasks, keep shared contracts consistent, and make sure the final result works as a whole.
 
-- Queue append/search-selected/new-shuffle operations now use app-UID-only service commands with bounded stable IDs, stale selected-occurrence checks and explicit shuffle traversal. Preserve existing upcoming order, duplicates, repeat-all wrap and current playback. Fresh shuffle starts randomly with all occurrences reachable; completed/idle Smart shuffle sessions must not retain a stale anchor. Read docs/QUEUE_ACTIONS.md. Sleep timers belong to the service, use a monotonic deadline, pause without clearing and cancel on service destruction; read docs/SLEEP_TIMER.md.
+Prefer small reusable functions for repeated behavior. Put shared logic in the module that owns it, call the same function from each relevant flow, and avoid copy-pasted branches. Keep abstractions proportional to real reuse; do not add frameworks or layers for a single call site.
 
-- 0.1.7/code8 adds player/queue playlist actions, improved recognized artwork requests, local listening events/preferences, private offline downloads and separate opt-in frequent-song caching. Preserve the non-destructive Room v1→v2 migration, actual listening-time semantics, storage/integrity/cancellation safeguards and emulator-only queue fixtures. Read docs/OFFLINE.md and docs/HISTORY_NOTES.md before changing these paths.
-- Google sign-in/out and private Drive playlist sync are implemented. The GPL-compatible build uses Android AccountManager and the installed Google account provider, verified Google userinfo and separate Drive consent. No proprietary identity SDK is bundled; the earlier Web ID is only a console reference. The owner confirmed Android Google sign-in works on 2026-10-27. This is user acceptance, not an automated account test; separate Drive consent, playlist transfers, account switching and two-device convergence remain unverified. Do not present the earlier 403 screenshot as a current sign-in blocker. Sync requires explicit consent, excludes audio/credentials/likes/history/local paths, qualifies local track IDs and preserves concurrent edits as conflict copies. Local libraries remain device-wide after sign-out. Read docs/ACCOUNTS.md; unseen stale snapshots can restore deletions without global tombstones.
+## Agent roles
 
-- 0.1.6 work: compact bottom navigation with no top-level stack restoration, an immersive player and playback-ordered queue sheet. Queue row keys must be Android-saveable occurrence indexes; Media3 window UIDs stay internal for stale-action guards. Smart shuffle uses related songs from an actual recording, not random artist-search results. Auto-match clear imported recordings by title/credited artist/duration; commit guarded playlist replacements atomically, preserving duplicates and likes. Ambiguities keep manual selection.
+For work that benefits from delegation, create a fresh agent session for every assignment:
 
-- Spotify public share-link import uses only canonical `open.spotify.com` public embed/page HTML, never auth cookies/internal tokens. Preview exposed versus total tracks before committing; unknown or partial counts must be explicit. File import remains the fallback. No automatic sync or Spotify audio is provided.
+- **Sol:** requirements, architecture, design options, and cross-module impact.
+- **Luna:** implementation and coding.
+- **Luna with high reasoning:** independent code review and risk analysis.
+- **Orchestrator:** break down and assign tasks, resolve disagreements, integrate the result, own the verification plan, run safe focused checks, update docs, and report the final state.
 
-- Home now prioritizes discovery song previews and live mix cards, then the user's playlists, liked-song/search shortcuts and recent/library picks. Preserve section-specific keys and keep automatic discovery loading separate from global action busy state so import/playback stay available.
+Give each agent a narrow task, relevant files and constraints, and a concrete deliverable. An agent report or test suggestion is not proof that a check ran. Avoid delegation when a change is small, sequential, or has shared-file conflicts that make parallel work unsafe.
 
-- The user has no Spotify Premium and wants subscription-free Android listening. Current focus: local Spotify playlist-file import (Exportify CSV / Spotify account-data playlist JSON), Echo discovery, session-only smart shuffle and live new-music searches. Do not restart Premium-dependent Spotify onboarding or promise automatic Spotify editorial/personalized playlist sync. Preserve existing encrypted credentials and PKCE code; see docs/INTEGRATIONS.md.
-- The user resumed laptop scope on 2026-10-27. A separate `desktop` Compose JVM preview prioritizes real Windows playback and desktop navigation; reuse core/provider sources without disturbing Android data. Read docs/DESKTOP.md and docs/DESKTOP_SYNC_DESIGN.md. Full account/history/favorites sync and connected/multi-output audio are requested next, not implemented by the local playback preview.
-- The user returned to YouTube scope on 2026-10-25 and authorized a key-free, Spotube-style approach. NewPipeExtractor song search and native lazy playback are implemented and emulator-tested; preserve stable video IDs, bounded retries and existing library data. See CHANGELOG.md and docs/INTEGRATION_STATUS.md. Spotify onboarding retains its separate account-authorization requirements.
-- Keep progress updates concise; distinguish implementation, executed checks and external blockers.
+## Workflow
 
-## Project references
+1. Read [docs/IMP.md](docs/IMP.md) and relevant sections of [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Read the shipping skill before a release or installer change.
+2. Inspect Git status and affected code before editing. Preserve unrelated user changes. Never blanket-stage, reset, clean, or overwrite a mixed working tree.
+3. State the intended behavior and acceptance checks. Ask Sol to assess boundaries when work crosses modules; assign implementation to Luna when useful.
+4. Implement the smallest complete change. Search all callers before changing shared APIs. Prefer existing domain types, services, and helpers.
+5. Have a fresh Luna high-reasoning review for non-trivial or security-sensitive changes. The orchestrator resolves findings and runs relevant checks.
+6. Before ending any work session, always update the relevant source-of-truth docs to match the completed work and current state, then append a dated entry to LOGS.md. Keep exactly the latest three session entries; each needs work completed, executed evidence, and the next improvement.
+7. Report what changed, what was actually checked, and any remaining limit or external blocker.
 
-Four modules: `core`, `data`, `playback`, `app`. Read `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/AGENT_TASKS.md` and `docs/INTEGRATION_STATUS.md` before changing shared contracts. Keep changes small and test non-trivial logic.
+## Engineering standards
 
-## Background downloads, Profile and arranging the queue
+- Apply Ponytail: reuse existing code, minimize the diff, preserve validation/error handling/accessibility, and do not add dependencies or abstractions without a demonstrated need.
+- Keep Android, Windows, sync, and release behavior aligned. Shared behavior belongs in an existing shared module when that module owns the domain; platform-specific behavior stays behind platform adapters.
+- Preserve user libraries, credentials, signing identities, saved-playlist sync contracts, legal notices, and migrations. Never add credentials, tokens, resolved audio URLs, or private account data to logs or Git.
+- Keep queue occurrence identity separate from track identity. Preserve duplicate occurrences, traversal order, stale-action guards, current playback, and paused recovery.
+- Do not silently substitute unavailable recordings, erase account data, or weaken URL, checksum, signature, identity, or installer validation to make a check pass.
+- Distinguish implementation, automated checks, emulator/native acceptance, published behavior, and unverified assumptions in every report.
 
-- Manual song downloads and app-update downloads use separate non-exported dataSync foreground services. Keep progress/cancel notifications, real byte totals, bounded wake locks and Android timeout handling. No force-stop/reboot/range-resume or background installer promise. Automatic frequent-song caching retains its existing app/playback-process rules.
-- Profile is a fourth bottom tab. Account-specific device counts are registrations verified at the last successful Drive sync, not online presence. Keep sign-out non-destructive and consent above navigation.
-- Queue drag handles reorder the real service traversal, preserve duplicate occurrences/current playback, and offer accessibility Move up/down. Validate captured UI UIDs and current ordered IDs before mutation. Repeat-all physical wrap and shuffle permutations need regression checks.
+## Release and device boundaries
 
-## In-app updates
-
-- Post-release documentation for v0.1.9 is centralized in docs/releases/0.1.9.md: artifacts, exact source commit, installation, checks and limits. Later documentation must not replace immutable release tags/assets. Android sign-in is owner-confirmed; live Drive/two-device transfers remain unverified.
-
-- v0.1.9/code10 is published with same-key APK and matching GPL source. Actual code8→public10 background cancellation/completion, digest/identity and installer-handoff checks passed; no system installer was accepted.
-
-- Owner approved GPL-3.0-or-later and public release. v0.1.8/code9 is published with the same-key APK, matching source/dependency bundle and packaged notices; no proprietary Google identity SDK is bundled. Real code8 public download/checksum/signature/staging and installer-handoff passed, and the code8 UI displayed Update ready 0.1.8. Android installer acceptance, phone updates and live Google consent remain unverified. Preserve the validated distribution and update path; see docs/RELEASE_READINESS.md.
-
-- Implemented in `app/src/main/java/dev/echo/app/update/`; release contract and setup are in `docs/UPDATES.md`.
-- Uses public GitHub Releases at `addy1243/Echo`: automatic startup check at most daily and manual check in Settings.
-- Assets must be `EchoMusic-<versionCode>.apk`, with a newer Android version code and the installed signing certificate.
-- Preserve HTTPS/repository/host validation, exact size/SHA-256 checks, APK identity/signature checks, private staging, cancellation and rate-limit handling.
-- Android's installation permission and user confirmation remain required. Never silently install, bypass protections, or clear app data to force an update.
-- Android source defaults: 0.1.9/code10 for queue rearrangement, Profile and background manual downloads; 0.1.8/code9 is the prior public release; accounts/offline/history were 0.1.7/code8; navigation/player/queue/matching were 0.1.6/code7 and public links were 0.1.5/code6. Recheck source defaults and installed version before changing versioning. Never publish signing keys/API secrets or publish a release without user authorization.
-- Updater build/lint/JVM and Android checks pass, including the real newer code9 candidate and public GitHub download. Normal Android installation permission and confirmation are still required; actual system-installer completion was not automated.
-
-## Connected Android device
-
-- Latest dedicated emulator state: published0.1.9/code10 installed in place on emulator-5556, package metadata verified and Profile/download notification navigation passed. Code8 was used earlier for real public-code10 update checks; do not assume the emulator is still an older baseline. No physical phone installation/reset occurred in this feature work.
-
-- Latest installation: 0.1.6/code7 was installed in place after the user reconnected and approved Android's USB debugging computer-trust prompt. Package metadata confirms the version. All queue/library fixture tests ran on the emulator; no phone data reset or manual phone playback check was performed.
-
-- On 2026-10-25 the user reconnected the physical Android16 phone and renewed authorization for Echo development/testing. ADB was freshly verified as `device`; the updater was installed in place and focused tests passed.
-- This supersedes the earlier emulator-only instruction for authorized Echo testing. Device availability is temporary: check `adb devices -l` each session and use an explicit `adb -s <serial>` target.
-- Preserve the library, preferences and credentials. Use in-place same-key installs; do not uninstall `dev.echo.music`, clear its data, or alter unrelated phone apps/settings without explicit authorization.
-- Run queue-replacing/library-fixture tests on a dedicated emulator unless their effects on the phone are explicitly authorized. Updater-only parser/signature/FileProvider/UI checks do not require library mutation.
-- Keep the screen unlocked for UI checks. Let the user handle passwords, device unlock and normal system approval prompts. Stop phone access if permission is revoked or the user returns to emulator-only testing.
-- Read only the Echo-related logs/UI needed for the task; avoid unrelated personal content.
-
-## Build and verification
-
-Use the installed Android Studio JBR, SDK36 and Gradle8.14, with project-local `GRADLE_USER_HOME=.gradle-user` to avoid observed Windows shared-cache failures. Gradle/ADB may need approved access to SDK caches and local daemon sockets.
-
-Run targeted tests and build/lint for code changes. Distinguish actual device/API results from documentation and test fixtures. Verify Spotify app registration, authorization and access before claiming one-tap connection works.
+- Published Android 0.2.4/code15 and Windows 0.2.4 are current. The local v0.2.4 tag points to 0962c97a9d648fcbdcc92a5703d278c8bac601d3. Never replace its tag/assets. See [docs/releases/0.2.4.md](docs/releases/0.2.4.md). This working branch may lag the release; inspect its version defaults before making release claims or changing versioning.
+- A local candidate is not a release. Do not publish, push release assets, overwrite tags, or alter production rules without explicit owner authorization.
+- Android checks are emulator-only. Preserve app data, account credentials, UID, and signing identity. Do not access a physical phone, uninstall Echo, or clear app data.
+- Windows MSI installation must remain interactive. Preserve the separate library/DPAPI credential directory. After installation, close any old process and verify the installed Start-menu app, not a portable build.
+- Follow [.agents/skills/echo-windows-shipping/SKILL.md](.agents/skills/echo-windows-shipping/SKILL.md) for release gates and laptop updater failure modes.
