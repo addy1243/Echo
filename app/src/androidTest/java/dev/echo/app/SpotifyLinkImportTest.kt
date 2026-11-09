@@ -16,10 +16,10 @@ class SpotifyLinkImportTest {
 
     @Test fun invalidLinkShowsInlineErrorAndKeepsFileImport() {
         compose.onNodeWithText("Library", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("Import Spotify link").performClick()
-        compose.onNodeWithText("Playlist share link").performTextInput("https://example.com/playlist/fake")
+        compose.onNodeWithText("Import public playlist link").performClick()
+        compose.onNodeWithText("YouTube or Spotify playlist link").performTextInput("https://example.com/playlist/fake")
         compose.onNodeWithText("Preview playlist").performClick()
-        compose.waitUntil(5_000) { compose.onAllNodesWithText("Paste a full https://open.spotify.com/playlist/", substring = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("Paste a full public YouTube playlist link").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Cancel").performClick()
         compose.onNodeWithText("Import Spotify playlist file").assertIsEnabled()
     }
@@ -32,26 +32,31 @@ class SpotifyLinkImportTest {
         val before = runBlocking { repository.playlists.first().map { it.id }.toSet() }
         try {
             compose.onNodeWithText("Library", useUnmergedTree = true).performClick()
-            compose.onNodeWithText("Import Spotify link").performClick()
-            compose.onNodeWithText("Playlist share link").performTextInput(requireNotNull(args.getString("playlistLink")))
+            compose.onNodeWithText("Import public playlist link").performClick()
+            compose.onNodeWithText("YouTube or Spotify playlist link").performTextInput(requireNotNull(args.getString("playlistLink")))
             compose.onNodeWithText("Preview playlist").performClick()
-            compose.waitUntil(90_000) { compose.onAllNodesWithText("Import $count tracks").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("$count of $count listed tracks available.").assertIsDisplayed()
-            compose.onNodeWithText("Auto-match clear recordings").performClick()
-            compose.onNodeWithText("Import $count tracks").performClick()
-            compose.waitUntil(15_000) { compose.onAllNodesWithText("Import $count tracks").fetchSemanticsNodes().isEmpty() }
+            val import = hasText("Import $count songs") and isEnabled()
+            compose.waitUntil(90_000) {
+                compose.onAllNodesWithText("Skip matching").fetchSemanticsNodes().isNotEmpty() ||
+                    compose.onAllNodes(import).fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithText("$count of $count songs available.").assertIsDisplayed()
+            if (compose.onAllNodesWithText("Skip matching").fetchSemanticsNodes().isNotEmpty()) {
+                compose.onNodeWithText("Skip matching").performClick()
+            }
+            compose.waitUntil(15_000) { compose.onAllNodes(import).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(import).performClick()
+            compose.waitUntil(15_000) { compose.onAllNodesWithText("Import $count songs").fetchSemanticsNodes().isEmpty() }
             val created = runBlocking { repository.playlists.first().filter { it.id !in before } }
             assertEquals(1, created.size)
             val songs = runBlocking { repository.playlistTracks(created.single().id) }
             assertEquals(count, songs.size)
-            assertTrue(songs.all { it.provider == "spotify" && it.sourceUri == null })
+            assertTrue(songs.all { it.provider in setOf("spotify", "youtube", "local") })
             compose.waitForIdle()
             compose.onNodeWithText(created.single().name).performScrollTo().performClick()
             compose.waitUntil(15_000) { compose.onAllNodesWithText("$count tracks", substring = true).fetchSemanticsNodes().isNotEmpty() }
             compose.waitForIdle()
             compose.onNodeWithText("$count tracks", substring = true).assertIsDisplayed()
-            compose.onNodeWithTag("playlist-feed").performScrollToNode(hasText("Find recording"))
-            compose.onAllNodesWithText("Find recording").onFirst().assertIsDisplayed()
         } catch (failure: Throwable) {
             val target = InstrumentationRegistry.getInstrumentation().targetContext
             val image = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()

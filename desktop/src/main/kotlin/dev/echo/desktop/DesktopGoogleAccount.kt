@@ -68,7 +68,12 @@ class DesktopGoogleAccount(
     private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).connectTimeout(15, TimeUnit.SECONDS).callTimeout(30, TimeUnit.SECONDS).build()
     private var saved = JSONObject()
-    private val mutableState = MutableStateFlow(DesktopAccountState(message = DESKTOP_GOOGLE_SETUP_MESSAGE))
+    private var savedConfigurationReadable = true
+    private val bundledClient = DesktopGoogleAccount::class.java.getResourceAsStream("/echo-desktop-oauth-client")
+        ?.use { it.readNBytes(4353).toString(Charsets.UTF_8) }
+        ?.let(::bundledDesktopGoogleClient)
+    val hasBundledClientConfiguration: Boolean get() = bundledClient != null
+    private val mutableState = MutableStateFlow(currentState(if (clientValue() == null) DESKTOP_GOOGLE_SETUP_MESSAGE else null))
     val state: StateFlow<DesktopAccountState> = mutableState
 
     init {
@@ -82,10 +87,11 @@ class DesktopGoogleAccount(
                 saved = decoded
                 mutableState.value = currentState(if (decoded.has("email"))
                     "Saved Google account loaded. Live authorization has not been checked yet."
-                    else if (decoded.optString("client_secret").isNotBlank()) "Desktop OAuth configuration loaded. You can now sign in."
+                    else if (clientValue() != null) "Desktop OAuth configuration loaded. You can now sign in."
                     else DESKTOP_GOOGLE_SETUP_MESSAGE)
             } catch (_: Exception) {
-                mutableState.value = DesktopAccountState(message = "Saved Google credentials could not be read. The original encrypted file was preserved; sign in again or sign out to reset Echo's association.")
+                savedConfigurationReadable = false
+                mutableState.value = currentState("Saved Google credentials could not be read. The original encrypted file was preserved; sign in again or sign out to reset Echo's association.")
             }
         }
     }
@@ -195,7 +201,7 @@ class DesktopGoogleAccount(
     }
 
     private suspend fun authorize(scopes: Set<String>, loginHint: String?): JSONObject {
-        requireDesktopGoogleConfiguration(saved.optString("client_secret"))
+        requireDesktopGoogleConfiguration(clientValue())
         val verifier = googleRandomToken()
         val nonce = googleRandomToken()
         val path = "/echo-oauth-${googleRandomToken()}"
@@ -246,9 +252,9 @@ class DesktopGoogleAccount(
     }
 
     private fun baseForm(): FormBody.Builder {
-        val secret = saved.optString("client_secret")
+        val secret = clientValue()
         requireDesktopGoogleConfiguration(secret)
-        return FormBody.Builder().add("client_id", clientId()).add("client_secret", secret)
+        return FormBody.Builder().add("client_id", clientId()).add("client_secret", checkNotNull(secret))
     }
 
     private suspend fun profile(token: String): Pair<String, String> {
@@ -284,9 +290,12 @@ class DesktopGoogleAccount(
     }
 
     private fun copySaved() = JSONObject(saved.toString())
-    private fun clientId() = saved.optString("client_id").takeIf { it.isNotBlank() } ?: ECHO_DESKTOP_GOOGLE_CLIENT_ID
+    private fun clientId() = saved.optString("client_id").takeIf { it.isNotBlank() }
+        ?: bundledClient?.clientId ?: ECHO_DESKTOP_GOOGLE_CLIENT_ID
+    private fun clientValue() = saved.optString("client_secret").takeIf { it.isNotBlank() }
+        ?: bundledClient?.takeIf { savedConfigurationReadable && clientId() == it.clientId }?.secret
     private fun currentState(message: String?) = DesktopAccountState(saved.optString("email").takeIf { it.isNotBlank() },
-        saved.has("drive"), message = message, clientConfigured = saved.optString("client_secret").isNotBlank())
+        saved.has("drive"), message = message, clientConfigured = clientValue() != null)
     private suspend fun commit(next: JSONObject) = withContext(Dispatchers.IO) {
         require(System.getProperty("os.name").startsWith("Windows")) { "Protected Google sign-in currently requires Windows" }
         if (!next.has("client_id")) next.put("client_id", clientId())
@@ -299,6 +308,7 @@ class DesktopGoogleAccount(
             Files.write(temporary, encrypted)
             Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             saved = next
+            savedConfigurationReadable = true
         } finally { Files.deleteIfExists(temporary) }
     }
 }
@@ -368,6 +378,16 @@ private fun requireDesktopGoogleClient(clientId: String, projectId: String) {
         clientId.matches(Regex("$ECHO_FIREBASE_GOOGLE_PROJECT_NUMBER-[A-Za-z0-9_-]{1,128}\\.apps\\.googleusercontent\\.com"))) {
         "Choose an installed Desktop OAuth client JSON from Firebase project echo-85da4"
     }
+}
+
+internal fun bundledDesktopGoogleClient(resource: String): DesktopGoogleClientConfiguration? {
+    val parts = resource.split('\n', limit = 2)
+    if (parts.size != 2 || !parts[1].matches(Regex("[A-Za-z0-9_-]{1,4096}"))) return null
+    val clientId = parts[0].ifEmpty { ECHO_DESKTOP_GOOGLE_CLIENT_ID }
+    return runCatching {
+        requireDesktopGoogleClient(clientId, ECHO_FIREBASE_GOOGLE_PROJECT_ID)
+        DesktopGoogleClientConfiguration(clientId, ECHO_FIREBASE_GOOGLE_PROJECT_ID, parts[1])
+    }.getOrNull()
 }
 
 internal fun parseDesktopGoogleClientJson(json: String): DesktopGoogleClientConfiguration {

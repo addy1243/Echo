@@ -398,8 +398,9 @@ fun EchoApp(vm: EchoViewModel) {
     var create by remember { mutableStateOf(false) }
     var group by remember { mutableStateOf<Pair<String, List<Track>>?>(null) }
     var linkImport by remember { mutableStateOf(false) }
+    var fileImport by remember { mutableStateOf<android.net.Uri?>(null) }
     val importPlaylist = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) vm.importSpotifyFile(uri)
+        if (uri != null) fileImport = uri
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionTitle("Your collection") }
@@ -423,65 +424,113 @@ fun EchoApp(vm: EchoViewModel) {
     }
     if (create) NameDialog("New playlist", "", { create = false }) { name -> create = false; vm.runAction { openPlaylist(vm.library.createPlaylist(name)) } }
     if (linkImport) PublicPlaylistDialog(vm, initialLink = "", close = { linkImport = false }) { linkImport = false; tab = 2 }
+    fileImport?.let { uri -> PublicPlaylistDialog(vm, initialLink = "", initialFile = uri, close = { fileImport = null }) { fileImport = null; tab = 2 } }
     group?.let { (title, songs) -> AlertDialog(onDismissRequest = { group = null }, title = { Text(title) }, text = { LazyColumn { items(songs) { TrackRow(it, vm, playlists, favorites) { vm.play(songs, songs.indexOf(it)); group = null } } } }, confirmButton = { TextButton(onClick = { group = null }) { Text("Close") } }) }
 }
 
-private data class PublicPlaylistPreview(val name: String, val tracks: List<dev.echo.core.Track>, val total: Long?, val spotify: Boolean, val hasMore: Boolean) {
+private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spotify.FilePlaylist>, val total: Long?, val spotify: Boolean, val hasMore: Boolean, val skipped: Int = 0) {
+    val tracks by lazy(LazyThreadSafetyMode.NONE) { playlists.flatMap { it.tracks } }
     val complete get() = !hasMore && total != null && total == tracks.size.toLong()
 }
 
-@Composable private fun PublicPlaylistDialog(vm: EchoViewModel, initialLink: String, close: () -> Unit, imported: () -> Unit) {
+@Composable private fun PublicPlaylistDialog(vm: EchoViewModel, initialLink: String, initialFile: android.net.Uri? = null, close: () -> Unit, imported: () -> Unit) {
     var link by rememberSaveable(initialLink) { mutableStateOf(initialLink) }
     var preview by remember { mutableStateOf<PublicPlaylistPreview?>(null) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var autoMatch by rememberSaveable { mutableStateOf(true) }
+    var matching by remember { mutableStateOf(false) }
+    var matchProgress by remember { mutableStateOf(0 to 0) }
+    var matchingSummary by remember { mutableStateOf<String?>(null) }
+    val firstPageFlow = remember { kotlinx.coroutines.flow.MutableStateFlow<PublicPlaylistPreview?>(null) }
+    val firstPage by firstPageFlow.collectAsStateWithLifecycle()
+    val offlineSettings by vm.offlineSettings.collectAsStateWithLifecycle()
+    var job by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scope = rememberCoroutineScope()
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
-    AlertDialog(onDismissRequest = close, title = { Text("Import public playlist link") }, text = {
+
+    fun loadPreview() {
+        preview = null; firstPageFlow.value = null; matchingSummary = null; error = null; loading = true
+        job = scope.launch {
+            try {
+                if (initialFile == null && offlineSettings.offlineOnly) error("Turn off Offline mode to load this playlist.")
+                val draft = if (initialFile != null) {
+                    val file = vm.previewSpotifyFile(initialFile)
+                    PublicPlaylistPreview(file.playlists, file.playlists.sumOf { it.tracks.size.toLong() }, true, false, file.skipped)
+                } else {
+                    val spotify = runCatching { java.net.URI(link.trim()).host.equals("open.spotify.com", true) }.getOrDefault(false)
+                    if (spotify) {
+                        val exposed = vm.spotifyLinks.preview(link)
+                        PublicPlaylistPreview(listOf(dev.echo.data.spotify.FilePlaylist(exposed.name, exposed.tracks)), exposed.total?.toLong(), true, false)
+                    } else {
+                        val exposed = vm.previewYouTubePlaylist(link) { first ->
+                            firstPageFlow.value = PublicPlaylistPreview(listOf(dev.echo.data.spotify.FilePlaylist(first.name, first.tracks)), first.total, false, true)
+                        }
+                        PublicPlaylistPreview(listOf(dev.echo.data.spotify.FilePlaylist(exposed.name, exposed.tracks)), exposed.total, false, exposed.hasMore)
+                    }
+                }
+                preview = draft
+                if (draft.spotify && !offlineSettings.offlineOnly && draft.tracks.any { it.sourceUri == null }) {
+                    matching = true
+                    val matches = vm.matchImportedTracks(draft.tracks) { done, total -> matchProgress = done to total }
+                    preview = draft.copy(playlists = draft.playlists.map { playlist ->
+                        playlist.copy(tracks = playlist.tracks.map { matches[it.id] ?: it })
+                    })
+                    val unique = draft.tracks.filter { it.sourceUri == null }.distinctBy { it.id }.size
+                    matchingSummary = "${matches.size} matched automatically; ${unique - matches.size} need manual matching." +
+                        if (unique > 25) " Only the first 25 songs were searched." else ""
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (failure: Exception) { firstPageFlow.value = null; error = failure.message ?: "Playlist preview failed. Try a file export." }
+            finally { firstPageFlow.value = null; matching = false; loading = false }
+        }
+    }
+    LaunchedEffect(initialLink, initialFile) {
+        if (initialFile != null) loadPreview()
+        else if (initialLink.isNotBlank()) {
+            if (offlineSettings.offlineOnly) error = "Turn off Offline mode to load this playlist."
+            else loadPreview()
+        }
+    }
+    AlertDialog(onDismissRequest = close, title = { Text(if (initialFile == null) "Import public playlist link" else "Preview playlist file") }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(link, { link = it; preview = null; error = null }, enabled = !loading, label = { Text("YouTube or Spotify playlist link") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            if (initialFile == null) OutlinedTextField(link, { link = it; preview = null; firstPageFlow.value = null; error = null }, enabled = !loading, label = { Text("YouTube or Spotify playlist link") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (matching) Text("Matching ${matchProgress.first} / ${matchProgress.second}")
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            preview?.let { result ->
-                Text(result.name, style = MaterialTheme.typography.titleMedium)
+            (preview ?: firstPage)?.let { result ->
+                Text(result.playlists.firstOrNull()?.name?.takeIf { result.playlists.size == 1 } ?: "${result.playlists.size} playlists", style = MaterialTheme.typography.titleMedium)
                 Text(when {
-                    result.hasMore -> "At least ${result.tracks.size} songs found; more entries remain. This imports only these ${result.tracks.size}."
+                    preview == null && firstPage != null -> "${result.tracks.size} songs loaded; more songs are loading."
+                    result.hasMore -> "At least ${result.tracks.size} songs found; more entries remain. Only these songs will be imported."
                     result.complete -> "${result.tracks.size} of ${result.total} songs available."
-                    result.total != null && result.total < result.tracks.size -> "${result.tracks.size} songs available; YouTube reported ${result.total} while the playlist was loading. This imports only the previewed songs."
                     result.total != null -> "Only ${result.tracks.size} of ${result.total} songs are available. This imports only those ${result.tracks.size}."
                     else -> "${result.tracks.size} songs available. The full playlist count couldn't be verified; entries may be missing."
                 })
                 Text(if (result.spotify) "Spotify imports contain metadata only and won't sync later changes." else "YouTube playlist entries are saved as playable recording links when available.", style = MaterialTheme.typography.bodySmall)
-                if (result.spotify) Row(Modifier.toggleable(value = autoMatch, enabled = !loading, role = Role.Checkbox, onValueChange = { autoMatch = it }), verticalAlignment = Alignment.CenterVertically) { Checkbox(autoMatch, null, enabled = !loading); Text("Auto-match clear recordings", style = MaterialTheme.typography.bodySmall) }
-                LazyColumn(Modifier.heightIn(max = 140.dp)) { itemsIndexed(result.tracks.take(4)) { _, track -> Text("${track.title} · ${track.artist}", modifier = Modifier.padding(vertical = 4.dp), maxLines = 2, overflow = TextOverflow.Ellipsis) } }
+                if (result.skipped > 0) Text("${result.skipped} podcast/local entries skipped.", style = MaterialTheme.typography.bodySmall)
+                matchingSummary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                LazyColumn(Modifier.heightIn(max = 220.dp)) { itemsIndexed(result.tracks) { index, track -> Text("${index + 1}. ${track.title} · ${track.artist}", modifier = Modifier.padding(vertical = 4.dp), maxLines = 2, overflow = TextOverflow.Ellipsis) } }
             }
         }
     }, confirmButton = {
-        TextButton(enabled = !loading && link.isNotBlank(), onClick = {
+        TextButton(enabled = !loading && (preview != null || (initialFile == null && link.isNotBlank() && !offlineSettings.offlineOnly)), onClick = {
             keyboard?.hide(); focus.clearFocus()
-            loading = true; error = null
-            scope.launch {
-                try {
-                    val result = preview
-                    if (result == null) {
-                        val spotify = runCatching { java.net.URI(link.trim()).host.equals("open.spotify.com", true) }.getOrDefault(false)
-                        preview = if (spotify) vm.spotifyLinks.preview(link).let { PublicPlaylistPreview(it.name, it.tracks, it.total?.toLong(), true, false) }
-                            else vm.previewYouTubePlaylist(link).let { PublicPlaylistPreview(it.name, it.tracks, it.total, false, it.hasMore) }
-                    }
-                    else {
-                        val id = UUID.randomUUID().toString()
-                        vm.library.importPlaylist(id, result.name, result.tracks)
-                        if (result.spotify && autoMatch) vm.matchPlaylistAutomatically(id)
-                        imported()
-                    }
-                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (failure: Exception) { error = failure.message ?: "Playlist import failed. Try a file export." }
-                finally { loading = false }
+            val result = preview
+            if (result == null) loadPreview() else {
+                loading = true
+                scope.launch {
+                    try { vm.importSpotifyFile(dev.echo.data.spotify.PlaylistFile(result.playlists, result.skipped)); imported() }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (failure: Exception) { error = failure.message ?: "Playlist import failed. Try a file export." }
+                    finally { loading = false }
+                }
             }
-        }) { Text(preview?.let { "Import ${it.tracks.size} songs" } ?: "Preview playlist") }
-    }, dismissButton = { TextButton(onClick = close) { Text("Cancel") } })
+        }) { Text(preview?.let { if (it.playlists.size == 1) "Import ${it.tracks.size} songs" else "Import ${it.playlists.size} playlists" } ?: "Preview playlist") }
+    }, dismissButton = { Row {
+        if (matching) TextButton(onClick = { job?.cancel() }) { Text("Skip matching") }
+        TextButton(onClick = { job?.cancel(); close() }) { Text(if (loading) "Cancel" else "Close") }
+    } })
 }
 
 @Composable private fun PlaylistScreen(vm: EchoViewModel, id: String, playlist: Playlist?, all: List<Track>, playlists: List<Playlist>, favorites: Set<String>) {

@@ -1,3 +1,5 @@
+import java.nio.file.Files
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -36,7 +38,36 @@ dependencies {
     testImplementation(libs.junit)
 }
 
-sourceSets.main { resources.srcDir(rootProject.file("licenses")) }
+val desktopOAuthValue = providers.environmentVariable("ECHO_DESKTOP_GOOGLE_CLIENT_SECRET")
+val desktopOAuthClientId = providers.environmentVariable("ECHO_DESKTOP_GOOGLE_CLIENT_ID")
+val desktopOAuthResources = layout.buildDirectory.dir("generated/desktop-oauth")
+val generateDesktopOAuth = tasks.register("generateDesktopOAuth") {
+    inputs.property("configurationFingerprint", desktopOAuthValue.map { value ->
+        MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).toList()
+    }.orElse(emptyList()))
+    inputs.property("desktopClientId", desktopOAuthClientId.orElse(""))
+    outputs.dir(desktopOAuthResources)
+    doLast {
+        val output = desktopOAuthResources.get().file("echo-desktop-oauth-client").asFile
+        val value = desktopOAuthValue.orNull
+        if (value == null) {
+            Files.deleteIfExists(output.toPath())
+        } else {
+            require(value.matches(Regex("[A-Za-z0-9_-]{1,4096}"))) { "Invalid Echo Desktop OAuth client value" }
+            output.parentFile.mkdirs()
+            val clientId = desktopOAuthClientId.orNull.orEmpty()
+            require(clientId.isEmpty() || clientId.matches(Regex("886330954520-[A-Za-z0-9_-]{1,128}\\.apps\\.googleusercontent\\.com"))) {
+                "Desktop OAuth client ID must belong to Echo's Firebase project"
+            }
+            output.writeText("$clientId\n$value")
+        }
+    }
+}
+
+sourceSets.main {
+    resources.srcDir(rootProject.file("licenses"))
+    resources.srcDir(generateDesktopOAuth)
+}
 
 tasks.register<JavaExec>("runStage") {
     group = "application"
@@ -55,7 +86,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi)
             packageName = "EchoMusic"
-            packageVersion = "0.2.5"
+            packageVersion = "0.2.6"
             windows {
                 iconFile.set(project.file("resources/echo.ico"))
                 installationPath = "EchoMusicDesktop"
@@ -147,8 +178,8 @@ tasks.register<JavaExec>("msiCheck") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("dev.echo.desktop.DesktopMsiCheckKt")
-    args(providers.gradleProperty("echoMsiPath").getOrElse(layout.buildDirectory.file("compose/binaries/main/msi/EchoMusic-0.2.5.msi").get().asFile.absolutePath),
-        providers.gradleProperty("echoMsiVersion").getOrElse("0.2.5"))
+    args(providers.gradleProperty("echoMsiPath").getOrElse(layout.buildDirectory.file("compose/binaries/main/msi/EchoMusic-0.2.6.msi").get().asFile.absolutePath),
+        providers.gradleProperty("echoMsiVersion").getOrElse("0.2.6"))
 }
 
 tasks.register<JavaExec>("publishedWindowsUpdateCheck") {

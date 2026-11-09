@@ -554,7 +554,7 @@ class EchoViewModel @Inject constructor(
         if (enabled) { searchJob?.cancel(); matchingJob?.cancel() }
     }
     fun setAutomaticCache(enabled: Boolean) = offline.setAutoCache(enabled)
-    fun importSpotifyFile(uri: Uri) = runAction {
+    suspend fun previewSpotifyFile(uri: Uri): dev.echo.data.spotify.PlaylistFile {
         val (text, name) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
                 if (it.moveToFirst()) it.getString(0) else null
@@ -572,10 +572,34 @@ class EchoViewModel @Inject constructor(
             }
             text to name
         }
-        message = library.importPlaylistFile(text, name)
+        return library.previewPlaylistFile(text, name)
     }
 
-    suspend fun previewYouTubePlaylist(link: String) = youtube.playlist(link)
+    suspend fun importSpotifyFile(file: dev.echo.data.spotify.PlaylistFile) = library.importPlaylistFile(file)
+
+    suspend fun matchImportedTracks(tracks: List<Track>, onProgress: (Int, Int) -> Unit): Map<String, Track> {
+        require(!offlineSettings.value.offlineOnly) { "Turn off Offline mode to find recordings" }
+        val missing = tracks.filter { it.provider == "spotify" && it.sourceUri == null }.distinctBy { it.id }.take(25)
+        return findRecordingMatches(missing, onProgress)
+    }
+
+    private suspend fun findRecordingMatches(missing: List<Track>, onProgress: (Int, Int) -> Unit): Map<String, Track> {
+        val local = library.tracks.first().filter { it.provider == "local" && it.sourceUri != null }
+        val matches = mutableMapOf<String, Track>()
+        missing.forEachIndexed { index, track ->
+            currentCoroutineContext().ensureActive()
+            onProgress(index, missing.size)
+            val localMatch = local.filter { dev.echo.data.provider.TrackMatcher.matches(track, it) }.singleOrNull()
+            val match = localMatch ?: dev.echo.data.provider.automaticRecordingMatch(track, youtube.search("${track.title} ${track.artist}".take(200)))
+            if (match != null) matches[track.id] = match
+            currentCoroutineContext().ensureActive()
+            onProgress(index + 1, missing.size)
+        }
+        return matches
+    }
+
+    suspend fun previewYouTubePlaylist(link: String, onFirstPage: ((dev.echo.data.provider.YouTubePlaylistPreview) -> Unit)? = null) =
+        youtube.playlist(link, onFirstPage)
 
     private suspend fun discover(seeds: List<Track>, known: List<Track>): List<Track> {
         // shortcut: artist searches seed discovery; use a richer recommendation provider when available.
@@ -645,15 +669,7 @@ class EchoViewModel @Inject constructor(
                 val songs = library.playlistTracks(id)
                 val missing = songs.filter { it.sourceUri == null && it.provider == "spotify" }.distinctBy { it.id }
                 require(missing.isNotEmpty()) { "This playlist has no unmatched imported songs" }
-                val local = library.tracks.first().filter { it.provider == "local" && it.sourceUri != null }
-                val matches = mutableMapOf<String, Track>()
-                missing.forEachIndexed { index, track ->
-                    matchingProgress = index to missing.size
-                    val localMatch = local.filter { dev.echo.data.provider.TrackMatcher.matches(track, it) }.singleOrNull()
-                    val match = localMatch ?: dev.echo.data.provider.automaticRecordingMatch(track, youtube.search("${track.title} ${track.artist}".take(200)))
-                    if (match != null) matches[track.id] = match
-                    currentCoroutineContext().ensureActive()
-                }
+                val matches = findRecordingMatches(missing) { done, total -> matchingProgress = done to total }
                 library.applyRecordingMatches(id, songs.map { it.id }, matches)
                 if (loadedPlaylistId == id) playlistItems = library.playlistTracks(id)
                 message = "Matched ${matches.size} of ${missing.size} songs. ${missing.size - matches.size} need a recording choice."

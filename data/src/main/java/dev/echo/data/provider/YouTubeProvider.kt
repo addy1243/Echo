@@ -73,7 +73,8 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
         }
     }
 
-    suspend fun playlist(link: String): YouTubePlaylistPreview {
+    /** Reports the first available songs from the extraction worker while more pages are pending. */
+    suspend fun playlist(link: String, onFirstPage: ((YouTubePlaylistPreview) -> Unit)? = null): YouTubePlaylistPreview {
         val id = youtubePlaylistId(link)
         val url = youtubePlaylistUrl(id)
         return extract {
@@ -88,6 +89,9 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
             val tracks = mutableListOf<Track>()
             tracks += info.relatedItems.mapNotNull(::youtubeTrack)
             var page: Page? = info.nextPage
+            if (page != null && tracks.isNotEmpty()) {
+                onFirstPage?.invoke(YouTubePlaylistPreview(info.name, tracks.toList(), total, hasMore = true))
+            }
             var pages = 1
             val seenPages = mutableSetOf<PlaylistPageIdentity>()
             while (page != null && tracks.size < MAX_PLAYLIST_TRACKS && pages < MAX_PLAYLIST_PAGES) {

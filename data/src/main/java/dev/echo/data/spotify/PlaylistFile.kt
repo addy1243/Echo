@@ -4,8 +4,8 @@ import dev.echo.core.Track
 import org.json.JSONObject
 import java.util.UUID
 
-internal data class FilePlaylist(val name: String, val tracks: List<Track>)
-internal data class PlaylistFile(val playlists: List<FilePlaylist>, val skipped: Int)
+data class FilePlaylist(val name: String, val tracks: List<Track>)
+data class PlaylistFile(val playlists: List<FilePlaylist>, val skipped: Int)
 
 internal fun parsePlaylistFile(text: String, filename: String): PlaylistFile {
     require(text.length <= 10_000_000) { "Playlist file is larger than 10 MB" }

@@ -73,3 +73,7 @@ The 0.2.3 release passed actual three-native-player local and production accepta
 - Last three orchestrator sessions and executed evidence: [LOGS.md](LOGS.md).
 - Current published 0.2.4 artifact hashes and acceptance record: [releases/0.2.4.md](releases/0.2.4.md).
 - Release process and Windows acceptance: [the Echo shipping skill](../.agents/skills/echo-windows-shipping/SKILL.md).
+
+- Android and Windows open a selected playlist search result directly into a track preview. YouTube can show its first page while the remaining pages load. Spotify link and file previews automatically look for clear recordings when online, with bounded searches and an option to skip. Import still requires confirmation.
+
+- A provisioned Windows build enables basic Google sign-in on a fresh profile. The build accepts only the installed-app client value for a validated Desktop OAuth client in Echo's Firebase project. Keep the full JSON, confidential server credentials, and user tokens out of release assets. Existing DPAPI-protected configuration takes precedence.

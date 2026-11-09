@@ -250,8 +250,16 @@ class LibraryRepository internal constructor(private val context: Context, priva
 
     suspend fun clearLocalMatch(importedTrackId: String) = dao.clearLocalMatch(importedTrackId)
 
-    suspend fun importPlaylistFile(text: String, filename: String): String = withContext(Dispatchers.IO) {
-        val file = dev.echo.data.spotify.parsePlaylistFile(text, filename)
+    suspend fun previewPlaylistFile(text: String, filename: String): dev.echo.data.spotify.PlaylistFile = withContext(Dispatchers.IO) {
+        dev.echo.data.spotify.parsePlaylistFile(text, filename)
+    }
+
+    suspend fun importPlaylistFile(text: String, filename: String): String = importPlaylistFile(previewPlaylistFile(text, filename))
+
+    suspend fun importPlaylistFile(file: dev.echo.data.spotify.PlaylistFile): String = withContext(Dispatchers.IO) {
+        require(file.playlists.size in 1..1000 && file.playlists.sumOf { it.tracks.size.toLong() } <= 50_000L) {
+            "Import up to 1,000 playlists and 50,000 songs"
+        }
         database.withTransaction {
             // New IDs keep a repeated file import from overwriting an edited playlist.
             file.playlists.forEach { playlist -> importPlaylist(UUID.randomUUID().toString(), playlist.name, playlist.tracks) }

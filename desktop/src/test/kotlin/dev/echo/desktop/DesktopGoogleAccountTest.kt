@@ -140,7 +140,24 @@ class DesktopGoogleAccountTest {
         assertNull(DesktopGoogleAccount(path).state.value.email)
     }
 
+    @Test fun freshProfileUsesBundledConfigurationWithoutWritingCredentials() {
+        val path = temporary.root.toPath().resolve("fresh.dpapi")
+        val bundled = DesktopGoogleAccount::class.java.getResource("/echo-desktop-oauth-client") != null
+        val account = DesktopGoogleAccount(path)
+        assertEquals(bundled, account.state.value.clientConfigured)
+        assertEquals(if (bundled) null else DESKTOP_GOOGLE_SETUP_MESSAGE, account.state.value.message)
+        assertFalse(Files.exists(path))
+    }
+
+    @Test fun bundledClientKeepsValuePairedWithItsProjectClientId() {
+        val clientId = "886330954520-synthetic.apps.googleusercontent.com"
+        assertEquals(clientId, bundledDesktopGoogleClient("$clientId\nsynthetic-value")?.clientId)
+        assertEquals(ECHO_DESKTOP_GOOGLE_CLIENT_ID, bundledDesktopGoogleClient("\nsynthetic-value")?.clientId)
+        assertNull(bundledDesktopGoogleClient("123-synthetic.apps.googleusercontent.com\nsynthetic-value"))
+    }
+
     @Test fun missingDesktopConfigurationStopsBeforeOpeningBrowser() = runBlocking {
+        assumeTrue(DesktopGoogleAccount::class.java.getResource("/echo-desktop-oauth-client") == null)
         val path = temporary.root.toPath().resolve("unconfigured.dpapi")
         val account = DesktopGoogleAccount(path) { error("Browser must not open without client configuration") }
         account.signIn()
@@ -178,6 +195,7 @@ class DesktopGoogleAccountTest {
         Files.write(path, byteArrayOf(1, 2, 3))
         val failed = DesktopGoogleAccount(path)
         assertTrue(failed.state.value.message!!.contains("preserved"))
+        assertFalse(failed.state.value.clientConfigured)
         assertArrayEquals(byteArrayOf(1, 2, 3), Files.readAllBytes(path))
     }
 

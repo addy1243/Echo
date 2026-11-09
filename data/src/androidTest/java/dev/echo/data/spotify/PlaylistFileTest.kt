@@ -42,7 +42,10 @@ class PlaylistFileTest {
         val database = Room.inMemoryDatabaseBuilder(InstrumentationRegistry.getInstrumentation().targetContext, LibraryDatabase::class.java).build()
         try {
             val library = LibraryRepository(InstrumentationRegistry.getInstrumentation().targetContext, database)
-            library.importPlaylistFile(json, "Playlist1.json")
+            val draft = library.previewPlaylistFile(json, "Playlist1.json")
+            assertEquals(2, draft.playlists.single().tracks.size)
+            assertTrue(library.playlists.first().isEmpty())
+            library.importPlaylistFile(draft)
             val first = library.playlists.first().single()
             val imported = library.playlistTracks(first.id)
             library.renamePlaylist(first.id, "My edit")

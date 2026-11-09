@@ -1,5 +1,13 @@
 # Release history
 
+## 0.2.6 — 2026-11-09
+
+- Windows Now Playing expands from the mini-player into a rounded, bottom-aligned panel with a volume slider.
+- The Windows queue slides in from the right, shows artwork, and stays with the active player view.
+- Android and Windows open playlist previews directly from search results and show Spotify link and file drafts before confirmation. Echo can look for up to 25 recording matches automatically.
+- Provisioned Windows builds allow Google sign-in on a fresh profile without manual OAuth file import.
+
+
 ## 0.2.5 / Android code16 and Windows 0.2.5
 
 [Echo 0.2.5 release](https://github.com/addy1243/Echo/releases/tag/v0.2.5); see [the release record](docs/releases/0.2.5.md).

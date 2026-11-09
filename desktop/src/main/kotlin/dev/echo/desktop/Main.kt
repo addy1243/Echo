@@ -1,6 +1,18 @@
 package dev.echo.desktop
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.foundation.*
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,6 +36,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -33,18 +55,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.application
-import androidx.compose.ui.window.rememberDialogState
 import androidx.compose.ui.window.rememberWindowState
 import dev.echo.core.Track
 import dev.echo.core.connected.EngineCapture
@@ -155,6 +174,7 @@ internal fun launchDesktop(stagingMode: Boolean) = application {
 fun main() = launchDesktop(stagingMode = false)
 
 @Composable
+@OptIn(ExperimentalComposeUiApi::class)
 private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player: DesktopPlayback,
     offline: DesktopOfflineRepository, stagingMode: Boolean, accountFile: java.nio.file.Path) {
     val scope = rememberCoroutineScope()
@@ -236,6 +256,12 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     var showDevices by remember { mutableStateOf(false) }
     var showStageAdmin by remember { mutableStateOf(false) }
     var fullPlayerOpen by remember { mutableStateOf(false) }
+    var queueOpen by remember { mutableStateOf(false) }
+    val fullPlayerVisibility = remember { MutableTransitionState(false) }
+    val collapsedPlayerHeight = with(LocalDensity.current) { 90.dp.roundToPx() }
+    SideEffect { fullPlayerVisibility.targetState = fullPlayerOpen }
+    val fullPlayerOnScreen = fullPlayerOpen || fullPlayerVisibility.currentState ||
+        fullPlayerVisibility.targetState || !fullPlayerVisibility.isIdle
     var smartJob by remember { mutableStateOf<Job?>(null) }
     var smartBusy by remember { mutableStateOf(false) }
     var recommendedIds by remember { mutableStateOf(emptySet<String>()) }
@@ -606,8 +632,14 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             finally { smartBusy = false }
         }
     }
+    val dockQueueOpen = queueOpen && !fullPlayerOnScreen && !remoteFocused && focusedGroup == null && playback.current != null
     Surface(Modifier.fillMaxSize(), color = Canvas) {
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().onPreviewKeyEvent {
+            if (dockQueueOpen && it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
+                queueOpen = false
+                true
+            } else false
+        }.semantics { if (fullPlayerOnScreen) hideFromAccessibility() }) {
         Column {
             Row(Modifier.weight(1f)) {
                 Column(Modifier.width(220.dp).fillMaxHeight().background(Color(0xFF10151D)).verticalScroll(rememberScrollState()).padding(22.dp)) {
@@ -814,14 +846,36 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                     }
                     }
                 }
+                if (!fullPlayerOnScreen && !remoteFocused && focusedGroup == null && playback.current != null) AnimatedVisibility(
+                    visible = queueOpen,
+                    enter = slideInHorizontally(animationSpec = tween(200)) { it } +
+                        expandHorizontally(expandFrom = Alignment.End, animationSpec = tween(200)) + fadeIn(tween(200)),
+                    exit = slideOutHorizontally(animationSpec = tween(200)) { it } +
+                        shrinkHorizontally(shrinkTowards = Alignment.End, animationSpec = tween(200)) + fadeOut(tween(200)),
+                ) {
+                    LocalQueueSidebar(
+                        playback, upcomingIndexes, recommendedIds,
+                        onClose = { queueOpen = false },
+                        onClear = { selectedRemoteId = null; if (stageSimulator != null) stageSimulator.clearLocalUpcoming() else player.clearUpcoming() },
+                        onJump = { index, revision -> selectedRemoteId = null
+                            if (stageSimulator != null) stageSimulator.jumpLocal(index, revision) else scope.launch { player.jumpTo(index, revision) } },
+                        onMove = { from, to, occurrence, revision -> selectedRemoteId = null
+                            if (stageSimulator != null) stageSimulator.moveLocal(from, to, occurrence, revision)
+                            else scope.launch { player.moveUpcoming(from, to, occurrence, revision) } },
+                        onRemove = { index, occurrence, revision -> selectedRemoteId = null
+                            if (stageSimulator != null) stageSimulator.removeLocal(index, occurrence, revision)
+                            else scope.launch { player.removeUpcoming(index, occurrence, revision) } },
+                    )
+                }
             }
             if (selectedRemoteId == null && playback.error != null) Text(playback.error.orEmpty(), color = Color(0xFFFFB7AC), fontSize = 12.sp,
                 modifier = Modifier.fillMaxWidth().background(Color(0xFF38252A)).padding(12.dp))
-            DesktopPlayerBar(presentedTrack, presentedTitle, presentedArtist, presentedPlaying, presentedPosition, presentedDuration,
+            if (!fullPlayerOnScreen) DesktopPlayerBar(presentedTrack, presentedTitle, presentedArtist, presentedPlaying, presentedPosition, presentedDuration,
                 remoteMode = remoteFocused,
                 remoteDevice = remotePlayer.takeIf { remoteFocused },
                 focusedDeviceLabel = if (focusedGroup != null) "Play together" else remotePlayer?.label?.let(::playerDeviceName) ?: "This laptop",
                 onOpenFullPlayer = { fullPlayerOpen = true },
+                queueOpen = dockQueueOpen, onToggleQueue = { queueOpen = !queueOpen },
                 remoteEnabled = remoteLive,
                 groupFocused = focusedGroup != null,
                 localAvailable = playback.current != null, localLoading = playback.loading,
@@ -924,14 +978,30 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         },
         confirmButton = { TextButton(onClick = { showStageAdmin = false }) { Text("Done") } },
     )
-    if (fullPlayerOpen) DialogWindow(
-        onCloseRequest = { fullPlayerOpen = false },
-        title = "Echo Music Player",
-        state = rememberDialogState(size = DpSize(1040.dp, 680.dp)),
-        resizable = true,
-    ) {
-        DesktopFullPlayer(
+    if (fullPlayerOnScreen) {
+        Box(Modifier.fillMaxSize().onPreviewKeyEvent {
+            if (it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
+                if (queueOpen) queueOpen = false else fullPlayerOpen = false
+                true
+            } else false
+        }.focusProperties { onExit = { cancelFocusChange() } }.focusGroup()) {
+            Box(Modifier.fillMaxSize().semantics { hideFromAccessibility() }.pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) awaitPointerEvent().changes.forEach { it.consume() }
+                }
+            })
+            AnimatedVisibility(
+                visibleState = fullPlayerVisibility,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                enter = expandVertically(expandFrom = Alignment.Bottom, animationSpec = tween(200),
+                    initialHeight = { minOf(it, collapsedPlayerHeight) }) + fadeIn(tween(200), initialAlpha = .65f),
+                exit = shrinkVertically(shrinkTowards = Alignment.Bottom, animationSpec = tween(200),
+                    targetHeight = { minOf(it, collapsedPlayerHeight) }) + fadeOut(tween(200), targetAlpha = .65f),
+            ) {
+            DesktopFullPlayer(Modifier.fillMaxWidth(),
+            playerOpen = fullPlayerOpen,
             track = presentedTrack, title = presentedTitle, artist = presentedArtist,
+            tracksById = trackMap,
             playing = presentedPlaying, positionMs = presentedPosition, durationMs = presentedDuration,
             remoteMode = remoteFocused,
             remoteDevice = remotePlayer.takeIf { remoteFocused }, remoteEnabled = remoteLive,
@@ -959,6 +1029,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                     target.ref, target.timelineSequence, target.occurrenceId)
             }.onFailure { notice = it.message } } },
             onRemoteCommand = ::sendRemoteCommand,
+            queueOpen = queueOpen, onToggleQueue = { queueOpen = !queueOpen },
             localVolume = playback.volume, localRepeat = playback.repeatMode.name.lowercase(), localSleep = playback.sleepRemainingMs,
             onLocalVolume = { if (stageSimulator != null) stageSimulator.setLocalVolume(it) else player.setVolume(it) },
             onLocalRepeat = { if (focusedGroup == null) if (stageSimulator != null) stageSimulator.cycleLocalRepeat()
@@ -975,19 +1046,28 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             },
             queueControls = {
                 if (selectedRemoteId == null && focusedGroup == null && playback.current != null)
-                    QueuePicker(playback, upcomingIndexes, recommendedIds,
-                        { if (stageSimulator != null) stageSimulator.clearLocalUpcoming() else player.clearUpcoming() },
-                        { index, revision -> if (stageSimulator != null) stageSimulator.jumpLocal(index, revision)
-                            else scope.launch { player.jumpTo(index, revision) } },
-                        { from, to, occurrence, revision -> if (stageSimulator != null) stageSimulator.moveLocal(from, to, occurrence, revision)
-                            else scope.launch { player.moveUpcoming(from, to, occurrence, revision) } },
-                        { index, occurrence, revision -> if (stageSimulator != null) stageSimulator.removeLocal(index, occurrence, revision)
-                            else scope.launch { player.removeUpcoming(index, occurrence, revision) } })
+                    QueuePicker(queueOpen) { queueOpen = !queueOpen }
+            },
+            localQueuePane = {
+                LocalQueueSidebar(playback, upcomingIndexes, recommendedIds,
+                    onClose = { queueOpen = false },
+                    onClear = { selectedRemoteId = null; if (stageSimulator != null) stageSimulator.clearLocalUpcoming() else player.clearUpcoming() },
+                    onJump = { index, revision -> selectedRemoteId = null
+                        if (stageSimulator != null) stageSimulator.jumpLocal(index, revision) else scope.launch { player.jumpTo(index, revision) } },
+                    onMove = { from, to, occurrence, revision -> selectedRemoteId = null
+                        if (stageSimulator != null) stageSimulator.moveLocal(from, to, occurrence, revision)
+                        else scope.launch { player.moveUpcoming(from, to, occurrence, revision) } },
+                    onRemove = { index, occurrence, revision -> selectedRemoteId = null
+                        if (stageSimulator != null) stageSimulator.removeLocal(index, occurrence, revision)
+                        else scope.launch { player.removeUpcoming(index, occurrence, revision) } })
             },
         )
+        }
+        }
     }
     if (showImport) DesktopImportDialog(store, onChanged = { disk { } }, onError = { notice = it },
-        onDismiss = { showImport = false; importInitialLink = null }, initialLink = importInitialLink)
+        onDismiss = { showImport = false; importInitialLink = null }, initialLink = importInitialLink,
+        onlineAllowed = !downloads.offlineOnly)
     if (showUpdates && !stagingMode) DesktopUpdatesDialog(updater, scope, onDismiss = { showUpdates = false })
     notice?.let { message -> AlertDialog(onDismissRequest = { notice = null }, title = { Text("Echo") },
         text = { Text(message) }, confirmButton = { TextButton(onClick = { notice = null }) { Text("OK") } }) }
@@ -1048,9 +1128,11 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                         google.signOut()
                     } }) { Text("Sign out") }
                 }
-                TextButton(onClick = { accountAction {
-                    chooseFiles(true, "Choose Echo Desktop OAuth client JSON").firstOrNull()?.let { google.importClientJson(it) }
-                } }) { Text("Import Desktop OAuth configuration") }
+                if (!google.hasBundledClientConfiguration || !account.clientConfigured || account.message == DESKTOP_GOOGLE_SETUP_MESSAGE) {
+                    TextButton(onClick = { accountAction {
+                        chooseFiles(true, "Choose Echo Desktop OAuth client JSON").firstOrNull()?.let { google.importClientJson(it) }
+                    } }) { Text("Import Desktop OAuth configuration") }
+                }
                 if (!account.clientConfigured) Text("Import your downloaded Desktop OAuth JSON first. Echo encrypts it for this Windows user.",
                     color = Muted, fontSize = 12.sp)
             }
@@ -1088,7 +1170,10 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
 
 @Composable
 private fun DesktopFullPlayer(
+    modifier: Modifier,
+    playerOpen: Boolean,
     track: Track?, title: String?, artist: String?, playing: Boolean, positionMs: Long, durationMs: Long,
+    tracksById: Map<String, Track>,
     remoteMode: Boolean, remoteDevice: ConnectedDevice?, remoteEnabled: Boolean, commandPending: Boolean,
     localAvailable: Boolean, localLoading: Boolean, group: Boolean,
     groupQueueEntries: List<QueueOccurrence>, groupQueueCursor: Int,
@@ -1097,18 +1182,21 @@ private fun DesktopFullPlayer(
     onPrevious: () -> Unit, onToggle: () -> Unit, onNext: () -> Unit, onSeek: (Long) -> Unit,
     groupSeekTarget: DesktopGroupSeekTarget?, onGroupSeek: (DesktopGroupSeekTarget, Long) -> Unit,
     onRemoteCommand: (ConnectedDevice, ConnectedPlaybackAction, Long) -> Unit,
+    queueOpen: Boolean, onToggleQueue: () -> Unit,
     localVolume: Float, localRepeat: String, localSleep: Long?,
     onLocalVolume: (Float) -> Unit, onLocalRepeat: () -> Unit, onLocalShuffle: () -> Unit, onLocalSleep: (Int?) -> Unit,
     playerPicker: @Composable (Boolean) -> Unit,
     groupMembers: List<String>, queueControls: @Composable () -> Unit,
+    localQueuePane: @Composable () -> Unit,
 ) {
-    var queueOpen by remember { mutableStateOf(false) }
+    val closeFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { closeFocus.requestFocus() }
     var remoteQueue by remember(remoteDevice?.id, remoteDevice?.sessionId) { mutableStateOf<EngineCapture?>(null) }
     var remoteQueueLoading by remember(remoteDevice?.id, remoteDevice?.sessionId) { mutableStateOf(false) }
     var remoteQueueError by remember(remoteDevice?.id, remoteDevice?.sessionId) { mutableStateOf<String?>(null) }
     val focusAccent = if (group) GroupAccent else Accent
-    LaunchedEffect(queueOpen, remoteMode, remoteDevice?.id, remoteDevice?.sessionId) {
-        if (queueOpen && remoteMode && remoteDevice != null) {
+    LaunchedEffect(playerOpen, queueOpen, remoteMode, remoteDevice?.id, remoteDevice?.sessionId) {
+        if (playerOpen && queueOpen && remoteMode && remoteDevice != null) {
             remoteQueue = null
             remoteQueueError = null
             remoteQueueLoading = true
@@ -1118,13 +1206,17 @@ private fun DesktopFullPlayer(
             finally { remoteQueueLoading = false }
         }
     }
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+    val panelMaxHeight = (maxHeight * .94f).coerceAtLeast(400.dp)
+    val queueWidth = (maxWidth * .35f).coerceAtMost(310.dp)
+    Row(Modifier.fillMaxWidth().heightIn(max = panelMaxHeight), verticalAlignment = Alignment.Bottom) {
     Surface(
-        Modifier.width(1040.dp).height(680.dp),
+        Modifier.weight(1f).heightIn(max = panelMaxHeight).padding(8.dp),
         color = if (group) Color(0xFF201A2B) else Canvas,
         shape = RoundedCornerShape(28.dp),
         border = BorderStroke(1.dp, if (group) GroupAccent.copy(alpha = .6f) else Accent.copy(alpha = .25f)),
     ) {
-        Column(Modifier.fillMaxSize().padding(30.dp)) {
+        Column(Modifier.fillMaxWidth().heightIn(max = panelMaxHeight).verticalScroll(rememberScrollState()).padding(24.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(if (group) "PLAYING TOGETHER" else "NOW PLAYING", color = focusAccent,
@@ -1133,12 +1225,16 @@ private fun DesktopFullPlayer(
                         if (remoteMode) "Playing on ${remoteDevice?.label ?: "selected device"}" else "This laptop",
                         color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
                 }
-                IconButton(onClick = onClose) { Text("×", color = Muted, fontSize = 26.sp) }
+                IconButton(onClick = onClose, modifier = Modifier.focusRequester(closeFocus).semantics {
+                    contentDescription = "Close full player"
+                }) { Text("×", color = Muted, fontSize = 26.sp) }
             }
             Spacer(Modifier.height(24.dp))
-            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically,
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(38.dp)) {
-                Cover(track, Modifier.size(360.dp))
+                Box(Modifier.size(if (queueOpen) 220.dp else 320.dp)) {
+                    Cover(track, Modifier.fillMaxSize())
+                }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (playing) Text("▮▮▮", color = focusAccent, fontSize = 13.sp)
@@ -1158,23 +1254,34 @@ private fun DesktopFullPlayer(
                         positionMs, durationMs, localAvailable, localLoading,
                         onPrevious, onToggle, onNext, onSeek, groupSeekTarget, onGroupSeek, onRemoteCommand,
                     )
-                    Row(Modifier.fillMaxWidth().padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween) {
-                        if (!remoteMode && !group) DesktopLocalPlayerActions(
-                            localAvailable, localVolume, localRepeat, localSleep,
-                            onLocalVolume, onLocalRepeat, onLocalShuffle, onLocalSleep,
-                        )
-                        playerPicker(true)
-                        when {
-                            remoteMode -> IconButton(enabled = remoteDevice != null && remoteEnabled && !commandPending,
-                                onClick = { queueOpen = true }, modifier = Modifier.semantics {
-                                    contentDescription = "Open queue on ${remoteDevice?.label ?: "selected device"}"
-                                }) { Icon(Icons.Default.QueueMusic, null) }
-                            group -> IconButton(enabled = groupQueueEntries.isNotEmpty(),
-                                onClick = { queueOpen = true }, modifier = Modifier.semantics {
-                                    contentDescription = "Open shared queue · ${groupQueueEntries.size} songs"
-                                }) { Icon(Icons.Default.QueueMusic, null) }
-                            else -> queueControls()
+                    if (!remoteMode && !group) Row(Modifier.fillMaxWidth().padding(top = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.VolumeUp, "Volume", tint = Accent)
+                        Text("Volume", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
+                        Slider(localVolume, onLocalVolume, modifier = Modifier.weight(1f).padding(start = 12.dp)
+                            .semantics { contentDescription = "Local volume" })
+                    }
+                    Column(Modifier.fillMaxWidth().padding(top = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (!remoteMode && !group) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically) {
+                            DesktopLocalPlayerActions(localAvailable, localVolume, localRepeat, localSleep,
+                                onLocalVolume, onLocalRepeat, onLocalShuffle, onLocalSleep, showVolume = false)
+                            Row(verticalAlignment = Alignment.CenterVertically) { playerPicker(true); queueControls() }
+                        } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically) {
+                            playerPicker(true)
+                            when {
+                                remoteMode -> IconButton(enabled = remoteDevice != null && remoteEnabled && !commandPending,
+                                    onClick = onToggleQueue, modifier = Modifier.semantics {
+                                        contentDescription = if (queueOpen) "Close queue on ${remoteDevice?.label ?: "selected device"}"
+                                            else "Open queue on ${remoteDevice?.label ?: "selected device"}"
+                                    }) { Icon(Icons.Default.QueueMusic, null) }
+                                group -> IconButton(enabled = groupQueueEntries.isNotEmpty(),
+                                    onClick = onToggleQueue, modifier = Modifier.semantics {
+                                        contentDescription = if (queueOpen) "Close shared queue · ${groupQueueEntries.size} songs"
+                                            else "Open shared queue · ${groupQueueEntries.size} songs"
+                                    }) { Icon(Icons.Default.QueueMusic, null) }
+                            }
                         }
                     }
                     if (commandPending) Text("Remote command pending confirmation…", color = Muted,
@@ -1183,9 +1290,16 @@ private fun DesktopFullPlayer(
             }
         }
     }
-    if (queueOpen) Dialog(onCloseRequest = { queueOpen = false }) {
-        Surface(Modifier.width(460.dp).heightIn(min = 240.dp, max = 560.dp),
-            color = Panel, shape = RoundedCornerShape(20.dp),
+    AnimatedVisibility(
+        visible = playerOpen && queueOpen && (remoteMode || group || localAvailable),
+        enter = slideInHorizontally(animationSpec = tween(200)) { it / 3 } +
+            expandHorizontally(expandFrom = Alignment.End, animationSpec = tween(200)) + fadeIn(tween(200)),
+        exit = slideOutHorizontally(animationSpec = tween(200)) { it / 3 } +
+            shrinkHorizontally(shrinkTowards = Alignment.End, animationSpec = tween(200)) + fadeOut(tween(200)),
+    ) {
+    if (remoteMode || group) {
+        Surface(Modifier.width(queueWidth).heightIn(max = panelMaxHeight).padding(start = 10.dp),
+            color = Panel, shape = RoundedCornerShape(0.dp),
             border = BorderStroke(1.dp, focusAccent.copy(alpha = .5f))) {
             Column(Modifier.fillMaxSize().padding(22.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1196,7 +1310,7 @@ private fun DesktopFullPlayer(
                             else if (remoteQueueLoading) "Loading device snapshot…"
                             else "Read-only device snapshot", color = focusAccent, fontSize = 12.sp)
                     }
-                    IconButton(onClick = { queueOpen = false }) { Text("×", color = Muted, fontSize = 22.sp) }
+                    IconButton(onClick = onToggleQueue) { Text("×", color = Muted, fontSize = 22.sp) }
                 }
                 Spacer(Modifier.height(12.dp))
                 when {
@@ -1216,7 +1330,8 @@ private fun DesktopFullPlayer(
                                     verticalAlignment = Alignment.CenterVertically) {
                                     Text(if (current) "▶" else "${index + 1}", color = focusAccent,
                                         modifier = Modifier.width(36.dp))
-                                    Column(Modifier.weight(1f)) {
+                                    QueueArtwork(tracksById[entry.recording.id], entry.recording.title, Modifier.size(42.dp))
+                                    Column(Modifier.weight(1f).padding(start = 10.dp)) {
                                         Text(entry.recording.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Text(entry.recording.artist, color = Muted, fontSize = 12.sp,
                                             maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1228,6 +1343,9 @@ private fun DesktopFullPlayer(
                 }
             }
         }
+    } else if (localAvailable) localQueuePane()
+    }
+    }
     }
 }
 
@@ -1235,6 +1353,7 @@ private fun DesktopFullPlayer(
 private fun DesktopPlayerBar(
     track: Track?, title: String?, artist: String?, playing: Boolean, positionMs: Long, durationMs: Long,
     remoteMode: Boolean, remoteDevice: ConnectedDevice?, focusedDeviceLabel: String, onOpenFullPlayer: () -> Unit,
+    queueOpen: Boolean, onToggleQueue: () -> Unit,
     remoteEnabled: Boolean, groupFocused: Boolean,
     localAvailable: Boolean, localLoading: Boolean, localVolume: Float, localRepeat: String, localSleep: Long?,
     onLocalPrevious: () -> Unit, onLocalToggle: () -> Unit, onLocalNext: () -> Unit, onLocalSeek: (Long) -> Unit,
@@ -1248,7 +1367,8 @@ private fun DesktopPlayerBar(
     onClearQueue: () -> Unit, onJump: (Int, Long) -> Unit,
     onMove: (Int, Int, Long, Long) -> Unit, onRemove: (Int, Long, Long) -> Unit,
 ) {
-    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp),
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp,
+        top = if (queueOpen) 0.dp else 10.dp, bottom = 10.dp),
         contentAlignment = Alignment.Center) {
         val narrow = maxWidth < 1180.dp
         val dockShape = RoundedCornerShape(28.dp)
@@ -1292,8 +1412,7 @@ private fun DesktopPlayerBar(
                         transport(Modifier.weight(1f))
                         if (!remoteMode && !groupFocused) DesktopLocalPlayerActions(localAvailable, localVolume, localRepeat, localSleep,
                             onLocalVolume, onLocalRepeat, onLocalShuffle, onLocalSleep)
-                        if (!remoteMode && !groupFocused && playback.current != null) QueuePicker(playback, upcomingIndexes, recommendedIds,
-                            onClearQueue, onJump, onMove, onRemove)
+                        if (!remoteMode && !groupFocused && playback.current != null) QueuePicker(queueOpen, onToggleQueue)
                     }
                 } else Row(Modifier.fillMaxWidth().height(104.dp).padding(horizontal = 22.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1312,8 +1431,7 @@ private fun DesktopPlayerBar(
                     transport(Modifier.weight(1f))
                     if (!remoteMode && !groupFocused) DesktopLocalPlayerActions(localAvailable, localVolume, localRepeat, localSleep,
                         onLocalVolume, onLocalRepeat, onLocalShuffle, onLocalSleep)
-                    if (!remoteMode && !groupFocused && playback.current != null) QueuePicker(playback, upcomingIndexes, recommendedIds,
-                        onClearQueue, onJump, onMove, onRemove)
+                    if (!remoteMode && !groupFocused && playback.current != null) QueuePicker(queueOpen, onToggleQueue)
                 }
             }
             if (sidecarPlayers.size > 1 || (groupFocused && sidecarPlayers.isNotEmpty()) ||
@@ -1398,6 +1516,7 @@ private fun DesktopSidecarPlayerCard(
 private fun DesktopLocalPlayerActions(
     localAvailable: Boolean, volume: Float, repeat: String, sleep: Long?,
     onVolume: (Float) -> Unit, onRepeat: () -> Unit, onShuffle: () -> Unit, onSleep: (Int?) -> Unit,
+    showVolume: Boolean = true,
 ) {
     var volumeOpen by remember { mutableStateOf(false) }
     var sleepOpen by remember { mutableStateOf(false) }
@@ -1411,7 +1530,7 @@ private fun DesktopLocalPlayerActions(
             Icon(if (repeat == "one") Icons.Default.RepeatOne else Icons.Default.Repeat, null,
                 tint = if (repeat == "off" || !localAvailable) Muted else Accent)
         }
-        Box {
+        if (showVolume) Box {
             IconButton(onClick = { volumeOpen = true },
                 modifier = Modifier.semantics { contentDescription = "Volume" }) {
                 Icon(Icons.Default.VolumeUp, null, tint = Accent)
@@ -1802,40 +1921,73 @@ private fun DevicePickerRow(device: ConnectedDevice, selected: Boolean, enabled:
 
 @Composable
 private fun QueuePicker(
-    playback: DesktopPlaybackState, upcoming: List<Int>, recommended: Set<String>, onClear: () -> Unit,
-    onJump: (Int, Long) -> Unit, onMove: (Int, Int, Long, Long) -> Unit, onRemove: (Int, Long, Long) -> Unit,
+    expanded: Boolean, onToggle: () -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { expanded = true }, modifier = Modifier.semantics { contentDescription = "Open queue" }) {
-            Icon(Icons.Default.QueueMusic, null)
-        }
-        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
-            Column(Modifier.width(340.dp).heightIn(max = 400.dp)) {
-                Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Up next", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { onClear(); expanded = false }) { Text("Clear") }
+    IconButton(onClick = onToggle, modifier = Modifier.semantics {
+        contentDescription = if (expanded) "Close queue" else "Open queue"
+    }) {
+        Icon(Icons.Default.QueueMusic, null, tint = if (expanded) Accent else LocalContentColor.current)
+    }
+}
+
+@Composable
+private fun QueueArtwork(track: Track?, title: String, modifier: Modifier) {
+    if (track != null) Cover(track, modifier)
+    else Box(modifier.background(Brush.linearGradient(listOf(Color(0xFF25594F), Color(0xFF283B5E))),
+        RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+        Text(title.firstOrNull(Char::isLetterOrDigit)?.uppercaseChar()?.toString() ?: "♪",
+            color = Color(0xFFEAF0F7), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+    }
+}
+
+@Composable
+private fun LocalQueueSidebar(
+    playback: DesktopPlaybackState,
+    upcoming: List<Int>,
+    recommended: Set<String>,
+    onClose: () -> Unit,
+    onClear: () -> Unit,
+    onJump: (Int, Long) -> Unit,
+    onMove: (Int, Int, Long, Long) -> Unit,
+    onRemove: (Int, Long, Long) -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxHeight()) {
+        val paneWidth = (maxWidth * .35f).coerceAtMost(310.dp)
+        Surface(Modifier.width(paneWidth).fillMaxHeight().padding(start = 10.dp), color = Panel,
+            shape = RoundedCornerShape(0.dp), border = BorderStroke(1.dp, Color(0xFF28303C))) {
+        Column(Modifier.fillMaxSize().padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Queue", fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.weight(1f))
+                TextButton(onClick = onClear, enabled = upcoming.isNotEmpty()) { Text("Clear") }
+                IconButton(onClick = onClose, modifier = Modifier.semantics { contentDescription = "Close queue" }) {
+                    Text("×", color = Muted, fontSize = 22.sp)
                 }
-                Column(Modifier.heightIn(max = 350.dp).verticalScroll(rememberScrollState())) {
-                    upcoming.forEachIndexed { index, absolute ->
-                        val track = playback.queue[absolute]
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f).clickable { onJump(absolute, playback.queueRevision); expanded = false }.padding(vertical = 7.dp)) {
-                                Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
-                                Text(if (track.id in recommended) "Smart pick · ${track.artist}" else track.artist,
-                                    color = if (track.id in recommended) Accent else Muted, maxLines = 1, fontSize = 11.sp)
-                            }
-                            Column {
-                                TextButton(onClick = { onMove(absolute, upcoming[index - 1], playback.occurrence, playback.queueRevision) },
-                                    enabled = index > 0, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(28.dp)) { Text("↑") }
-                                TextButton(onClick = { onRemove(absolute, playback.occurrence, playback.queueRevision) },
-                                    contentPadding = PaddingValues(0.dp), modifier = Modifier.size(28.dp)) { Text("×") }
-                            }
+            }
+            Text("Up next · ${upcoming.size} songs", color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(10.dp))
+            if (upcoming.isEmpty()) Text("Nothing is queued next.", color = Muted)
+            else LazyColumn(Modifier.weight(1f)) {
+                itemsIndexed(upcoming, key = { _, absolute -> "${playback.queueRevision}:$absolute" }) { index, absolute ->
+                    val track = playback.queue.getOrNull(absolute) ?: return@itemsIndexed
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        QueueArtwork(track, track.title, Modifier.size(42.dp))
+                        Column(Modifier.weight(1f).padding(start = 10.dp).clickable { onJump(absolute, playback.queueRevision) }.padding(vertical = 7.dp)) {
+                            Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+                            Text(if (track.id in recommended) "Smart pick · ${track.artist}" else track.artist,
+                                color = if (track.id in recommended) Accent else Muted, maxLines = 1, fontSize = 11.sp)
+                        }
+                        Column {
+                            TextButton(onClick = { onMove(absolute, upcoming[index - 1], playback.occurrence, playback.queueRevision) },
+                                enabled = index > 0, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(28.dp)) { Text("↑") }
+                            TextButton(onClick = { onRemove(absolute, playback.occurrence, playback.queueRevision) },
+                                contentPadding = PaddingValues(0.dp), modifier = Modifier.size(28.dp)) { Text("×") }
                         }
                     }
                 }
             }
         }
+    }
     }
 }
 
