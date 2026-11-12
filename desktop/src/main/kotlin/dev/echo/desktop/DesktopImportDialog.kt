@@ -18,7 +18,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 
 @Composable
-fun DesktopImportDialog(store: DesktopLibrary, onChanged: () -> Unit, onError: (String) -> Unit, onDismiss: () -> Unit, initialLink: String? = null, onlineAllowed: Boolean = true) {
+fun DesktopImportDialog(store: DesktopLibrary, spotifyArchiveDirectory: java.nio.file.Path, onChanged: () -> Unit, onError: (String) -> Unit, onDismiss: () -> Unit, initialLink: String? = null, initialFilePicker: Boolean = false, onlineAllowed: Boolean = true) {
     val scope = rememberCoroutineScope()
     val links = remember { SpotifyPlaylistLinks() }
     val youtube = remember { YouTubeProvider() }
@@ -28,19 +28,21 @@ fun DesktopImportDialog(store: DesktopLibrary, onChanged: () -> Unit, onError: (
     var error by remember { mutableStateOf<String?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var autoUpdate by remember { mutableStateOf(false) }
+    var eligibleLink by remember { mutableStateOf<String?>(null) }
     var matching by remember { mutableStateOf(false) }
     var matchProgress by remember { mutableStateOf("") }
     val partialFlow = remember { MutableStateFlow<DesktopPlaylistImport?>(null) }
     val partialPreview by partialFlow.collectAsState()
     fun cancel() { job?.cancel(); onDismiss() }
     fun preview(action: suspend () -> Pair<DesktopPlaylistImport, String>) {
-        pending = null; partialFlow.value = null; description = ""; error = null; busy = true
+        pending = null; partialFlow.value = null; description = ""; error = null; busy = true; eligibleLink = null; autoUpdate = false
         job = scope.launch {
             try {
                 val result = action(); pending = result.first; description = result.second
                 val originals = result.first.playlists.flatMap { it.tracks }
                 val unmatched = originals.filter { it.provider == "spotify" && it.sourceUri == null }.distinctBy { it.id }
-                if (onlineAllowed && unmatched.isNotEmpty()) {
+                if (result.first.archive == null && onlineAllowed && unmatched.isNotEmpty()) {
                     matching = true
                     val limit = unmatched.take(25)
                     matchProgress = "Matching imported songs…"
@@ -78,6 +80,7 @@ fun DesktopImportDialog(store: DesktopLibrary, onChanged: () -> Unit, onError: (
             val exposed = youtube.playlist(requested, onFirstPage = { first ->
                 partialFlow.value = desktopYouTubeImport(first, requested)
             })
+            if (exposed.complete && !dev.echo.data.provider.youtubePlaylistId(requested).startsWith("RD")) eligibleLink = requested.trim()
             val count = when {
                 exposed.hasMore -> "At least ${exposed.tracks.size} songs found; more entries remain. Only these will be imported."
                 exposed.total == null -> "${exposed.tracks.size} songs; total unknown. This may be partial."
@@ -87,24 +90,26 @@ fun DesktopImportDialog(store: DesktopLibrary, onChanged: () -> Unit, onError: (
             desktopYouTubeImport(exposed, requested) to "${exposed.name}\n$count"
         }
     }
-    LaunchedEffect(initialLink) {
+    fun loadFile() = preview {
+        val file = chooseSpotifyFile() ?: return@preview DesktopPlaylistImport(emptyList()) to "No file selected"
+        val parsed = readDesktopPlaylistImport(file)
+        parsed to "${parsed.playlists.size} playlists, ${parsed.playlists.sumOf { it.tracks.size }} songs" +
+            if (parsed.archive != null) " · ${parsed.historyCount} history events · ${parsed.savedArtistCount} saved artists · ${parsed.savedAlbumCount} saved albums" else "" +
+            if (parsed.skipped > 0) "; ${parsed.skipped} podcast/local entries skipped" else ""
+    }
+    LaunchedEffect(initialLink, initialFilePicker) {
         if (!initialLink.isNullOrBlank()) {
             if (onlineAllowed) loadLink(initialLink) else error = "Turn off Offline mode to load this playlist."
-        }
+        } else if (initialFilePicker) loadFile()
     }
     AlertDialog(onDismissRequest = ::cancel, title = { Text("Import public playlist") }, text = {
         Column(Modifier.width(540.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Import a public YouTube or Spotify playlist link, Exportify CSV or Spotify account-data playlist JSON.")
-            OutlinedTextField(link, onValueChange = { link = it; pending = null; error = null },
+            Text("Import a public YouTube or Spotify playlist link, Exportify CSV, Spotify playlist JSON, or Spotify account-data ZIP.")
+            OutlinedTextField(link, onValueChange = { link = it; pending = null; error = null; eligibleLink = null; autoUpdate = false },
                 label = { Text("YouTube or Spotify playlist link") }, singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(enabled = !busy && onlineAllowed && link.isNotBlank(), onClick = { loadLink(link) }) { Text("Preview link") }
-                OutlinedButton(enabled = !busy, onClick = { preview {
-                    val file = chooseSpotifyFile() ?: return@preview DesktopPlaylistImport(emptyList()) to "No file selected"
-                    val parsed = readDesktopPlaylistImport(file)
-                    parsed to "${parsed.playlists.size} playlists, ${parsed.playlists.sumOf { it.tracks.size }} songs" +
-                        if (parsed.skipped > 0) "; ${parsed.skipped} podcast/local entries skipped" else ""
-                } }) { Text("Choose playlist file") }
+                OutlinedButton(enabled = !busy, onClick = ::loadFile) { Text("Choose playlist file") }
             }
             if (busy) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text(if (matching) matchProgress else "Reading playlist…") }
             val shown = pending ?: partialPreview
@@ -118,22 +123,34 @@ fun DesktopImportDialog(store: DesktopLibrary, onChanged: () -> Unit, onError: (
                     }
                 }
             }
+            if (pending != null && eligibleLink != null) Row {
+                Checkbox(checked = autoUpdate, onCheckedChange = { autoUpdate = it }, enabled = !busy)
+                Text("Automatically update this playlist while Echo is running")
+            }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text("Imports create new playlists and preserve song order and duplicates. Spotify imports are metadata snapshots with no audio or automatic sync.")
         }
     }, confirmButton = {
-        Button(enabled = !busy && pending?.playlists?.isNotEmpty() == true, onClick = {
+        Button(enabled = !busy && (pending?.playlists?.isNotEmpty() == true || pending?.archive != null), onClick = {
             val captured = pending ?: return@Button
+            val capturedAutoUpdate = autoUpdate && eligibleLink != null
+            val capturedEligibleLink = eligibleLink
             busy = true
             job = scope.launch {
                 try {
-                    withContext(Dispatchers.IO) { store.importParsedPlaylists(captured) }
+                    withContext(Dispatchers.IO) {
+                        captured.archive?.let { saveDesktopSpotifyArchive(it, spotifyArchiveDirectory) }
+                        if (capturedAutoUpdate && capturedEligibleLink != null) {
+                            val playlist = captured.playlists.single()
+                            store.importLinkedYouTubePlaylist(capturedEligibleLink, playlist.name, playlist.tracks)
+                        } else if (captured.playlists.isNotEmpty()) store.importParsedPlaylists(captured)
+                    }
                     onChanged(); onDismiss()
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (failure: Exception) { val message = failure.message ?: "Import failed; your library was kept."; error = message; onError(message) }
+                catch (failure: Exception) { val message = failure.message ?: "Import failed; your library was kept."; error = if (captured.archive != null) "ZIP saved locally, but playlist import failed: $message" else message; onError(error!!) }
                 finally { busy = false }
             }
-        }) { Text("Import playlist${if ((pending?.playlists?.size ?: 0) == 1) "" else "s"}") }
+        }) { Text(if (pending?.archive != null) "Save ZIP and import" else "Import playlist${if ((pending?.playlists?.size ?: 0) == 1) "" else "s"}") }
     }, dismissButton = {
         Row {
             if (matching) TextButton(onClick = { job?.cancel() }) { Text("Skip matching") }
@@ -146,7 +163,7 @@ private suspend fun chooseSpotifyFile(): File? = suspendCancellableCoroutine { c
     SwingUtilities.invokeLater {
         val picker = JFileChooser().apply {
             dialogTitle = "Import Spotify playlist file"
-            fileFilter = FileNameExtensionFilter("Exportify CSV or Spotify playlist JSON", "csv", "json")
+            fileFilter = FileNameExtensionFilter("Exportify CSV, Spotify playlist JSON or account ZIP", "csv", "json", "zip")
         }
         val file = if (picker.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) picker.selectedFile else null
         if (continuation.isActive) continuation.resume(file)

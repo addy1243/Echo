@@ -1,5 +1,11 @@
 # Release history
 
+## 0.2.7 / Android code18 — 2026-11-12
+
+- Add first-run guidance, appearance and background settings, single-instance Windows startup, playback shortcuts, and player icons.
+- Import Spotify account-data ZIPs into encrypted local archives and browse supported history, saved artists, and albums.
+- Search single YouTube video links, preview bounded Mixes, and optionally refresh complete linked YouTube playlists.
+
 ## 0.2.6 — 2026-11-09
 
 - Windows Now Playing expands from the mini-player into a rounded, bottom-aligned panel with a volume slider.

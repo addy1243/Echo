@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
@@ -37,19 +39,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -87,11 +95,19 @@ import javax.swing.JFileChooser
 import javax.swing.SwingUtilities
 import kotlin.coroutines.resume
 
-private val Canvas = Color(0xFF0C1016)
-private val Panel = Color(0xFF141B24)
-private val Muted = Color(0xFF98A6B8)
-private val Accent = Color(0xFF83E5CB)
+private val DarkCanvas = Color(0xFF0C1016)
+private val DarkPanel = Color(0xFF141B24)
+private val DefaultAccent = Color(0xFF83E5CB)
 private val GroupAccent = Color(0xFFC7A6FF)
+
+private val Canvas: Color
+    @Composable get() = MaterialTheme.colorScheme.background
+private val Panel: Color
+    @Composable get() = MaterialTheme.colorScheme.surface
+private val Muted: Color
+    @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
+private val Accent: Color
+    @Composable get() = MaterialTheme.colorScheme.primary
 
 private data class DesktopGroupSeekTarget(
     val ref: dev.echo.core.connected.GroupRef,
@@ -129,6 +145,21 @@ internal fun launchDesktop(stagingMode: Boolean) = application {
             ?: dataDirectory.resolve("library.json")
         else dataDirectory.resolve("library.json")
     }
+    var windowVisible by remember { mutableStateOf(true) }
+    val windowState = rememberWindowState(placement = WindowPlacement.Maximized, width = 1280.dp, height = 760.dp)
+    val showWindow = { windowState.isMinimized = false; windowVisible = true }
+    var activation by remember { mutableIntStateOf(0) }
+    val singleInstance = remember(libraryFile, dataDirectory, stagingMode) {
+        DesktopSingleInstance.acquire(libraryFile, dataDirectory.resolve("instances"),
+            if (stagingMode) "stage" else "production") { showWindow(); activation++ }
+    }
+    DisposableEffect(singleInstance) { onDispose { singleInstance?.close() } }
+    if (singleInstance == null) {
+        LaunchedEffect(Unit) { exitApplication() }
+        return@application
+    }
+    val preferences = remember(dataDirectory) { DesktopPreferences(dataDirectory.resolve("appearance.json"), dataDirectory.resolve("preferences.json")) }
+    var artworkUri by remember { mutableStateOf<String?>(null) }
     val startup = remember(libraryFile) { runCatching {
         DesktopLibrary(libraryFile)
     } }
@@ -140,23 +171,34 @@ internal fun launchDesktop(stagingMode: Boolean) = application {
         findLocalTrack = { key -> it.snapshot().tracks.firstOrNull { track -> safeEngineRecordingId(track) == key } }) { track, event, listened ->
         it.recordHistory(track, event, listened, track.durationMs)
     } } }
-    var windowVisible by remember { mutableStateOf(true) }
-    val windowState = rememberWindowState(placement = WindowPlacement.Maximized, width = 1280.dp, height = 760.dp)
-    val showWindow = { windowState.isMinimized = false; windowVisible = true }
     val quit = { player?.close(); offline.close(); exitApplication() }
     Tray(icon = painterResource("echo-icon.png"), tooltip = "Echo Music", onAction = showWindow) {
         Item("Open Echo Music", onClick = showWindow)
         Separator()
         Item("Quit Echo Music", onClick = quit)
     }
-    Window(visible = windowVisible, onCloseRequest = { windowVisible = false },
+    Window(visible = windowVisible, onCloseRequest = { if (preferences.closeToTray) windowVisible = false else quit() },
         title = if (stagingMode) "Echo Music · Staging" else "Echo Music", icon = painterResource("echo-icon.png"),
         state = windowState) {
-        LaunchedEffect(Unit) { window.minimumSize = Dimension(1060, 650) }
-        MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Canvas,
-            surface = Panel, onSurface = Color(0xFFEAF0F7))) {
-            if (store != null && player != null) DesktopApp(store, provider, player, offline, stagingMode,
-                dataDirectory.resolve("google-account.dpapi"))
+        LaunchedEffect(activation) {
+            window.minimumSize = Dimension(1060, 650)
+            if (activation > 0) { window.toFront(); window.requestFocus() }
+        }
+        val artworkAccent by produceState<Color?>(null, artworkUri) { value = desktopArtworkAccent(artworkUri) }
+        val accent = preferences.customAccent.toDesktopColor() ?: artworkAccent ?: DefaultAccent
+        val light = preferences.themeMode == DesktopThemeMode.LIGHT
+        var readableAccent = accent
+        repeat(12) {
+            if (light && readableAccent.luminance() > .18f) readableAccent = androidx.compose.ui.graphics.lerp(readableAccent, Color.Black, .12f)
+            if (!light && readableAccent.luminance() < .36f) readableAccent = androidx.compose.ui.graphics.lerp(readableAccent, Color.White, .12f)
+        }
+        val colors = if (light) lightColorScheme(primary = readableAccent, onPrimary = Color.White,
+            background = androidx.compose.ui.graphics.lerp(Color.White, accent, .04f), surface = androidx.compose.ui.graphics.lerp(Color.White, accent, .07f))
+            else darkColorScheme(primary = readableAccent, onPrimary = Color.Black,
+                background = androidx.compose.ui.graphics.lerp(DarkCanvas, accent, .04f), surface = androidx.compose.ui.graphics.lerp(DarkPanel, accent, .06f), onSurface = Color(0xFFEAF0F7))
+        MaterialTheme(colorScheme = colors) {
+            if (store != null && player != null) DesktopApp(store, provider, player, offline, stagingMode, preferences,
+                desktopSpotifyArchiveDirectory(dataDirectory), dataDirectory.resolve("google-account.dpapi"), { artworkUri = it })
             else Surface(Modifier.fillMaxSize(), color = Canvas) {
                 Column(Modifier.padding(60.dp), verticalArrangement = Arrangement.Center) {
                     Text("Your library needs attention", fontSize = 28.sp, fontWeight = FontWeight.Bold)
@@ -176,7 +218,8 @@ fun main() = launchDesktop(stagingMode = false)
 @Composable
 @OptIn(ExperimentalComposeUiApi::class)
 private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player: DesktopPlayback,
-    offline: DesktopOfflineRepository, stagingMode: Boolean, accountFile: java.nio.file.Path) {
+    offline: DesktopOfflineRepository, stagingMode: Boolean, preferences: DesktopPreferences,
+    spotifyArchiveDirectory: java.nio.file.Path, accountFile: java.nio.file.Path, onArtwork: (String?) -> Unit) {
     val scope = rememberCoroutineScope()
     val updater = remember { DesktopUpdater() }
     val update by updater.state.collectAsState()
@@ -240,6 +283,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     val playback by playbackFlow.collectAsState()
     val downloads by offline.state.collectAsState()
     var library by remember { mutableStateOf(store.snapshot()) }
+    var showTutorial by remember { mutableStateOf(!preferences.tutorialCompleted) }
     var page by remember { mutableStateOf("Home") }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf(emptyList<Track>()) }
@@ -250,6 +294,29 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     var searchJob by remember { mutableStateOf<Job?>(null) }
     var searchGeneration by remember { mutableStateOf(0) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var linkedErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val linkedMutex = remember { kotlinx.coroutines.sync.Mutex() }
+    suspend fun refreshLinked(id: String) {
+        linkedMutex.lock()
+        try {
+            check(!downloads.offlineOnly) { "Turn off Offline mode to refresh this playlist" }
+            refreshDesktopLinkedPlaylist(store, provider, id)
+            library = withContext(Dispatchers.IO) { store.snapshot() }
+            linkedErrors = linkedErrors - id
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { linkedErrors = linkedErrors + (id to (failure.message ?: "Refresh failed; the saved copy was kept")) }
+        finally { linkedMutex.unlock() }
+    }
+    LaunchedEffect(store, stagingMode, downloads.offlineOnly) {
+        if (!stagingMode) while (true) {
+            if (!downloads.offlineOnly) {
+                val snapshot = withContext(Dispatchers.IO) { store.snapshot() }
+                snapshot.linkedPlaylists.filter { (id, source) -> snapshot.playlists.any { it.id == id } &&
+                    System.currentTimeMillis() - source.updatedAt >= 6 * 60 * 60 * 1000L }.keys.forEach { refreshLinked(it) }
+            }
+            delay(30 * 60 * 1000L)
+        }
+    }
     var newPlaylist by remember { mutableStateOf(false) }
     var playlistName by remember { mutableStateOf("") }
     var addTrack by remember { mutableStateOf<Track?>(null) }
@@ -269,6 +336,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     var deletePlaylist by remember { mutableStateOf<DesktopPlaylist?>(null) }
     var clearHistory by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
+    var importInitialFilePicker by remember { mutableStateOf(false) }
     var matchingJob by remember { mutableStateOf<Job?>(null) }
     var matchingProgress by remember { mutableStateOf<String?>(null) }
     var recordingTarget by remember { mutableStateOf<Triple<String, Int, List<String>>?>(null) }
@@ -352,6 +420,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     val remoteLive = remoteFocused && selectedRemote != null && !selectedRemote.reconnecting && remotePlayer?.controlEnabled == true &&
         (stagingMode || account.email != null) && !connectedState.pending
     val presentation = desktopPlayerPresentation(playback, selectedRemote.takeIf { remoteFocused }, focusedGroup, trackMap, ownDeviceId)
+    LaunchedEffect(presentation.track?.artworkUri) { onArtwork(presentation.track?.artworkUri) }
     val presentedTrack = presentation.track
     val presentedTitle = presentation.title
     val presentedArtist = presentation.artist
@@ -477,24 +546,52 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             catch (_: Exception) { notice = "The remote command could not be sent. Check the device and account connection." }
         }
     }
+    fun focusedPlaybackRoute() = desktopFocusedPlaybackRoute(
+        remoteFocused = remoteFocused, remoteAvailable = remoteLive,
+        groupFocused = focusedGroup != null, stagingMode = stagingMode,
+    )
     fun previousFocusedPlayback() {
-        if (focusedGroup != null) scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.PREVIOUS) } }
-        else if (stageSimulator != null) stageSimulator.localCommand(ConnectedPlaybackAction.PREVIOUS) else player.previous()
+        when (focusedPlaybackRoute()) {
+            DesktopFocusedPlaybackRoute.GROUP -> scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.PREVIOUS) } }
+            DesktopFocusedPlaybackRoute.REMOTE -> remotePlayer?.let { sendRemoteCommand(it, ConnectedPlaybackAction.PREVIOUS) }
+            DesktopFocusedPlaybackRoute.STAGE -> stageSimulator?.localCommand(ConnectedPlaybackAction.PREVIOUS)
+            DesktopFocusedPlaybackRoute.LOCAL -> player.previous()
+            DesktopFocusedPlaybackRoute.UNAVAILABLE -> Unit
+        }
     }
     fun toggleFocusedPlayback() {
-        val group = focusedGroup
-        if (group != null) scope.launch { runCatching {
-            connectedPlayback.requestGroup(if (group.timeline?.playing == true) dev.echo.data.firebase.GroupActionV2.PAUSE else dev.echo.data.firebase.GroupActionV2.PLAY)
-        } } else if (stageSimulator != null) stageSimulator.localCommand(
-            if (playback.playing) ConnectedPlaybackAction.PAUSE else ConnectedPlaybackAction.PLAY) else player.toggle()
+        when (focusedPlaybackRoute()) {
+            DesktopFocusedPlaybackRoute.GROUP -> {
+                val group = focusedGroup ?: return
+                scope.launch { runCatching {
+                    connectedPlayback.requestGroup(if (group.timeline?.playing == true) dev.echo.data.firebase.GroupActionV2.PAUSE else dev.echo.data.firebase.GroupActionV2.PLAY)
+                } }
+            }
+            DesktopFocusedPlaybackRoute.REMOTE -> remotePlayer?.let { sendRemoteCommand(it,
+                if (it.player.isPlaying) ConnectedPlaybackAction.PAUSE else ConnectedPlaybackAction.PLAY) }
+            DesktopFocusedPlaybackRoute.STAGE -> stageSimulator?.localCommand(
+                if (playback.playing) ConnectedPlaybackAction.PAUSE else ConnectedPlaybackAction.PLAY)
+            DesktopFocusedPlaybackRoute.LOCAL -> player.toggle()
+            DesktopFocusedPlaybackRoute.UNAVAILABLE -> Unit
+        }
     }
     fun nextFocusedPlayback() {
-        if (focusedGroup != null) scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.NEXT) } }
-        else if (stageSimulator != null) stageSimulator.localCommand(ConnectedPlaybackAction.NEXT) else player.next()
+        when (focusedPlaybackRoute()) {
+            DesktopFocusedPlaybackRoute.GROUP -> scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.NEXT) } }
+            DesktopFocusedPlaybackRoute.REMOTE -> remotePlayer?.let { sendRemoteCommand(it, ConnectedPlaybackAction.NEXT) }
+            DesktopFocusedPlaybackRoute.STAGE -> stageSimulator?.localCommand(ConnectedPlaybackAction.NEXT)
+            DesktopFocusedPlaybackRoute.LOCAL -> player.next()
+            DesktopFocusedPlaybackRoute.UNAVAILABLE -> Unit
+        }
     }
     fun seekFocusedPlayback(positionMs: Long) {
-        if (focusedGroup != null) scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.SEEK, positionMs) } }
-        else if (stageSimulator != null) stageSimulator.localCommand(ConnectedPlaybackAction.SEEK, positionMs) else player.seek(positionMs)
+        when (focusedPlaybackRoute()) {
+            DesktopFocusedPlaybackRoute.GROUP -> scope.launch { runCatching { connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.SEEK, positionMs) } }
+            DesktopFocusedPlaybackRoute.REMOTE -> remotePlayer?.let { sendRemoteCommand(it, ConnectedPlaybackAction.SEEK, positionMs) }
+            DesktopFocusedPlaybackRoute.STAGE -> stageSimulator?.localCommand(ConnectedPlaybackAction.SEEK, positionMs)
+            DesktopFocusedPlaybackRoute.LOCAL -> player.seek(positionMs)
+            DesktopFocusedPlaybackRoute.UNAVAILABLE -> Unit
+        }
     }
     val tracks = when {
         page == "Search" -> results
@@ -633,8 +730,33 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         }
     }
     val dockQueueOpen = queueOpen && !fullPlayerOnScreen && !remoteFocused && focusedGroup == null && playback.current != null
+    val spaceShortcutRepeatGuard = remember { SpaceShortcutRepeatGuard() }
+    val windowInfo = LocalWindowInfo.current
+    LaunchedEffect(windowInfo.isWindowFocused) {
+        if (!windowInfo.isWindowFocused) spaceShortcutRepeatGuard.release()
+    }
+    fun handleShortcut(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+        if (event.key == Key.Spacebar && event.type == KeyEventType.KeyUp) {
+            spaceShortcutRepeatGuard.release()
+            return false
+        }
+        if (event.type != KeyEventType.KeyDown) return false
+        val action = desktopShortcutAction(event.key, event.isCtrlPressed, event.isShiftPressed, event.isAltPressed)
+        if (action == DesktopShortcutAction.TOGGLE_PLAYBACK && !spaceShortcutRepeatGuard.press()) return true
+        return when (action) {
+            DesktopShortcutAction.TOGGLE_PLAYBACK -> { toggleFocusedPlayback(); true }
+            DesktopShortcutAction.PREVIOUS -> { previousFocusedPlayback(); true }
+            DesktopShortcutAction.NEXT -> { nextFocusedPlayback(); true }
+            DesktopShortcutAction.SEEK_BACK -> { seekFocusedPlayback((presentedPosition - 10_000).coerceAtLeast(0)); true }
+            DesktopShortcutAction.SEEK_FORWARD -> { seekFocusedPlayback((presentedPosition + 10_000).coerceAtMost(presentedDuration)); true }
+            DesktopShortcutAction.VOLUME_UP -> { player.setVolume((playback.volume + .05f).coerceAtMost(1f)); true }
+            DesktopShortcutAction.VOLUME_DOWN -> { player.setVolume((playback.volume - .05f).coerceAtLeast(0f)); true }
+            DesktopShortcutAction.MUTE -> { player.setVolume(if (playback.volume > 0f) 0f else .7f); true }
+            null -> false
+        }
+    }
     Surface(Modifier.fillMaxSize(), color = Canvas) {
-        Box(Modifier.fillMaxSize().onPreviewKeyEvent {
+        Box(Modifier.fillMaxSize().onKeyEvent(::handleShortcut).onPreviewKeyEvent {
             if (dockQueueOpen && it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
                 queueOpen = false
                 true
@@ -642,11 +764,11 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         }.semantics { if (fullPlayerOnScreen) hideFromAccessibility() }) {
         Column {
             Row(Modifier.weight(1f)) {
-                Column(Modifier.width(220.dp).fillMaxHeight().background(Color(0xFF10151D)).verticalScroll(rememberScrollState()).padding(22.dp)) {
+                Column(Modifier.width(220.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceVariant).verticalScroll(rememberScrollState()).padding(22.dp)) {
                     Text("echo", fontSize = 35.sp, fontWeight = FontWeight.Black, color = Accent)
                     Text("MUSIC, IN YOUR SPACE", fontSize = 9.sp, color = Muted, letterSpacing = 2.sp)
                     Spacer(Modifier.height(38.dp))
-                    listOf("Home", "Search", "Library", "Liked songs", "History", "Downloads").forEach { destination ->
+                    listOf("Home", "Search", "Library", "Liked songs", "History", "Downloads", "Settings", "Spotify archive").forEach { destination ->
                         NavItem(destination, page == destination) { page = destination }
                     }
                     Spacer(Modifier.height(28.dp))
@@ -661,10 +783,10 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                         }
                     }
                     Spacer(Modifier.height(20.dp))
-                    HorizontalDivider(color = Color(0xFF28303C))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     if (!stagingMode) TextButton(onClick = { showDevices = true }) { Text("Devices & account", color = Muted) }
                     if (!stagingMode) TextButton(onClick = { showUpdates = true }) { Text("App updates", color = Muted) }
-                    TextButton(onClick = { showImport = true }) { Text("Import playlist", color = Muted) }
+                    TextButton(onClick = { importInitialFilePicker = false; showImport = true }) { Text("Import playlist", color = Muted) }
                     TextButton(onClick = { scope.launch {
                         val file = chooseFiles(true).firstOrNull() ?: return@launch
                         disk {
@@ -702,7 +824,22 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                         }, label = { Text("Playlists") })
                     }
                     Spacer(Modifier.height(26.dp))
-                    if (page == "Downloads") {
+                    if (page == "Settings") {
+                        DesktopSpotifySettingsPage(preferences,
+                            onImport = { importInitialFilePicker = true; showImport = true },
+                            onBrowse = { page = "Spotify archive" },
+                            onDelete = { scope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) { deleteDesktopSpotifyArchives(spotifyArchiveDirectory, store.file.resolveSibling("spotify-archives")) }
+                                    notice = "Saved Spotify archives deleted from this laptop."
+                                } catch (e: Exception) { notice = e.message ?: "Saved Spotify archives could not be deleted" }
+                            } },
+                        )
+                    } else if (page == "Spotify archive") {
+                        DesktopSpotifyDataScreen(spotifyArchiveDirectory, store.file.resolveSibling("spotify-archives"),
+                            onlineAllowed = !stagingMode && !downloads.offlineOnly,
+                            onSearch = { term -> query = term; playlistSearch = false; search(forceSongs = true) })
+                    } else if (page == "Downloads") {
                         DesktopDownloadsPanel(offline, onPlay = { track -> play(listOf(track), 0) }, modifier = Modifier.weight(1f))
                     } else if (page == "Home") {
                         DesktopDiscoverScreen(provider, library, { items, index -> play(items, index) },
@@ -722,6 +859,14 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                             }, fontSize = 12.sp, color = Muted, modifier = Modifier.padding(top = 5.dp))
                         }
                         selectedPlaylist?.let { playlist ->
+                            library.linkedPlaylists[playlist.id]?.let { source ->
+                                Text("Auto-update on · Last updated ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(source.updatedAt))}", style = MaterialTheme.typography.bodySmall)
+                                TextButton(enabled = !downloads.offlineOnly, onClick = { scope.launch { refreshLinked(playlist.id) } }) { Text("Refresh now") }
+                                TextButton(onClick = { disk { store.unlinkYouTubePlaylist(playlist.id) }; linkedErrors = linkedErrors - playlist.id }) { Text("Turn off auto-update") }
+                                TextButton(enabled = tracks.isNotEmpty(), onClick = { disk {
+                                    store.importParsedPlaylists(DesktopPlaylistImport(listOf(DesktopImportPlaylist("Copy of ${playlist.name.take(190)}", tracks))))
+                                } }) { Text("Make editable copy") }
+                            }
                             TextButton(onClick = { playlistName = playlist.name; renamePlaylist = playlist }) { Text("Rename") }
                             TextButton(onClick = { deletePlaylist = playlist }) { Text("Delete") }
                             TextButton(enabled = matchingProgress == null && !downloads.offlineOnly, onClick = {
@@ -742,6 +887,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                                 }
                             }) { Text("Auto match") }
                         }
+                        selectedPlaylist?.let { playlist -> linkedErrors[playlist.id]?.let { Text(it, color = MaterialTheme.colorScheme.error) } }
                         if (page == "History" && library.history.isNotEmpty())
                             TextButton(onClick = { clearHistory = true }) { Text("Clear history") }
                     }
@@ -773,7 +919,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                         Text("TITLE / ARTIST", Modifier.weight(1f), color = Muted, fontSize = 11.sp)
                         Text("TIME", Modifier.width(125.dp), color = Muted, fontSize = 11.sp)
                     }
-                    HorizontalDivider(Modifier.padding(top = 12.dp), color = Color(0xFF28303C))
+                    HorizontalDivider(Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
                     if (page == "Search" && playlistSearch) {
                         if (playlistResults.isEmpty() && !searching) {
                             Column(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.Center,
@@ -868,8 +1014,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                     )
                 }
             }
-            if (selectedRemoteId == null && playback.error != null) Text(playback.error.orEmpty(), color = Color(0xFFFFB7AC), fontSize = 12.sp,
-                modifier = Modifier.fillMaxWidth().background(Color(0xFF38252A)).padding(12.dp))
+            if (selectedRemoteId == null && playback.error != null) Text(playback.error.orEmpty(), color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(12.dp))
             if (!fullPlayerOnScreen) DesktopPlayerBar(presentedTrack, presentedTitle, presentedArtist, presentedPlaying, presentedPosition, presentedDuration,
                 remoteMode = remoteFocused,
                 remoteDevice = remotePlayer.takeIf { remoteFocused },
@@ -922,7 +1068,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             onClick = { showStageAdmin = true },
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 34.dp, bottom = 136.dp)
                 .semantics { contentDescription = "Stage admin: manage demo devices" },
-            containerColor = Accent, contentColor = Canvas,
+            containerColor = Accent, contentColor = MaterialTheme.colorScheme.onPrimary,
         ) {
             Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Devices, null); Spacer(Modifier.width(7.dp)); Text("Admin")
@@ -979,7 +1125,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         confirmButton = { TextButton(onClick = { showStageAdmin = false }) { Text("Done") } },
     )
     if (fullPlayerOnScreen) {
-        Box(Modifier.fillMaxSize().onPreviewKeyEvent {
+        Box(Modifier.fillMaxSize().onKeyEvent(::handleShortcut).onPreviewKeyEvent {
             if (it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
                 if (queueOpen) queueOpen = false else fullPlayerOpen = false
                 true
@@ -1065,8 +1211,13 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         }
         }
     }
-    if (showImport) DesktopImportDialog(store, onChanged = { disk { } }, onError = { notice = it },
-        onDismiss = { showImport = false; importInitialLink = null }, initialLink = importInitialLink,
+    if (showTutorial) DesktopTutorialDialog {
+        preferences.completeTutorial()
+        showTutorial = false
+    }
+    if (showImport) DesktopImportDialog(store, spotifyArchiveDirectory, onChanged = { disk { } }, onError = { notice = it },
+        onDismiss = { showImport = false; importInitialLink = null; importInitialFilePicker = false }, initialLink = importInitialLink,
+        initialFilePicker = importInitialFilePicker,
         onlineAllowed = !downloads.offlineOnly)
     if (showUpdates && !stagingMode) DesktopUpdatesDialog(updater, scope, onDismiss = { showUpdates = false })
     notice?.let { message -> AlertDialog(onDismissRequest = { notice = null }, title = { Text("Echo") },
@@ -1213,7 +1364,7 @@ private fun DesktopFullPlayer(
     Row(Modifier.fillMaxWidth().heightIn(max = panelMaxHeight), verticalAlignment = Alignment.Bottom) {
     Surface(
         Modifier.weight(1f).heightIn(max = panelMaxHeight).padding(8.dp),
-        color = if (group) Color(0xFF201A2B) else Canvas,
+        color = if (group) MaterialTheme.colorScheme.secondaryContainer else Canvas,
         shape = RoundedCornerShape(28.dp),
         border = BorderStroke(1.dp, if (group) GroupAccent.copy(alpha = .6f) else Accent.copy(alpha = .25f)),
     ) {
@@ -1316,7 +1467,7 @@ private fun DesktopFullPlayer(
                 Spacer(Modifier.height(12.dp))
                 when {
                     !group && remoteQueueLoading -> CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
-                    !group && remoteQueueError != null -> Text(remoteQueueError.orEmpty(), color = Color(0xFFFFB7AC))
+                    !group && remoteQueueError != null -> Text(remoteQueueError.orEmpty(), color = MaterialTheme.colorScheme.error)
                     group && groupQueueEntries.isEmpty() -> Text("The shared queue is empty.", color = Muted)
                     !group && remoteQueue?.queue?.entries.isNullOrEmpty() -> Text("This device's queue is empty.", color = Muted)
                     else -> {
@@ -1393,7 +1544,7 @@ private fun DesktopPlayerBar(
             Surface(
                 modifier = Modifier.weight(1f),
                 shape = dockShape,
-                color = if (groupFocused) Color(0xFF201A2B) else Panel,
+                color = if (groupFocused) MaterialTheme.colorScheme.secondaryContainer else Panel,
                 shadowElevation = 16.dp,
             ) {
                 if (narrow) Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
@@ -1482,7 +1633,7 @@ private fun DesktopSidecarPlayerCard(
         modifier = modifier.height(104.dp),
         shape = RoundedCornerShape(22.dp),
         color = Panel,
-        contentColor = Color(0xFFEAF0F7),
+        contentColor = MaterialTheme.colorScheme.onSurface,
         border = BorderStroke(if (focused) 2.dp else 1.dp, if (focused) Accent else Accent.copy(alpha = .28f)),
         shadowElevation = if (focused) 16.dp else 6.dp,
     ) {
@@ -1589,7 +1740,9 @@ private fun PlayerTransport(
                 if (remoteMode) remoteDevice?.let { onRemoteCommand(it,
                     if (playing) ConnectedPlaybackAction.PAUSE else ConnectedPlaybackAction.PLAY, 0) }
                 else onLocalToggle()
-            }, enabled = canTransport && (remoteMode || !localLoading)) { Text(if (playing) "Pause" else "Play") }
+            }, enabled = canTransport && (remoteMode || !localLoading), modifier = Modifier.semantics {
+                contentDescription = if (playing) "Pause playback" else "Play playback"
+            }) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null) }
             TextButton(onClick = {
                 if (remoteMode) remoteDevice?.let { onRemoteCommand(it, ConnectedPlaybackAction.NEXT, 0) }
                 else onLocalNext()
@@ -1681,7 +1834,7 @@ private fun DesktopPlayerPicker(
                 }) { Icon(Icons.Default.Devices, null, tint = Accent) }
                 if (online.isNotEmpty()) Surface(
                     modifier = Modifier.align(Alignment.TopEnd), shape = CircleShape,
-                    color = Color(0xFF27313A), contentColor = Accent,
+                    color = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface,
                 ) { Text("+${online.size}", fontSize = 9.sp, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)) }
             }
             if (showCrossDeviceActions) {
@@ -1754,7 +1907,7 @@ private fun DesktopPlayerPicker(
                             if (commandPending) Text("Remote command pending…", color = Muted, fontSize = 12.sp,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                             selectedDevice?.ack?.takeIf { it.status == "rejected" }?.let {
-                                Text("Command declined: ${it.reason ?: "device state changed"}", color = Color(0xFFFFB7AC), fontSize = 12.sp,
+                                Text("Command declined: ${it.reason ?: "device state changed"}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp,
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                             }
                         } else if (!connected) Text(connectedMessage ?: "Connected players are unavailable.", color = Muted,
@@ -1880,7 +2033,7 @@ private fun DesktopPlayerPicker(
                             if (invalidTogetherSelection) Text(if (stagingMode)
                                 "A selected demo player is offline or has restarted. Remove it and select the current session."
                                 else "A selected player is offline or has restarted. Remove it and select the current session.",
-                                color = Color(0xFFFFB7AC), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                                color = MaterialTheme.colorScheme.error, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                             TextButton(enabled = readyToStartTogether && !connectedV2.pending, onClick = {
                                 if (selectedTogetherDevices.any { it.snapshot.playing }) confirmTogether = true
                                 else { onTogetherV2(togetherDeviceIds.toList(), togetherDeviceSessions, false); openPanel = null }
@@ -1955,7 +2108,7 @@ private fun LocalQueueSidebar(
     BoxWithConstraints(Modifier.fillMaxHeight()) {
         val paneWidth = (maxWidth * .35f).coerceAtMost(310.dp)
         Surface(Modifier.width(paneWidth).fillMaxHeight().padding(start = 10.dp), color = Panel,
-            shape = RoundedCornerShape(0.dp), border = BorderStroke(1.dp, Color(0xFF28303C))) {
+            shape = RoundedCornerShape(0.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.fillMaxSize().padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Queue", fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.weight(1f))
@@ -2003,8 +2156,8 @@ private fun lastKnownDeviceName(devices: List<ConnectedDevice>, id: String?): St
 
 @Composable
 private fun NavItem(label: String, selected: Boolean, action: () -> Unit) {
-    Text(label, color = if (selected) Accent else Muted, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-        modifier = Modifier.fillMaxWidth().background(if (selected) Color(0xFF1A2D2D) else Color.Transparent,
+    Text(label, color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else Muted, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+        modifier = Modifier.fillMaxWidth().background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
             RoundedCornerShape(8.dp)).clickable(onClick = action).padding(horizontal = 13.dp, vertical = 13.dp),
         maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
 }
@@ -2018,13 +2171,13 @@ private fun TrackRow(track: Track, index: Int, current: Boolean, liked: Boolean,
                      onNext: (() -> Unit)? = null,
                      detail: String? = null) {
     var menu by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().background(if (current) Color(0xFF19312E) else Color.Transparent,
+    Row(Modifier.fillMaxWidth().background(if (current) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
         RoundedCornerShape(8.dp)).clickable(onClick = onPlay).padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Text("${index + 1}", Modifier.width(36.dp), color = if (current) Accent else Muted, fontSize = 12.sp)
         Cover(track, Modifier.size(42.dp))
         Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-            Text(track.title, color = if (current) Accent else Color(0xFFEAF0F7), maxLines = 1,
+        Text(track.title, color = if (current) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface, maxLines = 1,
                 overflow = TextOverflow.Ellipsis, fontSize = 14.sp, fontWeight = FontWeight.Medium)
             Text(detail ?: (track.artist + if (desktopPlayable(track)) "" else " · Find recording"), color = Muted,
                 fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -3,6 +3,7 @@ package dev.echo.data.library
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.echo.data.spotify.SecureCredentials
@@ -35,12 +36,20 @@ class SettingsRepository @Inject constructor(@ApplicationContext context: Contex
     private val keyMutex = Mutex()
     private val clientKey = stringPreferencesKey("spotify_client_id")
     private val historyKey = stringPreferencesKey("search_history")
+    private val appearanceKey = stringPreferencesKey("appearance")
+    private val accentKey = stringPreferencesKey("gui_accent")
+    private val brightnessKey = stringPreferencesKey("brightness")
+    private val keepBackgroundKey = booleanPreferencesKey("keep_background")
     private val credentialErrorState = MutableStateFlow<String?>(null)
     val credentialError: StateFlow<String?> = credentialErrorState.asStateFlow()
     private val historyErrorState = MutableStateFlow<String?>(null)
     val historyError: StateFlow<String?> = historyErrorState.asStateFlow()
 
     val spotifyClientId: Flow<String> = store.data.map { it[clientKey].orEmpty() }
+    val appearance: Flow<String> = store.data.map { it[appearanceKey] ?: "artwork" }
+    val guiAccent: Flow<String> = store.data.map { it[accentKey] ?: "violet" }
+    val brightness: Flow<String> = store.data.map { it[brightnessKey] ?: "dark" }
+    val keepBackground: Flow<Boolean> = store.data.map { it[keepBackgroundKey] ?: true }
     val searchHistory: Flow<List<String>> = store.data.map {
         try {
             decodeHistory(it[historyKey]).also { historyErrorState.value = null }
@@ -57,6 +66,23 @@ class SettingsRepository @Inject constructor(@ApplicationContext context: Contex
     suspend fun setSpotifyClientId(value: String) {
         store.edit { it[clientKey] = value.trim() }
     }
+
+    suspend fun setAppearance(value: String) {
+        require(value in setOf("artwork", "gui"))
+        store.edit { it[appearanceKey] = value }
+    }
+
+    suspend fun setGuiAccent(value: String) {
+        require(value in setOf("violet", "teal", "rose", "amber") || value.matches(Regex("#[0-9a-fA-F]{6}")))
+        store.edit { it[accentKey] = value }
+    }
+
+    suspend fun setBrightness(value: String) {
+        require(value in setOf("dark", "light"))
+        store.edit { it[brightnessKey] = value }
+    }
+
+    suspend fun setKeepBackground(value: Boolean) { store.edit { it[keepBackgroundKey] = value } }
 
     suspend fun setYoutubeApiKey(value: String) = withContext(Dispatchers.IO) {
         keyMutex.withLock {

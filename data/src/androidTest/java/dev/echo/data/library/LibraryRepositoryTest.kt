@@ -10,6 +10,28 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LibraryRepositoryTest {
+    @Test fun linkedPlaylistRefreshPreservesOccurrencesAndRejectsStaleEdits() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.inMemoryDatabaseBuilder(context, LibraryDatabase::class.java).build()
+        try {
+            val repository = LibraryRepository(context, database)
+            val a = Track("youtube:abcdefghijk", "A", "Artist", provider = "youtube")
+            val b = Track("youtube:abcdefghijl", "B", "Artist", provider = "youtube")
+            val id = repository.importLinkedYouTubePlaylist("https://www.youtube.com/playlist?list=PLabcdefghijk", "Linked", listOf(a, b, a))
+            val source = repository.linkedYouTubePlaylists().single()
+            repository.refreshLinkedYouTubePlaylist(source, listOf(b, a, b))
+            assertEquals(listOf(b.id, a.id, b.id), repository.playlistTracks(id).map { it.id })
+            val next = repository.linkedYouTubePlaylists().single()
+            assertEquals(listOf(b.id, a.id, b.id), next.trackIds)
+            assertTrue(next.updatedAt >= source.updatedAt)
+            repository.removeFromPlaylist(id, 0)
+            assertTrue(runCatching { repository.refreshLinkedYouTubePlaylist(next, listOf(a)) }.isFailure)
+            assertEquals(listOf(a.id, b.id), repository.playlistTracks(id).map { it.id })
+            repository.unlinkYouTubePlaylist(id)
+            assertTrue(repository.linkedYouTubePlaylists().isEmpty())
+        } finally { database.close() }
+    }
+
     @Test fun automaticMatchesPreserveOccurrencesAndRejectStaleEdits() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(context, LibraryDatabase::class.java).build()

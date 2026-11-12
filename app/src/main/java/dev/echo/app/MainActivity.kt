@@ -19,7 +19,7 @@ class MainActivity : ComponentActivity() {
         )
         model = ViewModelProvider(this)[EchoViewModel::class.java]
         if (savedInstanceState == null) acceptCallback(intent)
-        setContent { EchoApp(model) }
+        setContent { EchoApp(model, showTutorial = !(BuildConfig.DEBUG && intent.getBooleanExtra(SKIP_TUTORIAL_EXTRA, false))) }
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = false
@@ -34,4 +34,6 @@ class MainActivity : ComponentActivity() {
         val scheme = if (BuildConfig.STAGING) "echomusic-stage" else "echomusic"
         intent?.data?.let { if (it.scheme == scheme && it.host == "oauth" && it.path == "/spotify") model.spotifyCallback(it) }
     }
+
+    companion object { const val SKIP_TUTORIAL_EXTRA = "dev.echo.test.skipTutorial" }
 }

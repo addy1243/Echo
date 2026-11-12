@@ -11,6 +11,32 @@ import java.nio.file.Files
 
 class DesktopLibraryTest {
     @get:Rule val temporary = TemporaryFolder()
+
+    @Test fun linkedRefreshRejectsEditsAndPersistsSource() {
+        val file = temporary.root.toPath().resolve("linked.json")
+        val library = DesktopLibrary(file)
+        val a = Track("youtube:abcdefghijk", "A", "Artist", provider = "youtube")
+        val b = Track("youtube:abcdefghijl", "B", "Artist", provider = "youtube")
+        val playlist = library.importLinkedYouTubePlaylist("https://www.youtube.com/playlist?list=PLabcdefghijk", "Linked", listOf(a, b, a))
+        val source = DesktopLibrary(file).snapshot().linkedPlaylists.getValue(playlist.id)
+        library.refreshLinkedYouTubePlaylist(playlist.id, source, listOf(b, a, b))
+        assertEquals(listOf(b.id, a.id, b.id), library.snapshot().playlists.single().trackIds)
+        val next = library.snapshot().linkedPlaylists.getValue(playlist.id)
+        library.removeFromPlaylist(playlist.id, 0, next.trackIds)
+        assertTrue(runCatching { library.refreshLinkedYouTubePlaylist(playlist.id, next, listOf(a)) }.isFailure)
+        assertEquals(listOf(a.id, b.id), library.snapshot().playlists.single().trackIds)
+    }
+
+    @Test fun incompleteLinkedRefreshKeepsPlaylistAndSourceMetadata() = kotlinx.coroutines.runBlocking {
+        val library = DesktopLibrary(path())
+        val playlist = library.importLinkedYouTubePlaylist("https://www.youtube.com/playlist?list=PLabcdefghijk", "Linked", listOf(song))
+        val source = library.snapshot().linkedPlaylists.getValue(playlist.id)
+        val before = library.snapshot()
+        val incomplete = dev.echo.data.provider.YouTubePlaylistPreview("Linked", listOf(song.copy(title = "Changed")), 2)
+        assertTrue(runCatching { persistDesktopLinkedPlaylistRefresh(library, playlist.id, source, incomplete) }.isFailure)
+        assertEquals(before.playlists.single().trackIds, library.snapshot().playlists.single().trackIds)
+        assertEquals(source, library.snapshot().linkedPlaylists[playlist.id])
+    }
     private val song = Track("youtube:abcdefghijk", "Song", "Artist", provider = "youtube", sourceUri = "https://cdn.example/audio?signature=secret")
     private fun path() = temporary.root.toPath().resolve("library.json")
 

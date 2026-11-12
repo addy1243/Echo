@@ -38,6 +38,13 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
         val term = query.trim()
         if (term.isEmpty()) return emptyList()
         require(term.length <= 200) { "Search using 200 characters or fewer" }
+        youtubeSearchVideoId(term)?.let { videoId ->
+            return extract {
+                val info = StreamInfo.getInfo(ServiceList.YouTube, youtubeWatchUrl(videoId))
+                info.errors.forEach(::throwKnownYouTubeError)
+                if (info.id == videoId) listOfNotNull(youtubeTrack(info)) else emptyList()
+            }
+        }
         return extract {
             val service = ServiceList.YouTube
             val handler = service.searchQHFactory.fromQuery(term,
@@ -64,7 +71,7 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
             if (info.relatedItems.isEmpty() && info.errors.isNotEmpty())
                 throw YouTubeRequestException("YouTube playlist search could not be read. Try again later or update Echo.")
             info.relatedItems.filterIsInstance<PlaylistInfoItem>().mapNotNull { item ->
-                if (item.playlistType != null && item.playlistType != PlaylistInfo.PlaylistType.NORMAL) return@mapNotNull null
+                if (item.playlistType != null && item.playlistType != PlaylistInfo.PlaylistType.NORMAL && !item.playlistType.isMix()) return@mapNotNull null
                 val id = runCatching { youtubePlaylistId(item.url) }.getOrNull() ?: return@mapNotNull null
                 val title = item.name?.trim().orEmpty()
                 if (title.isEmpty() || title.length > 200) return@mapNotNull null
@@ -76,15 +83,17 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
     /** Reports the first available songs from the extraction worker while more pages are pending. */
     suspend fun playlist(link: String, onFirstPage: ((YouTubePlaylistPreview) -> Unit)? = null): YouTubePlaylistPreview {
         val id = youtubePlaylistId(link)
-        val url = youtubePlaylistUrl(id)
+        val seed = youtubeVideoId(link)
+        val url = if (id.startsWith("RD") && seed != null) "${youtubeWatchUrl(seed)}&list=$id" else youtubePlaylistUrl(id)
         return extract {
             val info = PlaylistInfo.getInfo(ServiceList.YouTube, url)
             info.errors.forEach(::throwKnownYouTubeError)
-            require(info.id == id && info.playlistType == PlaylistInfo.PlaylistType.NORMAL) {
-                "Paste a public YouTube playlist link, not a mix or restricted list"
+            require(info.id == id && (info.playlistType == PlaylistInfo.PlaylistType.NORMAL || info.playlistType.isMix())) {
+                "Paste a public YouTube playlist or Mix link"
             }
             require(info.name.isNotBlank() && info.name.length <= 200) { "YouTube returned an invalid playlist name" }
-            val total = info.streamCount.takeIf { it >= 0 }
+            // YouTube Mixes are generated lists; their reported count is not a stable total.
+            val total = info.streamCount.takeIf { it >= 0 && !info.playlistType.isMix() }
             require(total == null || total <= MAX_PLAYLIST_TRACKS) { "YouTube playlists are limited to 50,000 songs" }
             val tracks = mutableListOf<Track>()
             tracks += info.relatedItems.mapNotNull(::youtubeTrack)
@@ -94,7 +103,7 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
             }
             var pages = 1
             val seenPages = mutableSetOf<PlaylistPageIdentity>()
-            while (page != null && tracks.size < MAX_PLAYLIST_TRACKS && pages < MAX_PLAYLIST_PAGES) {
+            while (page != null && tracks.size < MAX_PLAYLIST_TRACKS && pages < if (info.playlistType.isMix()) 5 else MAX_PLAYLIST_PAGES) {
                 if (!seenPages.add(page.identity())) break
                 val next = PlaylistInfo.getMoreItems(ServiceList.YouTube, url, page)
                 next.errors.forEach(::throwKnownYouTubeError)
@@ -172,6 +181,11 @@ private data class PlaylistPageIdentity(
 
 private fun Page.identity() = PlaylistPageIdentity(url, id, ids, cookies, body?.contentHashCode())
 
+private fun PlaylistInfo.PlaylistType?.isMix() = this in setOf(
+    PlaylistInfo.PlaylistType.MIX_STREAM, PlaylistInfo.PlaylistType.MIX_MUSIC,
+    PlaylistInfo.PlaylistType.MIX_CHANNEL, PlaylistInfo.PlaylistType.MIX_GENRE,
+)
+
 private const val MAX_PLAYLIST_TRACKS = 50_000
 private const val MAX_PLAYLIST_PAGES = 500
 
@@ -201,6 +215,19 @@ internal fun youtubeVideoId(value: String): String? {
         else -> null
     }
     return id?.takeIf { it.matches(Regex("[a-zA-Z0-9_-]{11}")) }
+}
+
+internal fun youtubeSearchVideoId(query: String) = youtubeVideoId(query.trim())
+
+internal fun youtubeTrack(info: StreamInfo): Track? {
+    if (info.ageLimit > 0 || info.contentAvailability !in setOf(ContentAvailability.AVAILABLE, ContentAvailability.UNKNOWN) ||
+        info.streamType !in setOf(StreamType.VIDEO_STREAM, StreamType.AUDIO_STREAM)) return null
+    return youtubeTrack(StreamInfoItem(0, youtubeWatchUrl(info.id), info.name, info.streamType).apply {
+        uploaderName = info.uploaderName
+        duration = info.duration
+        contentAvailability = info.contentAvailability
+        thumbnails = info.thumbnails
+    })
 }
 
 internal fun youtubeTrack(item: StreamInfoItem): Track? {

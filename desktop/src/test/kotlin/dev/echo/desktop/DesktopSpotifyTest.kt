@@ -4,6 +4,9 @@ import dev.echo.core.Track
 import dev.echo.data.provider.YouTubePlaylistPreview
 import dev.echo.data.spotify.SpotifyLinkPreview
 import java.nio.file.Files
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -17,6 +20,25 @@ class DesktopSpotifyTest {
     private val recording = Track("youtube:abcdefghijk", "Song", "Artist", durationMs = 60_000,
         provider = "youtube", sourceUri = "https://www.youtube.com/watch?v=abcdefghijk")
     private fun library() = DesktopLibrary(temporary.root.toPath().resolve("library.json"))
+
+    @Test fun spotifyAccountZipPreviewRetainsExactArchiveAndExposesCounts() = runBlocking {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { zip ->
+            zip.putNextEntry(ZipEntry("YourLibrary.json"))
+            zip.write("""{"tracks":[],"artists":[{"name":"Artist","uri":"spotify:artist:1234567890123456789012"}],"albums":[]}""".toByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("StreamingHistory0.json"))
+            zip.write("""[{"endTime":"2024-01-02 03:04","trackName":"Song","artistName":"Artist","msPlayed":1200}]""".toByteArray())
+            zip.closeEntry()
+        }
+        val bytes = output.toByteArray()
+        val file = temporary.newFile("account.zip").apply { writeBytes(bytes) }
+        val parsed = readDesktopPlaylistImport(file)
+        assertArrayEquals(bytes, parsed.archive)
+        assertEquals(1, parsed.historyCount)
+        assertEquals(1, parsed.savedArtistCount)
+        assertTrue(parsed.playlists.all { it.tracks.isEmpty() })
+    }
 
     @Test fun csvImportPreservesDuplicateOccurrencesAndCreatesNewSnapshots() {
         val csv = "Track URI,Track Name,Artist Name(s),Track Duration (ms)\n" +

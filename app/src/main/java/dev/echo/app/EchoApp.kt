@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -39,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.semantics.Role
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
+import androidx.core.graphics.drawable.toBitmap
 import androidx.navigation.compose.*
 import coil.compose.AsyncImage
 import dev.echo.core.Playlist
@@ -54,13 +56,41 @@ private val Violet = Color(0xFFBFA4FF)
 private val Ink = Color(0xFF101014)
 
 @Composable
-fun EchoApp(vm: EchoViewModel) {
+private fun rememberArtworkAccent(uri: String?): Color {
+    val context = LocalContext.current
+    var accent by remember { mutableStateOf(Violet) }
+    LaunchedEffect(uri, context) {
+        accent = Violet
+        if (uri.isNullOrBlank()) return@LaunchedEffect
+        val result = try {
+            coil.Coil.imageLoader(context).execute(coil.request.ImageRequest.Builder(context).data(uri).allowHardware(false).build())
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { null } as? coil.request.SuccessResult ?: return@LaunchedEffect
+        val bitmap = result.drawable.toBitmap(24, 24, android.graphics.Bitmap.Config.ARGB_8888)
+        var red = 0L; var green = 0L; var blue = 0L; var count = 0
+        for (y in 0 until bitmap.height step 3) for (x in 0 until bitmap.width step 3) {
+            val pixel = bitmap.getPixel(x, y)
+            red += android.graphics.Color.red(pixel); green += android.graphics.Color.green(pixel); blue += android.graphics.Color.blue(pixel); count++
+        }
+        if (count > 0) {
+            val sampled = Color(android.graphics.Color.rgb((red / count).toInt(), (green / count).toInt(), (blue / count).toInt()))
+            accent = androidx.compose.ui.graphics.lerp(sampled, if (brightnessForPalette(sampled) < .45f) Color.White else Color.Black, .22f)
+        }
+    }
+    return accent
+}
+
+private fun brightnessForPalette(color: Color): Float = .299f * color.red + .587f * color.green + .114f * color.blue
+
+@Composable
+fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
     if (!BuildConfig.STAGING) dev.echo.app.account.AccountSyncHost(vm)
     val connected by vm.connectedPlaybackState.collectAsStateWithLifecycle()
     val connectedV2 by vm.connectedPlaybackV2State.collectAsStateWithLifecycle()
     val selectedPlaybackTargetId by vm.selectedConnectedPlaybackTargetId.collectAsStateWithLifecycle()
     val connectedPlaybackEnabled by vm.connectedPlaybackEnabled.collectAsStateWithLifecycle()
     val nav = rememberNavController()
+    var spotifySearchPrefill by rememberSaveable { mutableStateOf("") }
     val entry by nav.currentBackStackEntryAsState()
     LaunchedEffect(vm.requestedDownloads, entry) {
         if (vm.requestedDownloads && entry != null) { nav.navigate("downloads") { launchSingleTop = true }; vm.requestedDownloads = false }
@@ -73,6 +103,27 @@ fun EchoApp(vm: EchoViewModel) {
     val recent by vm.recent.collectAsStateWithLifecycle()
     val credentialError by vm.settings.credentialError.collectAsStateWithLifecycle()
     val historyError by vm.settings.historyError.collectAsStateWithLifecycle()
+    val appearance by vm.settings.appearance.collectAsStateWithLifecycle("artwork")
+    val accentName by vm.settings.guiAccent.collectAsStateWithLifecycle("violet")
+    val brightness by vm.settings.brightness.collectAsStateWithLifecycle("dark")
+    val focusedArtwork = rememberPlayerPresentation(vm, tracks).artworkUri
+    val artworkAccent = rememberArtworkAccent(focusedArtwork)
+    val accent = if (appearance == "artwork") artworkAccent else when (accentName) {
+        "teal" -> Color(0xFF55C9B1); "rose" -> Color(0xFFE78EA8); "amber" -> Color(0xFFFFC15A)
+        else -> if (accentName.startsWith("#")) runCatching { Color(android.graphics.Color.parseColor(accentName)) }.getOrDefault(Violet) else Violet
+    }
+    val light = brightness == "light"
+    var readableAccent = accent
+    repeat(12) {
+        if (light && readableAccent.luminance() > .18f) readableAccent = androidx.compose.ui.graphics.lerp(readableAccent, Color.Black, .12f)
+        if (!light && readableAccent.luminance() < .36f) readableAccent = androidx.compose.ui.graphics.lerp(readableAccent, Color.White, .12f)
+    }
+    val colors = if (light) lightColorScheme(primary = readableAccent, onPrimary = Color.White,
+        background = androidx.compose.ui.graphics.lerp(Color.White, accent, .04f),
+        surface = androidx.compose.ui.graphics.lerp(Color.White, accent, .07f))
+        else darkColorScheme(primary = readableAccent, onPrimary = Color.Black,
+            background = androidx.compose.ui.graphics.lerp(Ink, accent, .04f),
+            surface = androidx.compose.ui.graphics.lerp(Color(0xFF19191F), accent, .06f))
     val snackbar = remember { SnackbarHostState() }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         val audio = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
@@ -85,6 +136,10 @@ fun EchoApp(vm: EchoViewModel) {
         }.toTypedArray())
     }
     val context = LocalContext.current
+    val tutorialPrefs = remember(context) { context.getSharedPreferences("echo-onboarding", android.content.Context.MODE_PRIVATE) }
+    var tutorialPage by rememberSaveable { mutableIntStateOf(tutorialPrefs.getInt("page", 0).coerceIn(0, 4)) }
+    var tutorialVisible by remember { mutableStateOf(!tutorialPrefs.getBoolean("complete", false)) }
+    var tutorialSaveFailed by rememberSaveable { mutableStateOf(false) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.runAction("File added to library") {
             context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -102,11 +157,28 @@ fun EchoApp(vm: EchoViewModel) {
         }
     }
     LaunchedEffect(vm.message) { vm.message?.let { snackbar.showSnackbar(it); vm.message = null } }
-    MaterialTheme(colorScheme = darkColorScheme(primary = Violet, secondary = Color(0xFF8CDBCD), background = Ink, surface = Color(0xFF19191F))) {
+    MaterialTheme(colorScheme = colors) {
+        if (showTutorial && tutorialVisible) EchoTutorial(
+            page = tutorialPage,
+            saveFailed = tutorialSaveFailed,
+            onNext = {
+                if (tutorialPage == 4) {
+                    if (tutorialPrefs.edit().putBoolean("complete", true).remove("page").commit()) tutorialVisible = false
+                    else tutorialSaveFailed = true
+                } else {
+                    tutorialPage++
+                    tutorialPrefs.edit().putInt("page", tutorialPage).apply()
+                }
+            },
+            onSkip = {
+                if (tutorialPrefs.edit().putBoolean("complete", true).remove("page").commit()) tutorialVisible = false
+                else tutorialSaveFailed = true
+            }
+        )
         UpdatePrompt(vm)
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
-            topBar = { if (route != "player") TopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.GraphicEq, null, tint = Violet); Spacer(Modifier.width(10.dp)); Text("echo", fontWeight = FontWeight.Bold, letterSpacing = 2.sp) } },
+            topBar = { if (route != "player") TopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.GraphicEq, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(10.dp)); Text("echo", fontWeight = FontWeight.Bold, letterSpacing = 2.sp) } },
                 navigationIcon = { if (route !in listOf("home", "search", "library", "profile", "settings")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
                     if (connectedPlaybackEnabled || connected.devices.any { it.id != vm.connectedPlaybackDeviceIdForUi }) {
@@ -122,8 +194,8 @@ fun EchoApp(vm: EchoViewModel) {
                         Column(Modifier.weight(1f).fillMaxHeight().testTag("tab-$key").selectable(selected = activeTab == key, role = Role.Tab, onClick = {
                             nav.navigate(key) { popUpTo("home"); launchSingleTop = true }
                         }), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                            Icon(icon, null, tint = if (activeTab == key) Violet else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(21.dp))
-                            Text(label, fontSize = 11.sp, fontWeight = if (activeTab == key) FontWeight.Bold else FontWeight.Normal, color = if (activeTab == key) Violet else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(icon, null, tint = if (activeTab == key) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(21.dp))
+                            Text(label, fontSize = 11.sp, fontWeight = if (activeTab == key) FontWeight.Bold else FontWeight.Normal, color = if (activeTab == key) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -143,7 +215,8 @@ fun EchoApp(vm: EchoViewModel) {
                             { tab -> nav.navigate("discover?tab=$tab") },
                             { nav.navigate("playlist/$it") }, { nav.navigate("library") }, { nav.navigate("search") })
                     }
-                    composable("search") { SearchScreen(vm, tracks, playlists, favorites) }
+                    composable("search") { SearchScreen(vm, tracks, playlists, favorites, spotifySearchPrefill) { spotifySearchPrefill = "" } }
+                    composable("spotify-data") { SpotifyDataScreen { query -> spotifySearchPrefill = query; nav.navigate("search") { launchSingleTop = true } } }
                     composable("discover?tab={tab}", arguments = listOf(androidx.navigation.navArgument("tab") { type = androidx.navigation.NavType.IntType; defaultValue = 0 })) { back ->
                         DiscoveryScreen(vm, playlists, favorites, back.arguments?.getInt("tab") ?: 0)
                     }
@@ -154,7 +227,7 @@ fun EchoApp(vm: EchoViewModel) {
                     }
                     composable("player") { FullPlayer(vm, tracks, playlists, favorites) { nav.popBackStack() } }
                     composable("profile") { ProfileScreen(vm) }
-                    composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }, { nav.navigate("profile") }) }
+                    composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }, { nav.navigate("profile") }, { nav.navigate("spotify-data") }) }
                     composable("licenses") { LicensesScreen() }
                     composable("history") { HistoryScreen(vm) }
                     composable("downloads") { DownloadsScreen(vm) }
@@ -265,7 +338,7 @@ fun EchoApp(vm: EchoViewModel) {
 @Composable private fun Hero(title: String, subtitle: String) {
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Brush.linearGradient(listOf(Color(0xFF40315B), Color(0xFF20232E)))).padding(24.dp)) {
         Text("ECHO MUSIC", color = Violet, style = MaterialTheme.typography.labelMedium, letterSpacing = 3.sp)
-        Spacer(Modifier.height(16.dp)); Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(16.dp)); Text(title, color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp)); Text(subtitle, color = Color(0xFFCEC7D9))
     }
 }
@@ -282,7 +355,7 @@ fun EchoApp(vm: EchoViewModel) {
 @Composable private fun PlaylistCard(playlist: Playlist, click: () -> Unit) {
     Surface(onClick = click, shape = RoundedCornerShape(16.dp), tonalElevation = 2.dp) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = Violet, modifier = Modifier.size(36.dp)); Spacer(Modifier.width(16.dp))
+            Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp)); Spacer(Modifier.width(16.dp))
             Column { Text(playlist.name, fontWeight = FontWeight.SemiBold); Text(if (playlist.spotifyId == null) "Personal playlist" else "Imported from Spotify", style = MaterialTheme.typography.bodySmall) }
         }
     }
@@ -299,7 +372,7 @@ fun EchoApp(vm: EchoViewModel) {
             Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             val detail = if (BuildConfig.STAGING && track.provider == "stage") "Silent Stage demo · routes to the focused player"
                 else if (track.sourceUri == null) "Choose a recording in its playlist" else "${track.provider} · ${time(track.durationMs)}"
-            Text(detail, color = if (track.sourceUri == null && track.provider != "stage") MaterialTheme.colorScheme.error else Violet,
+            Text(detail, color = if (track.sourceUri == null && track.provider != "stage") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.labelSmall)
         }
         Box {
@@ -328,8 +401,11 @@ fun EchoApp(vm: EchoViewModel) {
     } }, confirmButton = { TextButton(onClick = close) { Text("Done") } })
 }
 
-@Composable private fun SearchScreen(vm: EchoViewModel, tracks: List<Track>, playlists: List<Playlist>, favorites: Set<String>) {
+@Composable private fun SearchScreen(vm: EchoViewModel, tracks: List<Track>, playlists: List<Playlist>, favorites: Set<String>, initialQuery: String = "", onInitialQueryConsumed: () -> Unit = {}) {
     var query by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(initialQuery) {
+        if (initialQuery.isNotBlank()) { query = initialQuery; onInitialQueryConsumed() }
+    }
     var source by rememberSaveable { mutableIntStateOf(2) }
     var youtubeMode by rememberSaveable { mutableIntStateOf(0) }
     var importLink by remember { mutableStateOf<String?>(null) }
@@ -405,7 +481,7 @@ fun EchoApp(vm: EchoViewModel) {
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionTitle("Your collection") }
         item { Button(enabled = !vm.busy, onClick = { linkImport = true }) { Icon(Icons.Default.Link, null); Spacer(Modifier.width(8.dp)); Text("Import public playlist link") } }
-        item { OutlinedButton(enabled = !vm.busy, onClick = { importPlaylist.launch(arrayOf("text/csv", "application/json", "text/plain", "application/vnd.ms-excel", "text/comma-separated-values")) }) { Text("Import Spotify playlist file") } }
+        item { OutlinedButton(enabled = !vm.busy, onClick = { importPlaylist.launch(arrayOf("application/zip", "application/x-zip-compressed", "text/csv", "application/json", "text/plain", "application/vnd.ms-excel", "text/comma-separated-values")) }) { Text("Import Spotify data file") } }
         item { Text("Paste a public YouTube or Spotify playlist link, or choose an Exportify CSV / Spotify playlist JSON. YouTube songs can play when available; Spotify imports need recording selection.", style = MaterialTheme.typography.bodySmall) }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { FilledTonalButton(onClick = { create = true }) { Text("New playlist") }; OutlinedButton(onClick = addFile) { Text("Add file") }; IconButton(onClick = scan) { Icon(Icons.Default.Sync, "Scan device") } } }
         item { ScrollableTabRow(tab, edgePadding = 0.dp) { listOf("Tracks", "Liked", "Playlists", "Albums", "Artists").forEachIndexed { i, title -> Tab(tab == i, { tab = i }, text = { Text(title) }) } } }
@@ -428,14 +504,16 @@ fun EchoApp(vm: EchoViewModel) {
     group?.let { (title, songs) -> AlertDialog(onDismissRequest = { group = null }, title = { Text(title) }, text = { LazyColumn { items(songs) { TrackRow(it, vm, playlists, favorites) { vm.play(songs, songs.indexOf(it)); group = null } } } }, confirmButton = { TextButton(onClick = { group = null }) { Text("Close") } }) }
 }
 
-private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spotify.FilePlaylist>, val total: Long?, val spotify: Boolean, val hasMore: Boolean, val skipped: Int = 0) {
+private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spotify.FilePlaylist>, val total: Long?, val spotify: Boolean, val hasMore: Boolean, val skipped: Int = 0, val archive: ByteArray? = null, val historyCount: Int = 0, val savedArtistCount: Int = 0, val savedAlbumCount: Int = 0) {
     val tracks by lazy(LazyThreadSafetyMode.NONE) { playlists.flatMap { it.tracks } }
     val complete get() = !hasMore && total != null && total == tracks.size.toLong()
 }
 
 @Composable private fun PublicPlaylistDialog(vm: EchoViewModel, initialLink: String, initialFile: android.net.Uri? = null, close: () -> Unit, imported: () -> Unit) {
+    val context = LocalContext.current
     var link by rememberSaveable(initialLink) { mutableStateOf(initialLink) }
     var preview by remember { mutableStateOf<PublicPlaylistPreview?>(null) }
+    var autoUpdate by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var matching by remember { mutableStateOf(false) }
@@ -450,13 +528,14 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
 
     fun loadPreview() {
-        preview = null; firstPageFlow.value = null; matchingSummary = null; error = null; loading = true
+        preview = null; firstPageFlow.value = null; matchingSummary = null; error = null; loading = true; autoUpdate = false
         job = scope.launch {
             try {
                 if (initialFile == null && offlineSettings.offlineOnly) error("Turn off Offline mode to load this playlist.")
                 val draft = if (initialFile != null) {
-                    val file = vm.previewSpotifyFile(initialFile)
-                    PublicPlaylistPreview(file.playlists, file.playlists.sumOf { it.tracks.size.toLong() }, true, false, file.skipped)
+                    val (file, archive) = vm.previewSpotifyFile(initialFile)
+                    PublicPlaylistPreview(file.playlists, file.playlists.sumOf { it.tracks.size.toLong() }, true, false,
+                        file.skipped, archive, file.history.size, file.savedArtists.size, file.savedAlbums.size)
                 } else {
                     val spotify = runCatching { java.net.URI(link.trim()).host.equals("open.spotify.com", true) }.getOrDefault(false)
                     if (spotify) {
@@ -470,7 +549,7 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
                     }
                 }
                 preview = draft
-                if (draft.spotify && !offlineSettings.offlineOnly && draft.tracks.any { it.sourceUri == null }) {
+                if (draft.spotify && draft.archive == null && !offlineSettings.offlineOnly && draft.tracks.any { it.sourceUri == null }) {
                     matching = true
                     val matches = vm.matchImportedTracks(draft.tracks) { done, total -> matchProgress = done to total }
                     preview = draft.copy(playlists = draft.playlists.map { playlist ->
@@ -494,7 +573,7 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
     }
     AlertDialog(onDismissRequest = close, title = { Text(if (initialFile == null) "Import public playlist link" else "Preview playlist file") }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (initialFile == null) OutlinedTextField(link, { link = it; preview = null; firstPageFlow.value = null; error = null }, enabled = !loading, label = { Text("YouTube or Spotify playlist link") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            if (initialFile == null) OutlinedTextField(link, { link = it; preview = null; firstPageFlow.value = null; error = null; autoUpdate = false }, enabled = !loading, label = { Text("YouTube or Spotify playlist link") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (matching) Text("Matching ${matchProgress.first} / ${matchProgress.second}")
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -508,6 +587,17 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
                     else -> "${result.tracks.size} songs available. The full playlist count couldn't be verified; entries may be missing."
                 })
                 Text(if (result.spotify) "Spotify imports contain metadata only and won't sync later changes." else "YouTube playlist entries are saved as playable recording links when available.", style = MaterialTheme.typography.bodySmall)
+                if (result.archive != null) {
+                    Text("This ZIP contains ${result.historyCount} listening-history plays, ${result.savedArtistCount} saved artists, and ${result.savedAlbumCount} saved albums. The full archive is encrypted on this device, separate from Echo history, sync, and backups.", style = MaterialTheme.typography.bodySmall)
+                    Text("Browsing is available from Settings. Imported playlists remain separate from these archive records.", style = MaterialTheme.typography.bodySmall)
+                }
+                if (preview != null && initialFile == null && !result.spotify && result.complete &&
+                    android.net.Uri.parse(link).getQueryParameter("list")?.startsWith("RD") == false) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = autoUpdate, onCheckedChange = { autoUpdate = it })
+                        Text("Automatically update while Echo is running")
+                    }
+                }
                 if (result.skipped > 0) Text("${result.skipped} podcast/local entries skipped.", style = MaterialTheme.typography.bodySmall)
                 matchingSummary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 LazyColumn(Modifier.heightIn(max = 220.dp)) { itemsIndexed(result.tracks) { index, track -> Text("${index + 1}. ${track.title} · ${track.artist}", modifier = Modifier.padding(vertical = 4.dp), maxLines = 2, overflow = TextOverflow.Ellipsis) } }
@@ -520,13 +610,22 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
             if (result == null) loadPreview() else {
                 loading = true
                 scope.launch {
-                    try { vm.importSpotifyFile(dev.echo.data.spotify.PlaylistFile(result.playlists, result.skipped)); imported() }
+                    var archiveSaved = false
+                    try {
+                        result.archive?.let { dev.echo.data.spotify.SpotifyArchiveStore(context).save(it); archiveSaved = true }
+                        if (autoUpdate && !result.spotify && result.complete && initialFile == null) {
+                            val playlist = result.playlists.single()
+                            vm.library.importLinkedYouTubePlaylist(link.trim(), playlist.name, playlist.tracks)
+                            vm.reloadLinkedPlaylists()
+                        } else if (result.playlists.isNotEmpty()) vm.importSpotifyFile(dev.echo.data.spotify.PlaylistFile(result.playlists, result.skipped))
+                        imported()
+                    }
                     catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                    catch (failure: Exception) { error = failure.message ?: "Playlist import failed. Try a file export." }
+                    catch (failure: Exception) { error = (if (archiveSaved) "ZIP saved locally; song import failed. " else "") + (failure.message ?: "Playlist import failed. Try a file export.") }
                     finally { loading = false }
                 }
             }
-        }) { Text(preview?.let { if (it.playlists.size == 1) "Import ${it.tracks.size} songs" else "Import ${it.playlists.size} playlists" } ?: "Preview playlist") }
+        }) { Text(preview?.let { if (it.archive != null) "Save ZIP and import" else if (it.playlists.size == 1) "Import ${it.tracks.size} songs" else "Import ${it.playlists.size} playlists" } ?: "Preview playlist") }
     }, dismissButton = { Row {
         if (matching) TextButton(onClick = { job?.cancel() }) { Text("Skip matching") }
         TextButton(onClick = { job?.cancel(); close() }) { Text(if (loading) "Cancel" else "Close") }
@@ -548,6 +647,18 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
         else firstPlayableIndex(songs, offlineSettings.offlineOnly, downloads.filter { it.status == "saved" }.map { it.trackId }.toSet())
     LazyColumn(Modifier.testTag("playlist-feed"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Hero(playlist?.name ?: "Playlist", "${songs.size} tracks · made for your moments") }
+        vm.linkedPlaylists.find { it.id == id }?.let { source -> item {
+            Text("Auto-update on · Last updated ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(source.updatedAt))}", style = MaterialTheme.typography.bodySmall)
+            vm.linkedPlaylistErrors[id]?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            Row {
+                TextButton(enabled = !offlineSettings.offlineOnly, onClick = { vm.refreshLinkedPlaylist(id) }) { Text("Refresh now") }
+                TextButton(onClick = { vm.unlinkPlaylist(id) }) { Text("Turn off auto-update") }
+            }
+            TextButton(enabled = songs.isNotEmpty(), onClick = { vm.runAction("Editable copy created") {
+                vm.library.importPlaylist(UUID.randomUUID().toString(), "Copy of ${(playlist?.name ?: "Playlist").take(190)}", songs)
+            } }) { Text("Make editable copy") }
+            Text("If you edit this playlist, Echo will keep your edits and stop replacing its songs.", style = MaterialTheme.typography.bodySmall)
+        } }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { vm.play(songs, firstPlayable) }, enabled = firstPlayable >= 0) { Icon(Icons.Default.PlayArrow, null); Text("Play") }
             FilledTonalButton(onClick = { vm.play(songs, firstPlayable, shuffle = true) }, enabled = firstPlayable >= 0) { Icon(Icons.Default.Shuffle, "Shuffle playlist") }
@@ -611,11 +722,21 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
     }) } } }, confirmButton = { TextButton(onClick = { match = null }) { Text("Cancel") } }) }
 }
 
-@Composable private fun SettingsScreen(vm: EchoViewModel, openHistory: () -> Unit, openDownloads: () -> Unit, openLicenses: () -> Unit, openProfile: () -> Unit) {
+@Composable private fun SettingsScreen(vm: EchoViewModel, openHistory: () -> Unit, openDownloads: () -> Unit, openLicenses: () -> Unit, openProfile: () -> Unit, openSpotifyData: () -> Unit) {
     val updateStatus by vm.updater.status.collectAsStateWithLifecycle()
     val connected by vm.spotify.connected.collectAsStateWithLifecycle()
     var sourcePriority by remember { mutableStateOf(vm.sources.priority) }
+    val appearance by vm.settings.appearance.collectAsStateWithLifecycle("artwork")
+    val accentName by vm.settings.guiAccent.collectAsStateWithLifecycle("violet")
+    val brightness by vm.settings.brightness.collectAsStateWithLifecycle("dark")
+    val keepBackground by vm.settings.keepBackground.collectAsStateWithLifecycle(true)
+    val savedAccent by vm.settings.guiAccent.collectAsStateWithLifecycle("violet")
+    var customAccent by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(savedAccent) { if (savedAccent.startsWith("#")) customAccent = savedAccent }
+    var spotifyFileImport by remember { mutableStateOf<android.net.Uri?>(null) }
+    var deleteSpotifyArchives by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val spotifyPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> spotifyFileImport = uri }
     val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) vm.runAction("Library exported; keep the backup private") {
             val json = vm.library.exportBackup()
@@ -638,6 +759,46 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
     }
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { SectionTitle("Make Echo yours") }
+        item { Text("Appearance", style = MaterialTheme.typography.titleMedium) }
+        item { Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Album, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
+                Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                    Text("Your Echo", style = MaterialTheme.typography.titleMedium)
+                    Text("A live preview of your colors", style = MaterialTheme.typography.bodySmall)
+                }
+                Icon(Icons.Default.PlayArrow, null, tint = MaterialTheme.colorScheme.primary)
+            }
+        } }
+        item { Text("Artwork theme follows the focused player's cover. Fixed GUI uses your chosen accent.", style = MaterialTheme.typography.bodySmall) }
+        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("artwork" to "Artwork", "gui" to "Fixed GUI").forEach { (value, label) ->
+                FilterChip(appearance == value, onClick = { vm.runAction { vm.settings.setAppearance(value) } }, label = { Text(label) }, modifier = Modifier.testTag("appearance-$value"))
+            }
+        } }
+        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("dark" to "Dark", "light" to "Light").forEach { (value, label) ->
+                FilterChip(brightness == value, onClick = { vm.runAction { vm.settings.setBrightness(value) } }, label = { Text(label) }, modifier = Modifier.testTag("brightness-$value"))
+            }
+        } }
+        if (appearance == "gui") item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("violet" to "Violet", "teal" to "Teal", "rose" to "Rose", "amber" to "Amber").forEach { (value, label) ->
+                FilterChip(accentName == value, onClick = { vm.runAction { vm.settings.setGuiAccent(value) } }, label = { Text(label) }, modifier = Modifier.testTag("accent-$value"))
+            }
+        } }
+        if (appearance == "gui") item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(customAccent, { customAccent = it.take(7) }, label = { Text("Custom hex color") }, singleLine = true, modifier = Modifier.weight(1f).testTag("custom-accent"))
+            Button(enabled = customAccent.matches(Regex("#[0-9a-fA-F]{6}")), onClick = { vm.runAction { vm.settings.setGuiAccent(customAccent) } }) { Text("Save") }
+        } }
+        item { OutlinedButton(enabled = vm.current != null && vm.controller?.isCommandAvailable(Player.COMMAND_STOP) == true,
+            onClick = { vm.controller?.stop(); vm.message = "Playback stopped. The foreground playback session stays available for background and connected controls." }, modifier = Modifier.testTag("stop-playback")) { Text("Stop playback") } }
+        item { Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Keep Echo available after closing the app")
+                Text("When off, Echo stops after playback pauses or ends and the app is closed. Locking the screen does not stop playback.", style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked = keepBackground, onCheckedChange = { value -> vm.runAction { vm.settings.setKeepBackground(value) } })
+        } }
         item { OutlinedButton(onClick = openProfile) { Text("Profile & Google account") } }
         item { OutlinedButton(onClick = openHistory) { Text("Listening history") } }
         item { Text("Echo Music ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium) }
@@ -650,6 +811,11 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
         }
         item { Text("Playlist imports", style = MaterialTheme.typography.titleMedium) }
         item { Text("Import from Library using a public YouTube or Spotify playlist link, or Spotify CSV/JSON. Link imports preview available counts first. Spotify entries have no audio and may need a recording choice; links never sync automatically.", style = MaterialTheme.typography.bodySmall) }
+        item { HorizontalDivider(); Text("Spotify data", style = MaterialTheme.typography.titleMedium) }
+        item { Text("Import a Spotify account-data ZIP to keep an encrypted local copy and browse its listening history, saved artists, and saved albums.", style = MaterialTheme.typography.bodySmall) }
+        item { OutlinedButton(onClick = openSpotifyData) { Text("Browse saved Spotify exports") } }
+        item { OutlinedButton(onClick = { spotifyPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/json", "text/plain", "text/csv")) }) { Text("Import Spotify data") } }
+        item { TextButton(onClick = { deleteSpotifyArchives = true }) { Text("Delete saved Spotify ZIPs") } }
         if (connected) item { OutlinedButton(onClick = { vm.runAction("Disconnected") { vm.spotify.disconnect() } }) { Text("Disconnect previous Spotify session") } }
         item { HorizontalDivider(); SectionTitle("Playback & storage") }
         item { OfflineSettingsSection(vm) }
@@ -668,6 +834,12 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
         item { OutlinedButton(onClick = { vm.runAction("Artwork cache cleared") { coil.Coil.imageLoader(context).memoryCache?.clear(); coil.Coil.imageLoader(context).diskCache?.clear() } }) { Text("Clear artwork cache") } }
         item { Text("Android Auto needs a compatible host and Desktop Head Unit for validation. See docs/ARCHITECTURE.md in the project.", style = MaterialTheme.typography.bodySmall) }
     }
+    spotifyFileImport?.let { uri -> PublicPlaylistDialog(vm, initialLink = "", initialFile = uri,
+        close = { spotifyFileImport = null }, imported = { spotifyFileImport = null }) }
+    if (deleteSpotifyArchives) AlertDialog(onDismissRequest = { deleteSpotifyArchives = false }, title = { Text("Delete saved Spotify ZIPs?") },
+        text = { Text("This deletes the encrypted Spotify export copies kept by Echo on this device. It does not delete imported playlists or Echo listening history.") },
+        confirmButton = { TextButton(onClick = { deleteSpotifyArchives = false; vm.runAction("Saved Spotify ZIPs deleted") { dev.echo.data.spotify.SpotifyArchiveStore(context).deleteAll() } }) { Text("Delete ZIPs") } },
+        dismissButton = { TextButton(onClick = { deleteSpotifyArchives = false }) { Text("Cancel") } })
 }
 
 @Composable private fun NameDialog(title: String, initial: String, dismiss: () -> Unit, save: (String) -> Unit) {

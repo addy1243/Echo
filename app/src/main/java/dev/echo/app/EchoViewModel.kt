@@ -98,6 +98,9 @@ class EchoViewModel @Inject constructor(
     val favorites = library.favorites.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
     val recent = library.recent.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val listeningHistory = library.listeningHistory.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    var linkedPlaylists by mutableStateOf<List<dev.echo.data.library.LinkedYouTubePlaylist>>(emptyList()); private set
+    var linkedPlaylistErrors by mutableStateOf<Map<String, String>>(emptyMap()); private set
+    private val linkedRefreshMutex = Mutex()
     var controller by mutableStateOf<MediaController?>(null); private set
     var current by mutableStateOf<MediaItem?>(null); private set
     var playing by mutableStateOf(false); private set
@@ -480,6 +483,18 @@ class EchoViewModel @Inject constructor(
         }
     }
     init {
+        if (!BuildConfig.STAGING) viewModelScope.launch {
+            while (true) {
+                try {
+                    reloadLinkedPlaylists()
+                    if (!offlineSettings.value.offlineOnly) linkedPlaylists
+                        .filter { System.currentTimeMillis() - it.updatedAt >= 6 * 60 * 60 * 1000L }
+                        .forEach { refreshLinkedPlaylistNow(it.id) }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) { message = error.message ?: "Linked playlists could not be checked" }
+                delay(30 * 60 * 1000L)
+            }
+        }
         if (BuildConfig.STAGING) viewModelScope.launch {
             val existing = library.tracks.first().map { it.id }.toSet()
             library.upsertTracks(androidStageTracks.filter { it.id !in existing })
@@ -554,25 +569,30 @@ class EchoViewModel @Inject constructor(
         if (enabled) { searchJob?.cancel(); matchingJob?.cancel() }
     }
     fun setAutomaticCache(enabled: Boolean) = offline.setAutoCache(enabled)
-    suspend fun previewSpotifyFile(uri: Uri): dev.echo.data.spotify.PlaylistFile {
-        val (text, name) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    suspend fun previewSpotifyFile(uri: Uri): Pair<dev.echo.data.spotify.PlaylistFile, ByteArray?> {
+        val (bytes, name) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
                 if (it.moveToFirst()) it.getString(0) else null
             } ?: "Imported playlist"
-            val text = (context.contentResolver.openInputStream(uri) ?: error("Cannot open playlist file")).bufferedReader().use { reader ->
-                val result = StringBuilder()
-                val buffer = CharArray(8192)
+            val bytes = (context.contentResolver.openInputStream(uri) ?: error("Cannot open playlist file")).use { reader ->
+                val result = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
                 while (true) {
                     val count = reader.read(buffer)
                     if (count < 0) break
-                    require(result.length + count <= 10_000_000) { "Playlist file is larger than 10 MB" }
-                    result.append(buffer, 0, count)
+                    require(result.size() + count <= 50_000_000) { "Spotify ZIP must be 50 MB or smaller" }
+                    result.write(buffer, 0, count)
                 }
-                result.toString()
+                result.toByteArray()
             }
-            text to name
+            bytes to name
         }
-        return library.previewPlaylistFile(text, name)
+        val zip = name.endsWith(".zip", ignoreCase = true) || bytes.size >= 4 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()
+        return if (zip) withContext(kotlinx.coroutines.Dispatchers.Default) { dev.echo.data.spotify.parseSpotifyAccountZip(bytes) } to bytes
+        else {
+            require(bytes.size <= 10_000_000) { "Playlist file is larger than 10 MB" }
+            library.previewPlaylistFile(bytes.toString(Charsets.UTF_8), name) to null
+        }
     }
 
     suspend fun importSpotifyFile(file: dev.echo.data.spotify.PlaylistFile) = library.importPlaylistFile(file)
@@ -600,6 +620,32 @@ class EchoViewModel @Inject constructor(
 
     suspend fun previewYouTubePlaylist(link: String, onFirstPage: ((dev.echo.data.provider.YouTubePlaylistPreview) -> Unit)? = null) =
         youtube.playlist(link, onFirstPage)
+
+    suspend fun reloadLinkedPlaylists() { linkedPlaylists = library.linkedYouTubePlaylists() }
+
+    fun refreshLinkedPlaylist(id: String) { viewModelScope.launch { refreshLinkedPlaylistNow(id) } }
+
+    private suspend fun refreshLinkedPlaylistNow(id: String) = linkedRefreshMutex.withLock {
+        try {
+            check(!offlineSettings.value.offlineOnly) { "Turn off Offline mode to refresh this playlist" }
+            val source = library.linkedYouTubePlaylists().singleOrNull { it.id == id } ?: return@withLock
+            val preview = youtube.playlist(source.link)
+            check(preview.complete) { "The complete playlist could not be verified; the saved copy was kept" }
+            library.refreshLinkedYouTubePlaylist(source, preview.tracks)
+            linkedPlaylistErrors = linkedPlaylistErrors - id
+            reloadLinkedPlaylists()
+            if (loadedPlaylistId == id) loadPlaylist(id)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) {
+            linkedPlaylistErrors = linkedPlaylistErrors + (id to (error.message ?: "Refresh failed; the saved copy was kept"))
+        }
+    }
+
+    fun unlinkPlaylist(id: String) = runAction {
+        library.unlinkYouTubePlaylist(id)
+        reloadLinkedPlaylists()
+        linkedPlaylistErrors = linkedPlaylistErrors - id
+    }
 
     private suspend fun discover(seeds: List<Track>, known: List<Track>): List<Track> {
         // shortcut: artist searches seed discovery; use a richer recommendation provider when available.

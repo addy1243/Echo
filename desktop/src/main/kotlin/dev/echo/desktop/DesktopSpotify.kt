@@ -7,6 +7,7 @@ import dev.echo.data.provider.automaticRecordingMatch
 import dev.echo.data.provider.youtubePlaylistId
 import dev.echo.data.spotify.SpotifyLinkPreview
 import dev.echo.data.spotify.parsePlaylistFile
+import dev.echo.data.spotify.parseSpotifyAccountZip
 import dev.echo.data.spotify.spotifyPlaylistLinkId
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -15,7 +16,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 data class DesktopImportPlaylist(val name: String, val tracks: List<Track>, val spotifyId: String? = null)
-data class DesktopPlaylistImport(val playlists: List<DesktopImportPlaylist>, val skipped: Int = 0)
+data class DesktopPlaylistImport(val playlists: List<DesktopImportPlaylist>, val skipped: Int = 0, val archive: ByteArray? = null,
+    val historyCount: Int = 0, val savedArtistCount: Int = 0, val savedAlbumCount: Int = 0)
 
 fun parseDesktopPlaylistImport(text: String, filename: String): DesktopPlaylistImport {
     val parsed = parsePlaylistFile(text, filename)
@@ -25,10 +27,16 @@ fun parseDesktopPlaylistImport(text: String, filename: String): DesktopPlaylistI
 suspend fun readDesktopPlaylistImport(file: File): DesktopPlaylistImport = withContext(Dispatchers.IO) {
     require(file.isFile && file.canRead()) { "Choose a readable playlist file" }
     // Bound the actual read as well as the initial size; the file may change while importing.
-    val bytes = file.inputStream().use { it.readNBytes(10_000_001) }
-    require(bytes.size <= 10_000_000) { "Playlist file is larger than 10 MB" }
+    val isZip = file.name.endsWith(".zip", ignoreCase = true)
+    val limit = if (isZip) 50_000_000 else 10_000_000
+    val bytes = file.inputStream().use { it.readNBytes(limit + 1) }
+    require(bytes.size <= limit) { "File is larger than ${limit / 1_000_000} MB" }
     currentCoroutineContext().ensureActive()
-    parseDesktopPlaylistImport(bytes.toString(Charsets.UTF_8), file.name)
+    if (isZip) {
+        val parsed = parseSpotifyAccountZip(bytes)
+        DesktopPlaylistImport(parsed.playlists.map { DesktopImportPlaylist(it.name, it.tracks) }, parsed.skipped, bytes,
+            parsed.history.size, parsed.savedArtists.size, parsed.savedAlbums.size)
+    } else parseDesktopPlaylistImport(bytes.toString(Charsets.UTF_8), file.name)
 }
 
 /** Call only after displaying the exposed/total track counts and receiving import confirmation. */

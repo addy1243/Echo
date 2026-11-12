@@ -14,9 +14,9 @@ android {
         applicationId = "dev.echo.music"
         minSdk = 26
         targetSdk = 36
-        versionCode = providers.gradleProperty("echoVersionCode").orElse("17").get().toInt()
-        versionName = providers.gradleProperty("echoVersionName").orElse("0.2.6").get()
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        versionCode = providers.gradleProperty("echoVersionCode").orElse("18").get().toInt()
+        versionName = providers.gradleProperty("echoVersionName").orElse("0.2.7").get()
+        testInstrumentationRunner = "dev.echo.app.EchoTestRunner"
         buildConfigField("String", "SPOTIFY_CLIENT_ID", "\"$spotifyClientId\"")
         buildConfigField("boolean", "STAGING", "false")
         manifestPlaceholders["spotifyRedirectScheme"] = "echomusic"
