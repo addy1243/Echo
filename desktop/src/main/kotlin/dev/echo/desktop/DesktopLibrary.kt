@@ -1,6 +1,7 @@
 package dev.echo.desktop
 
 import dev.echo.core.Track
+import dev.echo.data.provider.youtubePlaylistId
 import dev.echo.data.firebase.FirebaseHistoryEpoch
 import dev.echo.data.firebase.FirebaseHistoryEvent
 import dev.echo.data.firebase.FirebasePlaylist
@@ -26,6 +27,7 @@ import java.nio.file.StandardOpenOption
 import java.util.UUID
 
 data class DesktopPlaylist(val id: String, val name: String, val trackIds: List<String>, val spotifyId: String? = null)
+data class DesktopLinkedPlaylist(val link: String, val trackIds: List<String>, val updatedAt: Long)
 data class DesktopHistoryEntry(
     val id: String, val trackId: String, val event: String, val occurredAt: Long,
     val listenedMs: Long, val durationMs: Long,
@@ -39,6 +41,7 @@ data class DesktopLibraryState(
     val historyEpoch: FirebaseHistoryEpoch = FirebaseHistoryEpoch(),
     val deletedPlaylists: Set<String> = emptySet(),
     val unlikedTracks: Set<String> = emptySet(),
+    val linkedPlaylists: Map<String, DesktopLinkedPlaylist> = emptyMap(),
 )
 
 /** Local desktop data only. A failed load or write never replaces the last valid library. */
@@ -54,6 +57,7 @@ class DesktopLibrary(
         tracks = state.tracks.toList(), playlists = state.playlists.map { it.copy(trackIds = it.trackIds.toList()) },
         favorites = state.favorites.toSet(), history = state.history.toList(),
         deletedPlaylists = state.deletedPlaylists.toSet(), unlikedTracks = state.unlikedTracks.toSet(),
+        linkedPlaylists = state.linkedPlaylists.mapValues { (_, value) -> value.copy(trackIds = value.trackIds.toList()) },
     )
 
     val firebaseDeviceId: String get() = synchronized(this) { persistInstallation(); state.installationId }
@@ -133,6 +137,31 @@ class DesktopLibrary(
         return playlists
     }
 
+    @Synchronized fun importLinkedYouTubePlaylist(link: String, name: String, tracks: List<Track>): DesktopPlaylist {
+        require(!youtubePlaylistId(link).startsWith("RD") && tracks.isNotEmpty()) { "Only complete regular YouTube playlists can auto-update" }
+        val safe = tracks.map(::checkedTrack)
+        val playlist = DesktopPlaylist(UUID.randomUUID().toString(), checkedName(name), safe.map(Track::id))
+        val source = DesktopLinkedPlaylist(link, playlist.trackIds, System.currentTimeMillis())
+        commit(state.copy(tracks = (safe + state.tracks).associateBy(Track::id).values.toList(),
+            playlists = state.playlists + playlist, linkedPlaylists = state.linkedPlaylists + (playlist.id to source)))
+        return playlist
+    }
+
+    @Synchronized fun refreshLinkedYouTubePlaylist(id: String, source: DesktopLinkedPlaylist, tracks: List<Track>) {
+        val playlist = playlist(id)
+        check(state.linkedPlaylists[id] == source && playlist.trackIds == source.trackIds) {
+            "Playlist changed since its last update; your edits were kept"
+        }
+        require(tracks.isNotEmpty()) { "No songs were returned; the playlist was kept" }
+        val safe = tracks.map(::checkedTrack)
+        val ids = safe.map(Track::id)
+        commit(state.copy(tracks = (safe + state.tracks).associateBy(Track::id).values.toList(),
+            playlists = state.playlists.map { if (it.id == id) it.copy(trackIds = ids) else it },
+            linkedPlaylists = state.linkedPlaylists + (id to source.copy(trackIds = ids, updatedAt = System.currentTimeMillis()))))
+    }
+
+    @Synchronized fun unlinkYouTubePlaylist(id: String) = commit(state.copy(linkedPlaylists = state.linkedPlaylists - id))
+
     @Synchronized fun replacePlaylistRecording(playlistId: String, index: Int, expectedIds: List<String>, recording: Track) {
         val playlist = unchangedPlaylist(playlistId, expectedIds)
         require(index in playlist.trackIds.indices) { "Song no longer exists in this playlist" }
@@ -167,7 +196,8 @@ class DesktopLibrary(
 
     @Synchronized fun deletePlaylist(id: String) {
         playlist(id)
-        commit(state.copy(playlists = state.playlists.filterNot { it.id == id }, deletedPlaylists = state.deletedPlaylists + id))
+        commit(state.copy(playlists = state.playlists.filterNot { it.id == id }, deletedPlaylists = state.deletedPlaylists + id,
+            linkedPlaylists = state.linkedPlaylists - id))
     }
 
     @Synchronized fun removeFromPlaylist(id: String, index: Int, expectedTrackIds: List<String>) {
@@ -359,6 +389,9 @@ class DesktopLibrary(
             put("playlists", JSONArray(state.playlists.map { JSONObject().put("id", it.id).put("name", it.name)
                 .put("trackIds", JSONArray(it.trackIds)).put("spotifyId", it.spotifyId ?: JSONObject.NULL) }))
             put("favorites", JSONArray(state.favorites.toList()))
+            put("linkedPlaylists", JSONObject().apply { state.linkedPlaylists.forEach { (id, source) ->
+                put(id, JSONObject().put("link", source.link).put("trackIds", JSONArray(source.trackIds)).put("updatedAt", source.updatedAt))
+            } })
             put("history", JSONArray(state.history.map { JSONObject().put("id", it.id).put("trackId", it.trackId).put("event", it.event)
                 .put("occurredAt", it.occurredAt).put("listenedMs", it.listenedMs).put("durationMs", it.durationMs) }))
         }
@@ -393,7 +426,14 @@ class DesktopLibrary(
                 deleted.size <= 20_000 && unliked.size <= 20_000 && playlists.none { it.id in deleted } && favorites.none { it in unliked }) {
                 "Invalid desktop sync metadata"
             }
-            return DesktopLibraryState(tracks, playlists, favorites, history, installation, epoch, deleted, unliked)
+            val linked = root.optJSONObject("linkedPlaylists")?.let { value -> value.keys().asSequence().associateWith { id ->
+                val item = value.getJSONObject(id)
+                DesktopLinkedPlaylist(item.getString("link"), item.getJSONArray("trackIds").strings(), item.getLong("updatedAt"))
+            } }.orEmpty()
+            require(linked.size <= 2000 && linked.values.all { source ->
+                runCatching { !youtubePlaylistId(source.link).startsWith("RD") }.getOrDefault(false) && source.trackIds.size <= 50_000 && source.updatedAt >= 0
+            }) { "Invalid linked playlist metadata" }
+            return DesktopLibraryState(tracks, playlists, favorites, history, installation, epoch, deleted, unliked, linked)
         }
 
         private fun decodeTrack(item: JSONObject, imported: Boolean = false): Track = checkedTrack(Track(

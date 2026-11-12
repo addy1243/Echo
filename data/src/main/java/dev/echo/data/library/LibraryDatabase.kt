@@ -120,6 +120,8 @@ internal interface LibraryDao {
     @Query("DELETE FROM playback_history WHERE id = :id") suspend fun deleteHistory(id: Long)
     @Query("DELETE FROM favorites") suspend fun clearFavorites()
     @Query("SELECT * FROM cached_metadata WHERE provider = :provider AND cacheKey = :key") suspend fun metadata(provider: String, key: String): CachedMetadataEntity?
+    @Query("SELECT * FROM cached_metadata WHERE provider = 'linked-youtube'") suspend fun linkedPlaylists(): List<CachedMetadataEntity>
+    @Query("DELETE FROM cached_metadata WHERE provider = 'linked-youtube' AND cacheKey = :id") suspend fun deleteLinkedPlaylist(id: String)
     @Query("SELECT * FROM cached_metadata WHERE provider = 'firebase-sync' AND cacheKey LIKE 'history-id:%'") suspend fun firebaseHistoryMappings(): List<CachedMetadataEntity>
     @Upsert suspend fun upsertMetadata(metadata: CachedMetadataEntity)
     @Query("DELETE FROM cached_metadata WHERE provider = 'firebase-sync' AND cacheKey = :key") suspend fun deleteFirebaseMetadata(key: String)

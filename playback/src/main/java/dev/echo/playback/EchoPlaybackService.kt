@@ -50,6 +50,7 @@ import dev.echo.core.connected.validateEngineFence
 import dev.echo.core.connected.validateEngineObservation
 import dev.echo.core.connected.validateTransferQueue
 import dev.echo.data.library.LibraryRepository
+import dev.echo.data.library.SettingsRepository
 import dev.echo.data.library.ListeningEventType
 import dev.echo.data.firebase.ConnectedPlaybackAction
 import dev.echo.data.firebase.ConnectedPlaybackClient
@@ -77,6 +78,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -88,10 +91,14 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
+internal fun shouldStopAfterTaskRemoval(pending: Boolean, playing: Boolean, playWhenReady: Boolean, playbackState: Int): Boolean =
+    pending && !playing && (!playWhenReady || playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE)
+
 @AndroidEntryPoint
 @UnstableApi
 class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
     @Inject lateinit var repository: LibraryRepository
+    @Inject lateinit var settings: SettingsRepository
     @Inject lateinit var resolver: SourceResolver
     @Inject lateinit var sleepTimer: SleepTimerController
     @Inject lateinit var offline: OfflineRepository
@@ -135,6 +142,9 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
     private val subscriptions = mutableMapOf<String, MutableSet<MediaSession.ControllerInfo>>()
     private var recoveryJob: Job? = null
     private var recoveryAttempts = 0
+    private var taskRemovalPending = false
+    private var taskRemovalShutdown: Job? = null
+    private var taskRemovalGeneration = 0L
     private var lastPlaybackId: String? = null
     private val listeningTracker = ListeningTracker { id, event, listened, duration ->
         scope.launch {
@@ -247,7 +257,10 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
                 v2TransportRevision++
                 listeningTracker.playing(player.currentMediaItem?.mediaId, player.duration, isPlaying, SystemClock.elapsedRealtime())
                 if (isPlaying) recoveryAttempts = 0
+                finishTaskRemovalIfIdle()
             }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) { finishTaskRemovalIfIdle() }
 
             override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
                 if (reason != Player.DISCONTINUITY_REASON_AUTO_TRANSITION) v2TransportRevision++
@@ -255,6 +268,7 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) listeningTracker.finish(ListeningEventType.COMPLETED, SystemClock.elapsedRealtime())
+                finishTaskRemovalIfIdle()
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -333,7 +347,42 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
         }
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession = session
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession {
+        if (controllerInfo.packageName == packageName) {
+            taskRemovalGeneration++
+            taskRemovalPending = false
+            taskRemovalShutdown?.cancel()
+            taskRemovalShutdown = null
+        }
+        return session
+    }
+
+    override fun onTaskRemoved(rootIntent: android.content.Intent?) {
+        val generation = taskRemovalGeneration
+        scope.launch {
+            val keep = settings.keepBackground.first()
+            if (generation != taskRemovalGeneration) return@launch
+            if (keep) { super.onTaskRemoved(rootIntent); return@launch }
+            taskRemovalPending = true
+            finishTaskRemovalIfIdle()
+        }
+    }
+
+    private fun finishTaskRemovalIfIdle() {
+        if (!shouldStopAfterTaskRemoval(taskRemovalPending, player.isPlaying, player.playWhenReady, player.playbackState)) {
+            taskRemovalShutdown?.cancel()
+            taskRemovalShutdown = null
+            return
+        }
+        if (taskRemovalShutdown?.isActive == true) return
+        taskRemovalShutdown = scope.launch {
+            stopConnectedParticipationGracefully()
+            currentCoroutineContext().ensureActive()
+            if (!shouldStopAfterTaskRemoval(taskRemovalPending, player.isPlaying, player.playWhenReady, player.playbackState)) return@launch
+            taskRemovalPending = false
+            stopSelf()
+        }
+    }
 
     private suspend fun startConnectedParticipation() {
         if (!connectedParticipation.enabled) return

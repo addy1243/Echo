@@ -12,6 +12,7 @@ import androidx.room.withTransaction
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.echo.core.Playlist
 import dev.echo.core.Track
+import dev.echo.data.provider.youtubePlaylistId
 import dev.echo.data.firebase.FirebaseHistoryEpoch
 import dev.echo.data.firebase.FirebaseHistoryEvent
 import dev.echo.data.firebase.FirebasePlaylist
@@ -29,6 +30,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.json.JSONArray
+
+data class LinkedYouTubePlaylist(val id: String, val link: String, val trackIds: List<String>, val updatedAt: Long)
 
 @Singleton
 class LibraryRepository internal constructor(private val context: Context, private val database: LibraryDatabase) {
@@ -73,9 +76,45 @@ class LibraryRepository internal constructor(private val context: Context, priva
         metadata.put("deletedPlaylists", JSONArray(metadata.firebaseIds("deletedPlaylists") + id))
         saveFirebaseMetadata(metadata)
         dao.deletePlaylist(id)
+        dao.deleteLinkedPlaylist(id)
     }
 
     suspend fun playlistTracks(id: String): List<Track> = dao.playlistTracks(id).map { it.model() }
+
+    suspend fun linkedYouTubePlaylists(): List<LinkedYouTubePlaylist> = dao.linkedPlaylists().mapNotNull { row ->
+        if (!dao.hasPlaylist(row.cacheKey)) return@mapNotNull null
+        val value = JSONObject(row.payload)
+        val ids = value.getJSONArray("ids")
+        LinkedYouTubePlaylist(row.cacheKey, value.getString("link"), List(ids.length()) { ids.getString(it) }, row.fetchedAt)
+    }
+
+    suspend fun importLinkedYouTubePlaylist(link: String, name: String, tracks: List<Track>): String = database.withTransaction {
+        val sourceId = youtubePlaylistId(link)
+        require(!sourceId.startsWith("RD") && tracks.isNotEmpty()) { "Only complete regular YouTube playlists can auto-update" }
+        val id = UUID.randomUUID().toString()
+        importPlaylist(id, name, tracks)
+        saveLinkedPlaylist(id, link, tracks.map(Track::id))
+        id
+    }
+
+    suspend fun refreshLinkedYouTubePlaylist(source: LinkedYouTubePlaylist, tracks: List<Track>) = database.withTransaction {
+        requirePlaylist(source.id)
+        val current = linkedYouTubePlaylists().singleOrNull { it.id == source.id }
+        check(current == source && dao.playlistIds(source.id) == source.trackIds) {
+            "Playlist changed since its last update; your edits were kept"
+        }
+        require(tracks.isNotEmpty()) { "No songs were returned; the playlist was kept" }
+        upsertTracks(tracks)
+        replaceEntries(source.id, tracks.map(Track::id))
+        saveLinkedPlaylist(source.id, source.link, tracks.map(Track::id))
+    }
+
+    suspend fun unlinkYouTubePlaylist(id: String) = dao.deleteLinkedPlaylist(id)
+
+    private suspend fun saveLinkedPlaylist(id: String, link: String, ids: List<String>) {
+        val payload = JSONObject().put("link", link).put("ids", JSONArray(ids)).toString()
+        dao.upsertMetadata(CachedMetadataEntity("linked-youtube", id, payload, System.currentTimeMillis()))
+    }
 
     suspend fun addToPlaylist(playlistId: String, trackId: String) = database.withTransaction {
         requirePlaylist(playlistId)

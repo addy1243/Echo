@@ -1,6 +1,7 @@
 package dev.echo.desktop
 
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.loadImageBitmap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +40,19 @@ suspend fun loadDesktopArtwork(uri: String?): ImageBitmap? = withContext(Dispatc
         }
     } catch (cancelled: CancellationException) { throw cancelled }
     catch (_: Exception) { null }
+}
+
+internal suspend fun desktopArtworkAccent(uri: String?): Color? {
+    val bitmap = loadDesktopArtwork(uri) ?: return null
+    return withContext(Dispatchers.IO) {
+        val pixel = IntArray(1)
+        var red = 0L; var green = 0L; var blue = 0L
+        for (y in 0 until 8) for (x in 0 until 8) {
+            bitmap.readPixels(pixel, x * (bitmap.width - 1) / 7, y * (bitmap.height - 1) / 7, 1, 1)
+            red += pixel[0] shr 16 and 255; green += pixel[0] shr 8 and 255; blue += pixel[0] and 255
+        }
+        Color((red / 64).toInt(), (green / 64).toInt(), (blue / 64).toInt())
+    }
 }
 
 internal fun trustedDesktopArtworkUrl(uri: String?): Boolean {

@@ -38,6 +38,36 @@ class YouTubeProviderTest {
         }
     }
 
+    @Test fun directVideoSearchRequiresOneSupportedYouTubeVideoUrl() {
+        assertEquals(videoId, youtubeSearchVideoId("  https://youtu.be/$videoId  "))
+        assertEquals(videoId, youtubeSearchVideoId("https://www.youtube.com/watch?v=$videoId"))
+        assertNull(youtubeSearchVideoId("Song title"))
+        assertNull(youtubeSearchVideoId("https://youtube.com/playlist?list=$videoId"))
+    }
+
+    @Test fun playlistLinksAcceptMixIdsAndMixCountsRemainUnverified() {
+        val mixId = "RDAMVM$videoId"
+        assertEquals(mixId, youtubePlaylistId("https://www.youtube.com/watch?v=$videoId&list=$mixId"))
+        assertTrue(runCatching { youtubePlaylistId("https://youtube.com.evil.example/playlist?list=$mixId") }.isFailure)
+        assertFalse(YouTubePlaylistPreview("Mix · Song", emptyList(), total = null, hasMore = true).complete)
+    }
+
+    @Test fun mapsVideoMetadataToTheSameStablePlayableTrackWithoutNetwork() {
+        val info = org.schabi.newpipe.extractor.stream.StreamInfo(
+            0, youtubeWatchUrl(videoId), youtubeWatchUrl(videoId), StreamType.VIDEO_STREAM, videoId, "Short song", 0,
+        ).apply {
+            uploaderName = "Artist"
+            duration = 45
+            contentAvailability = ContentAvailability.AVAILABLE
+        }
+        val track = youtubeTrack(info)!!
+        assertEquals("youtube:$videoId", track.id)
+        assertEquals(youtubeWatchUrl(videoId), track.sourceUri)
+        assertEquals("Short song", track.title)
+        assertEquals("Artist", track.artist)
+        assertEquals(45_000L, track.durationMs)
+    }
+
     @Test fun searchTracksPersistTheVideoLocatorAndExcludeLiveAndPaidResults() {
         val item = StreamInfoItem(0, "https://music.youtube.com/watch?v=$videoId", "Song", StreamType.VIDEO_STREAM)
         item.uploaderName = "Artist"
