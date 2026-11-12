@@ -1,6 +1,6 @@
 # Echo Music
 
-Download [Echo 0.2.6 for Android or Windows](https://github.com/addy1243/Echo/releases/tag/v0.2.6-final). The [release record](docs/releases/0.2.6.md) lists the artifacts and verification.
+Download [Echo 0.2.7 for Android or Windows](https://github.com/addy1243/Echo/releases/tag/v0.2.7). The [release record](docs/releases/0.2.7.md) lists the artifacts and verification.
 
 Echo 0.2.4 adds public YouTube playlist-title search and public playlist-link preview/import on Android and Windows. Search results open the existing preview-and-confirm flow; capped or partial results are identified before import. Spotify imports remain public-link or playlist-file based, without Spotify title search, audio or automatic sync. See [integration details](docs/INTEGRATIONS.md).
 

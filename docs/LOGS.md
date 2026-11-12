@@ -2,6 +2,13 @@
 
 Keep the three most recent completed work sessions only. Add a concise entry after a session is complete, including its date, what changed, executed evidence, and the next improvement. Do not copy proposed or failed checks as if they passed.
 
+## 2026-11-12 — Published 0.2.7 and recorded acceptance limits
+
+- Published Android 0.2.7/code18 and Windows 0.2.7 from source commit `1222d03d284b9d1a234b369ca504617ec9f7ca84`; recorded the release assets and checksums in [the release record](releases/0.2.7.md).
+- **Executed evidence:** Public GitHub asset metadata matched the local sizes and hashes; release APK alignment/signature checks and an in-place emulator install and launch passed. The Windows public updater helper from 0.2.6 discovered, downloaded and verified the MSI and its identity. Build, test and Stage evidence is listed in the release record.
+- **Documentation and review:** Updated local release records and current-status docs. PR #1 targets main with the published source commit; GitHub reports it mergeable but exposes no check runs or commit statuses for that head. These documentation edits are local and are not part of the PR.
+- **Next improvement:** Complete the installed Windows in-app update, interactive installation, restart and library/DPAPI preservation checks; verify live provider and native keyboard behavior. The user stopped Computer Use before installed-app acceptance.
+
 ## 2026-11-12 — Verified candidate guidance and settings
 
 - Prepared 0.2.7/code18 candidate version fields, corrected Android light-theme contrast and desktop Space focus recovery, and added an actual isolated-Stage screenshot to the Windows Spotify tutorial. Made Windows Settings scrollable so lower controls remain reachable.
@@ -14,10 +21,3 @@ Keep the three most recent completed work sessions only. Add a concise entry aft
 - **Executed checks:** Candidate `:desktop:compileKotlin` and focused `DesktopPlaybackRoutingTest` plus `DesktopKeyboardShortcutsTest` passed (42s). Tests cover remote available/unavailable routing, group/Stage/local routes, key mapping, and Space repeat suppression. No interactive keyboard/text-field acceptance was run.
 - **Remaining limits:** Native Windows key propagation through text fields and controls needs installed-app acceptance.
 - **Next improvement:** Verify keyboard behavior in installed Windows Echo and complete the remaining release checks.
-
-## 2026-11-11 — Linked playlist refresh and bounded Mix previews
-
-- Ported Android and Windows device-local YouTube source metadata, opt-in update flow, manual and periodic refresh, and guarded playlist replacement. Complete regular playlists only can auto-update; incomplete refreshes or intervening playlist edits keep the saved occurrence order. YouTube Mix previews use unknown totals and a five-page cap, and remain snapshots.
-- **Executed checks:** Candidate desktop compile and focused `DesktopLibraryTest` passed, including duplicates/order, stale-edit rejection, persistence, and incomplete-result preservation. `YouTubeProviderTest` passed. Android app compile and `:data:compileDebugAndroidTestKotlin` passed. The orchestrator reports the focused Android repository instrumentation test passed on an emulator in 24 seconds.
-- **Remaining limits:** Native Windows import/periodic refresh was not exercised.
-- **Next improvement:** Complete installed-Windows acceptance; no release was made.

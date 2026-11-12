@@ -1,6 +1,6 @@
 # Release history
 
-## 0.2.7 / Android code18 — candidate
+## 0.2.7 / Android code18 — 2026-11-12
 
 - Add first-run guidance, appearance and background settings, single-instance Windows startup, playback shortcuts, and player icons.
 - Import Spotify account-data ZIPs into encrypted local archives and browse supported history, saved artists, and albums.
