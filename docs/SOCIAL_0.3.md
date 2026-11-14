@@ -2,6 +2,8 @@
 
 > **Current candidate status, 2026-11-14:** This branch contains a Phase 1 Worker/D1 and Android/Windows candidate. It is not deployed, released, or end-to-end accepted. The production API and invite hosts are empty, so the clients fail closed. Full Echo account/cloud deletion is not implemented. Later 2026-11-13 entries below are historical feasibility records, not current implementation status.
 
+The owner requested removal of the unused `chronos-reminder-scheduler` Worker; Wrangler reported it deleted. Its scheduled reminders and Worker-held secrets were removed. Wrangler could not check associated Cloudflare Containers; this remains unverified. Free-tier account quotas remain shared by any remaining or future services.
+
 ## Phase 1 candidate — 2026-11-14
 
 - `social/` contains the Worker, D1 migrations, API contract and tests. It requires a Google-backed Firebase ID token, verified email, signature and account-state checks. It uses an approximate Cloudflare per-IP 60/minute limiter and a strict D1 per-UID 300/day authentication quota plus action quotas. IPs are not stored in app tables or logged; Cloudflare's limiter is per location and approximate, and shared NAT users can affect each other. Each authenticated request can remove at most one quota record older than seven days; idle periods or backlogs may delay removal. The auth and cleanup writes consume D1 free quota. All services share their account's free quotas. No paid plan or billing may be enabled.
