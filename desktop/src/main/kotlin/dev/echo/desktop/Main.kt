@@ -825,6 +825,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                     }
                     Spacer(Modifier.height(26.dp))
                     if (page == "Settings") {
+                        DesktopSocialPanel(signedIn = account.email != null, accountId = account.email, stagingMode = stagingMode,
+                            offlineOnly = downloads.offlineOnly, google = google)
                         DesktopSpotifySettingsPage(preferences,
                             onImport = { importInitialFilePicker = true; showImport = true },
                             onBrowse = { page = "Spotify archive" },

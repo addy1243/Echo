@@ -1,0 +1,17 @@
+name = "echo-social-api"
+main = "src/worker.js"
+compatibility_date = "2026-11-13"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "echo-social-local"
+database_id = "00000000-0000-0000-0000-000000000001"
+migrations_dir = "migrations"
+
+[[ratelimits]]
+name = "IP_RATE_LIMITER"
+namespace_id = "26111314"
+
+  [ratelimits.simple]
+  limit = 60
+  period = 60

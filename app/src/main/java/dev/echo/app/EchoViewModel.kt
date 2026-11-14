@@ -147,6 +147,29 @@ class EchoViewModel @Inject constructor(
     private var pendingGoogleAccount: android.accounts.Account? = null
     private var driveAccount: String? = null
     private var accountJob: Job? = null
+    private var socialJob: Job? = null
+    @Volatile private var socialRequestGuard: (() -> Unit)? = null
+    private var socialAccountGeneration = 0L
+    private val socialApi = dev.echo.app.account.SocialApiClient(beforeRequest = {
+        check(!offline.settings.value.offlineOnly) { "Turn off Offline mode to use social" }
+        socialRequestGuard?.invoke()
+    })
+    private var socialSetupEpoch: Long? = null
+    private data class PendingSocialAction(
+        val identity: dev.echo.app.account.SocialAccountIdentity,
+        val action: suspend (String) -> Unit,
+    )
+    private var pendingSocialAction: PendingSocialAction? = null
+    var socialProfile by mutableStateOf<org.json.JSONObject?>(null); private set
+    var socialFriends by mutableStateOf<org.json.JSONArray?>(null); private set
+    var socialIncoming by mutableStateOf<org.json.JSONArray?>(null); private set
+    var socialOutgoing by mutableStateOf<org.json.JSONArray?>(null); private set
+    var socialBlocks by mutableStateOf<org.json.JSONArray?>(null); private set
+    var socialLookup by mutableStateOf<org.json.JSONObject?>(null); private set
+    var socialInvite by mutableStateOf<String?>(null); private set
+    var socialStatus by mutableStateOf<String?>(null); private set
+    val socialConfigured get() = socialApi.configured
+    val socialInvitesConfigured get() = socialApi.invitesConfigured
     private val connectedStopMutex = Mutex()
     internal val stage = AndroidStagePlayback()
     val connectedPlaybackEnabled = MutableStateFlow(!BuildConfig.STAGING && googleAccounts.email.value != null && firebaseConfigured)
@@ -172,6 +195,9 @@ class EchoViewModel @Inject constructor(
     }
     fun signOutGoogle() = accountAction {
         pendingGoogleAccount = null; driveAccount = null; driveResolution = null; googleAccountChoice = null
+        socialAccountGeneration++
+        socialJob?.cancel()
+        clearSocialState()
         setConnectedPlaybackEnabledAndAwaitStop(false)
         clearConnectedPlaybackSelection()
         firebaseSync.signOut(googleAccounts.email.value)
@@ -454,6 +480,35 @@ class EchoViewModel @Inject constructor(
         .digest(value.toByteArray(Charsets.UTF_8)).take(16).joinToString("") { "%02x".format(it) }
     fun driveResolutionLaunched() { driveResolution = null }
     fun completeDriveAuthorization(approved: Boolean) = accountAction {
+        val pending = pendingSocialAction.also { pendingSocialAction = null }
+        if (pending != null) {
+            if (!approved) { socialStatus = "Google identity access cancelled. No social profile was changed."; return@accountAction }
+            val identity = pending.identity
+            check(identity.matches(googleAccounts.email.value, googleAccounts.subject, socialAccountGeneration)) {
+                "Google account changed; social request stopped"
+            }
+            val result = googleAccounts.authorizeIdentity()
+            check(result.resolution == null && result.accessToken != null) { "Google identity access was not granted; retry social." }
+            dev.echo.app.account.requireSocialRequestAllowed(
+                identity, googleAccounts.email.value, googleAccounts.subject, socialAccountGeneration,
+                offline.settings.value.offlineOnly,
+            )
+            val session = firebaseSync.socialSession(requireNotNull(result.accessToken), identity.email)
+            dev.echo.app.account.requireSocialRequestAllowed(
+                identity, googleAccounts.email.value, googleAccounts.subject, socialAccountGeneration,
+                offline.settings.value.offlineOnly,
+            )
+            try {
+                runSocialAction(session.idToken, identity.email, identity.subject, identity.generation, pending.action)
+                check(identity.matches(googleAccounts.email.value, googleAccounts.subject, socialAccountGeneration)) {
+                    clearSocialState()
+                    error("Google account changed; social response was discarded")
+                }
+            }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { socialStatus = error.message ?: "Social request failed; retry." }
+            return@accountAction
+        }
         val signIn = pendingGoogleAccount.also { pendingGoogleAccount = null }
         if (signIn != null) {
             check(approved) { "Google sign-in cancelled. Local data was kept." }
@@ -472,15 +527,172 @@ class EchoViewModel @Inject constructor(
         loadedPlaylistId?.let(::loadPlaylist)
     }
     fun cancelAccountOperation() { accountJob?.cancel(); accountStatus = "Account operation cancelled." }
-    private fun accountAction(block: suspend () -> Unit) {
+    fun loadSocial() {
+        if (!socialApi.configured) { socialStatus = "Social is unavailable: no approved service endpoint is configured."; return }
+        if (offline.settings.value.offlineOnly) { socialStatus = "Turn off Offline mode to use social."; return }
+        socialCall { token ->
+            try {
+                val me = socialApi.getMe(token)
+                socialSetupEpoch = socialApi.readSetupEpoch(me)
+                socialProfile = me.takeIf { it.optBoolean("setupComplete", true) }
+            }
+            catch (error: dev.echo.app.account.SocialApiException) {
+                if (error.status == 404) { socialSetupEpoch = null; socialProfile = null } else throw error
+            }
+            if (socialProfile != null) loadSocialLists(token) else {
+                socialFriends = org.json.JSONArray(); socialIncoming = org.json.JSONArray()
+                socialOutgoing = org.json.JSONArray(); socialBlocks = org.json.JSONArray()
+            }
+            socialStatus = null
+        }
+    }
+    fun saveSocialProfile(username: String, displayName: String, avatar: String, version: Int? = null) = socialCall { token ->
+        val previous = socialProfile
+        val epoch = socialSetupEpoch ?: socialApi.getMe(token).let { me ->
+            val rawEpoch = socialApi.readSetupEpoch(me)
+            socialSetupEpoch = rawEpoch
+            if (me.optBoolean("setupComplete", false)) {
+                socialProfile = me
+                error("Social profile changed; refreshed. Review it and try again.")
+            }
+            rawEpoch
+        }
+        socialProfile = socialApi.saveProfile(token, username, displayName, avatar, epoch, version,
+            previous?.optBoolean("onlineVisible", true) ?: true, previous?.optBoolean("currentSongVisible", true) ?: true)
+        socialSetupEpoch = socialProfile?.getLong("setupEpoch")?.also { require(it >= 0) }
+        loadSocialLists(token)
+        socialStatus = "Social profile saved."
+    }
+    fun setSocialVisibility(online: Boolean, currentSong: Boolean) = socialCall { token ->
+        socialProfile = socialApi.setVisibility(token, requireNotNull(socialProfile) { "Set up your social profile first" }, online, currentSong)
+        socialStatus = "Sharing settings saved."
+    }
+    fun lookupSocial(username: String) {
+        socialLookup = null
+        socialCall { token -> socialLookup = socialApi.lookup(token, username.trim()); socialStatus = null }
+    }
+    fun sendSocialRequest(userId: String, version: String) = socialCall { token ->
+        socialApi.createRequest(token, userId, version); socialLookup = null; loadSocialLists(token); socialStatus = "Friend request sent."
+    }
+    fun respondSocialRequest(userId: String, action: String, version: String) = socialCall { token ->
+        socialApi.requestAction(token, userId, action, version); loadSocialLists(token); socialStatus = "Friend request ${action}ed."
+    }
+    fun removeSocialFriend(userId: String, version: String) = socialCall { token ->
+        socialApi.removeFriend(token, userId, version); loadSocialLists(token); socialStatus = "Friend removed."
+    }
+    fun blockSocialUser(userId: String, version: String) = socialCall { token ->
+        socialApi.setBlocked(token, userId, true, version); socialLookup = null; loadSocialLists(token); socialStatus = "User blocked."
+    }
+    fun unblockSocialUser(userId: String, version: String) = socialCall { token ->
+        socialApi.setBlocked(token, userId, false, version); loadSocialLists(token); socialStatus = "User unblocked."
+    }
+    fun createSocialInvite() = socialCall { token ->
+        socialInvite = socialApi.createInvite(token).getString("url")
+        socialStatus = "Invite created. It expires in 24 hours and can be used once."
+    }
+    fun redeemSocialInvite(invite: String) = socialCall { token ->
+        socialApi.redeemInvite(token, invite.trim()); loadSocialLists(token)
+        socialStatus = "Invite redeemed. A friend request was created; it was not auto-accepted."
+    }
+    fun deleteSocialProfile() = socialCall { token ->
+        socialApi.deleteSocialProfile(token)
+        socialSetupEpoch = null; socialProfile = null; socialFriends = null; socialIncoming = null; socialOutgoing = null; socialBlocks = null
+        socialLookup = null; socialInvite = null
+        socialStatus = "Social profile and relationships deleted. Your Echo account and local library were kept."
+    }
+    private suspend fun loadSocialLists(token: String) {
+        socialFriends = socialApi.friends(token).optJSONArray("items") ?: org.json.JSONArray()
+        socialIncoming = socialApi.requests(token, "incoming").optJSONArray("items") ?: org.json.JSONArray()
+        socialOutgoing = socialApi.requests(token, "outgoing").optJSONArray("items") ?: org.json.JSONArray()
+        socialBlocks = socialApi.blocks(token).optJSONArray("items") ?: org.json.JSONArray()
+    }
+    private fun socialCall(action: suspend (String) -> Unit) {
+        if (BuildConfig.STAGING) { socialStatus = "Social is disabled in Stage."; return }
         if (accountBusy) return
-        accountJob = viewModelScope.launch {
+        if (offline.settings.value.offlineOnly) { socialStatus = "Turn off Offline mode to use social."; return }
+        if (!socialApi.configured) { socialStatus = "Social is unavailable: no approved service endpoint is configured."; return }
+        socialJob = accountAction {
+            var retryToken: String? = null
+            var requestIdentity: dev.echo.app.account.SocialAccountIdentity? = null
+            try {
+                val email = googleAccounts.email.value ?: error("Sign in with Google first")
+                val subject = googleAccounts.subject ?: error("Choose your Google account again")
+                val generation = socialAccountGeneration
+                val authorization = googleAccounts.authorizeIdentity()
+                if (authorization.resolution != null) {
+                    pendingSocialAction = PendingSocialAction(
+                        dev.echo.app.account.SocialAccountIdentity(email, subject, generation), action,
+                    )
+                    driveResolution = authorization.resolution
+                    socialStatus = "Approve Google identity access to continue with social."
+                    return@accountAction
+                }
+                val token = requireNotNull(authorization.accessToken) { "Google identity access was not granted" }
+                val identity = dev.echo.app.account.SocialAccountIdentity(email, subject, generation)
+                requestIdentity = identity
+                dev.echo.app.account.requireSocialRequestAllowed(
+                    identity, googleAccounts.email.value, googleAccounts.subject, socialAccountGeneration,
+                    offline.settings.value.offlineOnly,
+                )
+                val session = firebaseSync.socialSession(token, email)
+                retryToken = session.idToken
+                dev.echo.app.account.requireSocialRequestAllowed(
+                    identity, googleAccounts.email.value, googleAccounts.subject, socialAccountGeneration,
+                    offline.settings.value.offlineOnly,
+                )
+                runSocialAction(session.idToken, email, subject, generation, action)
+                check(dev.echo.app.account.SocialAccountIdentity(email, subject, generation)
+                    .matches(googleAccounts.email.value, googleAccounts.subject, socialAccountGeneration)) {
+                    clearSocialState()
+                    error("Google account changed; social response was discarded")
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (error is dev.echo.app.account.SocialApiException && error.status == 409 &&
+                    retryToken != null && requestIdentity?.matches(googleAccounts.email.value, googleAccounts.subject, socialAccountGeneration) == true) {
+                    socialLookup = null
+                    socialFriends = null; socialIncoming = null; socialOutgoing = null; socialBlocks = null
+                    retryToken?.let { token -> runCatching { loadSocialLists(token) } }
+                    socialStatus = "Social data changed; refresh and retry"
+                } else socialStatus = error.message ?: "Social request failed; retry."
+            }
+        }
+    }
+    private suspend fun runSocialAction(token: String, email: String, subject: String, generation: Long, action: suspend (String) -> Unit) {
+        socialRequestGuard = {
+            dev.echo.app.account.requireSocialRequestAllowed(
+                dev.echo.app.account.SocialAccountIdentity(email, subject, generation),
+                googleAccounts.email.value, googleAccounts.subject, socialAccountGeneration,
+                offline.settings.value.offlineOnly,
+            )
+        }
+        try { socialRequestGuard?.invoke(); action(token) }
+        finally { socialRequestGuard = null }
+    }
+    private fun clearSocialState() {
+        pendingSocialAction = null
+        socialSetupEpoch = null
+        socialProfile = null
+        socialFriends = null
+        socialIncoming = null
+        socialOutgoing = null
+        socialBlocks = null
+        socialLookup = null
+        socialInvite = null
+        socialStatus = null
+    }
+    private fun accountAction(block: suspend () -> Unit): Job? {
+        if (accountBusy) return null
+        val job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             accountBusy = true
             try { block() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { accountStatus = error.message ?: "Google account operation failed; retry in Profile." }
-            finally { accountBusy = false }
+            finally { accountBusy = false; if (accountJob === currentCoroutineContext()[Job]) accountJob = null }
         }
+        accountJob = job
+        job.start()
+        return job
     }
     init {
         if (!BuildConfig.STAGING) viewModelScope.launch {
@@ -502,7 +714,16 @@ class EchoViewModel @Inject constructor(
                 library.importPlaylist("android-stage-mix", "Stage Mix · Silent demos", androidStageTracks)
         } else viewModelScope.launch { updater.check(manual = false) }
         viewModelScope.launch {
-            googleAccounts.email.collect { email -> connectedPlaybackEnabled.value = !BuildConfig.STAGING && email != null && firebaseConfigured }
+            var observedEmail = googleAccounts.email.value
+            googleAccounts.email.collect { email ->
+                connectedPlaybackEnabled.value = !BuildConfig.STAGING && email != null && firebaseConfigured
+                if (!email.equals(observedEmail, true)) {
+                    observedEmail = email
+                    socialAccountGeneration++
+                    socialJob?.cancel()
+                    clearSocialState()
+                }
+            }
         }
         if (BuildConfig.STAGING) viewModelScope.launch {
             stage.state.collect { state ->
@@ -566,7 +787,15 @@ class EchoViewModel @Inject constructor(
     fun clearAutomaticCache() = runAction { offline.clearAutomaticCache() }
     fun setOfflineOnly(enabled: Boolean) {
         offline.setOfflineOnly(enabled)
-        if (enabled) { searchJob?.cancel(); matchingJob?.cancel() }
+        if (enabled) {
+            searchJob?.cancel(); matchingJob?.cancel()
+            if (socialJob?.isActive == true || pendingSocialAction != null) {
+                pendingSocialAction = null
+                socialJob?.cancel()
+                accountJob?.cancel()
+                socialStatus = "Social paused because Offline mode was turned on."
+            }
+        }
     }
     fun setAutomaticCache(enabled: Boolean) = offline.setAutoCache(enabled)
     suspend fun previewSpotifyFile(uri: Uri): Pair<dev.echo.data.spotify.PlaylistFile, ByteArray?> {

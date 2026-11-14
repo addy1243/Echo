@@ -11,6 +11,12 @@ Updated 2026-11-09. This is the durable requirements page for all agents. Curren
 - This checkout may contain mixed, uncommitted user changes. Inspect current status before editing. Do not blanket stage, reset, commit, or publish it.
 - The reported queue error at position 52 came from a non-portable local/Spotify recording, not a 51-song cap. Transfer supports up to 500 occurrences and requires canonical YouTube recording identity. The owner removed only that queue occurrence; do not rewrite saved playlists or silently substitute a recording.
 
+## Planned social profiles and friendships
+
+- The isolated `social-integration` worktree contains a Phase 1 candidate based on remote `main` `5519096c6704645ef20e962e26e1e6340176e0cd`. It is not deployed or released. The Android and Windows social API and invite origins are blank; social is unavailable until separately authorized configuration and deployment. See [SOCIAL_0.3.md](SOCIAL_0.3.md).
+- Cloudflare Workers/D1 Free is the selected backend candidate. Zero cost is mandatory: do not enable billing or paid plans. Quota exhaustion can make social unavailable, without weakening privacy. The Worker must not receive Firebase library credentials. Full Echo account/cloud/Auth deletion is not implemented; a separately reviewed, resumable privilege boundary is required and the local library must be retained.
+- Social setup is optional. On confirmed setup, online and current-song sharing start enabled and can be independently disabled; sign-in alone must never publish activity. Phase 1 publishes no activity or listening sessions. Profiles, usernames, friend requests, blocks and social-only deletion have candidate code and require the verification and limitations in the social plan.
+
 ## User data, identity, and security
 
 - Preserve local libraries, saved playlists, history, preferences, account credentials, Android UID, Android signing identity, and Windows DPAPI data. No uninstall or data clearing is allowed.

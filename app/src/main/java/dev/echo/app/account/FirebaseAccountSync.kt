@@ -138,6 +138,35 @@ class FirebaseAccountSync @Inject constructor(
         }
     }
 
+    /** Creates or refreshes only the Firebase identity session used by social; it never syncs library data. */
+    suspend fun socialSession(googleAccessToken: String, expectedAccount: String): FirebaseSession = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            val ticket = generation.get()
+            val subject = accounts.subject?.takeIf { it.isNotBlank() } ?: error("Sign in with Google before using social")
+            check(accounts.email.value.equals(expectedAccount, true)) { "Google account changed; retry social setup" }
+            val config = EchoFirebaseProject.configuration()
+            val key = accountKey(config.projectId, expectedAccount)
+            val cached = credentials.get(key)?.let(::readSession)?.takeIf { it.second == subject }?.first
+            val auth = FirebaseAuthRest(config)
+            val session = when {
+                cached == null -> auth.signInGoogle(googleAccessToken, expectedAccount)
+                cached.expiresAt <= System.currentTimeMillis() + 60_000 -> auth.refresh(cached)
+                else -> cached
+            }
+            check(generation.get() == ticket && accounts.email.value.equals(expectedAccount, true) && accounts.subject == subject) {
+                "Account changed; social request stopped"
+            }
+            require(session.email.equals(expectedAccount, true)) { "Firebase account changed; reconnect Google" }
+            if (session !== cached) synchronized(accountLock) {
+                check(generation.get() == ticket && accounts.email.value.equals(expectedAccount, true) && accounts.subject == subject) {
+                    "Account changed; social request stopped"
+                }
+                credentials.set(key, sessionJson(session, subject))
+            }
+            session
+        }
+    }
+
     fun signOut(expectedEmail: String?) {
         synchronized(accountLock) {
             generation.incrementAndGet()

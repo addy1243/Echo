@@ -1,0 +1,178 @@
+openapi: 3.1.0
+info:
+  title: Echo Social Phase 1 API
+  version: 0.1.0
+  description: >-
+    Every non-OPTIONS request requires a Firebase ID token for the explicitly configured project. The token must be
+    email-verified, signed in with Google (firebase.sign_in_provider=google.com), and its Firebase account must have
+    a linked google.com provider. Unknown signing-key IDs are rejected without an immediate key fetch; cached keys
+    refresh at expiry and are capped at five minutes, so key rotation can temporarily reject newly signed tokens.
+    The Worker enforces a strict D1 limit of 300 authenticated requests per Firebase UID per UTC day before account
+    lookup, plus endpoint-specific daily quotas. Each authenticated request opportunistically removes at most one
+    quota row older than seven days using an expiry index; cleanup can lag during idle periods or while the backlog
+    exceeds request volume. A Cloudflare IP rate-limit binding allows 60 requests per IP per
+    minute per Cloudflare location; it is approximate and may exceed the threshold while counters synchronize.
+    Shared mobile or household IPs can throttle multiple users. OPTIONS preflight requests bypass authentication and
+    these limits. Missing IP limiter configuration or Cloudflare client IP fails closed.
+servers:
+  - url: https://social.example.invalid
+    description: Test-only placeholder; no production endpoint is configured.
+security:
+  - FirebaseBearer: []
+paths:
+  /v1/me:
+    get:
+      description: Returns setupComplete=false and setupEpoch before setup; a configured profile also carries setupEpoch and its version.
+      responses:
+        '200': { description: Own profile or setupComplete false; both variants include the current setupEpoch. Re-read after deletion before setup. }
+    put:
+      description: Initial setup omits version; updates require the current profile version.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, displayName, avatar, onlineVisible, currentSongVisible, setupEpoch]
+              properties:
+                username: { type: string, pattern: '^[a-z0-9_]{3,24}$' }
+                displayName: { type: string, maxLength: 40 }
+                avatar: { type: string, enum: [avatar_1, avatar_2, avatar_3, avatar_4, avatar_5, avatar_6, avatar_7, avatar_8] }
+                onlineVisible: { type: boolean }
+                currentSongVisible: { type: boolean }
+                setupEpoch: { type: integer, minimum: 0 }
+                version: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Profile DTO with setupEpoch and monotonic profile version }
+        '409': { description: Stale profile version }
+  /v1/users/{username}:
+    get:
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 24 }
+      responses:
+        '200': { description: Exact profile DTO with a read-only actorNonce.targetNonce relationshipVersion; lookup allocates no per-pair storage }
+        '404': { description: Missing or blocked profile }
+  /v1/friends:
+    get:
+      responses: { '200': { description: Up to 50 friend DTOs with opaque string relationshipVersion tokens in caller-to-friend order } }
+  /v1/requests:
+    get:
+      parameters:
+        - in: query
+          name: direction
+          required: true
+          schema: { type: string, enum: [incoming, outgoing] }
+      responses: { '200': { description: Request DTOs in an items array, maximum 50; each version is an opaque string token in caller-to-counterpart order } }
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, expectedVersion]
+              properties:
+                userId: { type: string }
+                expectedVersion: { $ref: '#/components/schemas/RelationshipVersion' }
+      responses: { '201': { description: Pending mutual request; never auto-accepted } }
+  /v1/requests/{userId}/{action}:
+    post:
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema: { type: string }
+        - in: path
+          name: action
+          required: true
+          schema: { type: string, enum: [accept, decline, cancel] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { $ref: '#/components/schemas/RelationshipVersion' }
+      responses: { '200': { description: Pair DTO with next relationship version } }
+  /v1/blocks:
+    get:
+      responses:
+        '200':
+          description: Blocker-owned entries, maximum 50. username, displayName, and avatar are included only while the target profile exists; no email or other profile data is returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 50
+                    items: { $ref: '#/components/schemas/BlockedUser' }
+  /v1/blocks/{userId}:
+    put:
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [expectedVersion] } } } }
+      responses: { '200': { description: Blocked pair DTO } }
+    delete:
+      description: Removes the caller's block. It remains available when the target has deleted their social profile, using retained lifecycle nonces.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { $ref: '#/components/schemas/RelationshipVersion' }
+      responses: { '200': { description: Unblocked pair DTO } }
+  /v1/friends/{userId}:
+    delete:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { $ref: '#/components/schemas/RelationshipVersion' }
+      responses: { '200': { description: Unfriended pair DTO } }
+  /v1/invites:
+    post:
+      responses: { '201': { description: HTTPS invite URL from validated INVITE_BASE_URL, token fragment never sent to landing host, expires in 24 hours } }
+      description: Returns 503 invite_links_unconfigured until the owner sets a validated HTTPS invite base URL.
+  /v1/invites/redeem:
+    post:
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string, maxLength: 128 } } } } } }
+      responses: { '201': { description: Creates a pending request; does not accept it } }
+  /v1/me/social:
+    delete:
+      responses: { '200': { description: Deletes the social profile and owned relationships; increments and returns setupEpoch and rotates the caller lifecycle nonce. Retains one lifecycle row per identity to invalidate stale relationship tokens, preserves blocks created by other users, and imposes no lifetime per-pair lookup cap. Re-read /v1/me before setting up again. Quota rows older than seven days are opportunistically pruned at no more than one row per authenticated request, so idle periods or a backlog can delay cleanup. This is not full Firebase Auth or local-library deletion. Cloudflare D1 Time Travel may retain recoverable database history for its configured retention period. } }
+components:
+  securitySchemes:
+    FirebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Firebase ID token
+      description: Email-verified Google sign-in token for the explicitly configured Firebase project, with google.com linked on the Firebase account.
+  schemas:
+    BlockedUser:
+      type: object
+      required: [userId, relationshipVersion]
+      properties:
+        userId: { type: string }
+        username: { type: string, description: Omitted after the target deletes their social profile. }
+        displayName: { type: string, description: Omitted after the target deletes their social profile. }
+        avatar: { type: string, enum: [avatar_1, avatar_2, avatar_3, avatar_4, avatar_5, avatar_6, avatar_7, avatar_8] }
+        relationshipVersion: { $ref: '#/components/schemas/RelationshipVersion' }
+    RelationshipVersion:
+      type: string
+      minLength: 65
+      maxLength: 65
+      pattern: '^[0-9a-f]{32}\.[0-9a-f]{32}$'
+      description: Actor lifecycle nonce, a dot, then counterpart lifecycle nonce. Both 128-bit lowercase hexadecimal nonces rotate atomically with relationship mutations.

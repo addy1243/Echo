@@ -60,6 +60,7 @@ dependencies {
     implementation(libs.coroutines.android)
     debugImplementation(libs.compose.tooling)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.compose.test)
     androidTestImplementation(libs.androidx.test)
