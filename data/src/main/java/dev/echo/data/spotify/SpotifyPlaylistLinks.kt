@@ -15,7 +15,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 
-data class SpotifyLinkPreview(val name: String, val tracks: List<Track>, val total: Int?) {
+data class SpotifyLinkPreview(val name: String, val tracks: List<Track>, val total: Int?, val skippedUnplayablePlaceholder: Boolean = false) {
     val complete: Boolean get() = total != null && total == tracks.size
 }
 
@@ -46,7 +46,7 @@ class SpotifyPlaylistLinks @Inject constructor() {
             catch (_: org.json.JSONException) { null }
         currentCoroutineContext().ensureActive()
         require(total == null || total >= embedded.tracks.size) { "Spotify returned inconsistent playlist counts. Try again later." }
-        embedded.copy(total = total)
+        embedded.copy(total = total?.takeUnless { embedded.skippedUnplayablePlaceholder && it <= embedded.tracks.size })
     }
 
     private fun page(url: String): String {
@@ -78,6 +78,7 @@ internal fun parseSpotifyEmbed(html: String, id: String): SpotifyLinkPreview {
     require(name.isNotEmpty() && name.length <= 200) { "Spotify returned an invalid playlist name" }
     val list = entity.getJSONArray("trackList")
     require(list.length() <= 50_000) { "Spotify returned too many tracks" }
+    var skippedUnplayablePlaceholder = false
     val tracks = (0 until list.length()).mapNotNull { index ->
         val item = list.getJSONObject(index)
         if (item.optString("entityType") != "track") return@mapNotNull null
@@ -86,11 +87,15 @@ internal fun parseSpotifyEmbed(html: String, id: String): SpotifyLinkPreview {
         val title = item.getString("title").trim()
         val artist = item.getString("subtitle").trim()
         val duration = item.getLong("duration")
+        if (!item.optBoolean("isPlayable", true) && title.isEmpty() && artist.isEmpty() && duration == 0L) {
+            skippedUnplayablePlaceholder = true
+            return@mapNotNull null
+        }
         require(title.isNotEmpty() && artist.isNotEmpty() && title.length <= 1000 && artist.length <= 1000 && duration >= 0) { "Spotify returned incomplete song metadata" }
         Track("spotify:$trackId", title, artist, durationMs = duration, provider = "spotify")
     }
     require(tracks.isNotEmpty()) { "No public song list is available. Private or restricted playlists need a file export." }
-    return SpotifyLinkPreview(name, tracks, null)
+    return SpotifyLinkPreview(name, tracks, null, skippedUnplayablePlaceholder)
 }
 
 internal fun spotifyPublicPlaylistCount(html: String, id: String): Int? {

@@ -39,6 +39,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.Key
@@ -731,6 +734,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     }
     val dockQueueOpen = queueOpen && !fullPlayerOnScreen && !remoteFocused && focusedGroup == null && playback.current != null
     val spaceShortcutRepeatGuard = remember { SpaceShortcutRepeatGuard() }
+    val spaceShortcutInputMode = remember { SpaceShortcutInputMode() }
+    var textInputFocused by remember { mutableStateOf(false) }
     val windowInfo = LocalWindowInfo.current
     LaunchedEffect(windowInfo.isWindowFocused) {
         if (!windowInfo.isWindowFocused) spaceShortcutRepeatGuard.release()
@@ -741,6 +746,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             return false
         }
         if (event.type != KeyEventType.KeyDown) return false
+        if (event.key == Key.Spacebar && !spaceShortcutInputMode.shouldHandlePlaybackShortcut(textInputFocused)) return false
         val action = desktopShortcutAction(event.key, event.isCtrlPressed, event.isShiftPressed, event.isAltPressed)
         if (action == DesktopShortcutAction.TOGGLE_PLAYBACK && !spaceShortcutRepeatGuard.press()) return true
         return when (action) {
@@ -755,13 +761,24 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             null -> false
         }
     }
-    Surface(Modifier.fillMaxSize(), color = Canvas) {
-        Box(Modifier.fillMaxSize().onKeyEvent(::handleShortcut).onPreviewKeyEvent {
+    Surface(Modifier.fillMaxSize().onPointerEvent(PointerEventType.Press) { spaceShortcutInputMode.pointerInput() }
+        .onKeyEvent(::handleShortcut).onPreviewKeyEvent {
             if (dockQueueOpen && it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
                 queueOpen = false
                 true
+            } else if (it.key == Key.Spacebar && it.type == KeyEventType.KeyUp &&
+                spaceShortcutInputMode.shouldHandlePlaybackShortcut(textInputFocused)) {
+                spaceShortcutRepeatGuard.release()
+            } else if (it.key == Key.Spacebar && it.type == KeyEventType.KeyDown &&
+                spaceShortcutInputMode.shouldHandlePlaybackShortcut(textInputFocused) && !it.isCtrlPressed && !it.isAltPressed) {
+                if (spaceShortcutRepeatGuard.press()) toggleFocusedPlayback()
+                true
+            } else if (it.type == KeyEventType.KeyDown) {
+                spaceShortcutInputMode.keyboardInput()
+                false
             } else false
-        }.semantics { if (fullPlayerOnScreen) hideFromAccessibility() }) {
+        }, color = Canvas) {
+        Box(Modifier.fillMaxSize().semantics { if (fullPlayerOnScreen) hideFromAccessibility() }) {
         Column {
             Row(Modifier.weight(1f)) {
                 Column(Modifier.width(220.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceVariant).verticalScroll(rememberScrollState()).padding(22.dp)) {
@@ -802,7 +819,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                 }
                 Column(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 30.dp, vertical = 24.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedTextField(query, { query = it }, modifier = Modifier.weight(1f),
+                        OutlinedTextField(query, { query = it }, modifier = Modifier.weight(1f).onFocusChanged { textInputFocused = it.isFocused },
                             placeholder = { Text("Search songs, artists or playlists") }, singleLine = true,
                             shape = RoundedCornerShape(28.dp), keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                                 imeAction = androidx.compose.ui.text.input.ImeAction.Search),
@@ -825,7 +842,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                     }
                     Spacer(Modifier.height(26.dp))
                     if (page == "Settings") {
-                        DesktopSpotifySettingsPage(preferences,
+                        DesktopSpotifySettingsPage(preferences, onTextInputFocusChanged = { textInputFocused = it },
                             onImport = { importInitialFilePicker = true; showImport = true },
                             onBrowse = { page = "Spotify archive" },
                             onDelete = { scope.launch {
@@ -1125,7 +1142,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         confirmButton = { TextButton(onClick = { showStageAdmin = false }) { Text("Done") } },
     )
     if (fullPlayerOnScreen) {
-        Box(Modifier.fillMaxSize().onKeyEvent(::handleShortcut).onPreviewKeyEvent {
+        Box(Modifier.fillMaxSize().onPreviewKeyEvent {
             if (it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
                 if (queueOpen) queueOpen = false else fullPlayerOpen = false
                 true
@@ -1223,13 +1240,13 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     notice?.let { message -> AlertDialog(onDismissRequest = { notice = null }, title = { Text("Echo") },
         text = { Text(message) }, confirmButton = { TextButton(onClick = { notice = null }) { Text("OK") } }) }
     if (newPlaylist) AlertDialog(onDismissRequest = { newPlaylist = false }, title = { Text("New playlist") },
-        text = { OutlinedTextField(playlistName, { playlistName = it.take(200) }, singleLine = true, label = { Text("Name") }) },
+        text = { OutlinedTextField(playlistName, { playlistName = it.take(200) }, modifier = Modifier.onFocusChanged { textInputFocused = it.isFocused }, singleLine = true, label = { Text("Name") }) },
         confirmButton = { TextButton(enabled = playlistName.isNotBlank(), onClick = {
             val name = playlistName
             disk { store.createPlaylist(name) }; playlistName = ""; newPlaylist = false
         }) { Text("Create") } }, dismissButton = { TextButton(onClick = { newPlaylist = false }) { Text("Cancel") } })
     renamePlaylist?.let { playlist -> AlertDialog(onDismissRequest = { renamePlaylist = null }, title = { Text("Rename playlist") },
-        text = { OutlinedTextField(playlistName, { playlistName = it.take(200) }, singleLine = true, label = { Text("Name") }) },
+        text = { OutlinedTextField(playlistName, { playlistName = it.take(200) }, modifier = Modifier.onFocusChanged { textInputFocused = it.isFocused }, singleLine = true, label = { Text("Name") }) },
         confirmButton = { TextButton(enabled = playlistName.isNotBlank(), onClick = {
             val name = playlistName; disk { store.renamePlaylist(playlist.id, name) }; renamePlaylist = null
         }) { Text("Save") } }, dismissButton = { TextButton(onClick = { renamePlaylist = null }) { Text("Cancel") } }) }
