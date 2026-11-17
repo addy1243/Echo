@@ -2,11 +2,12 @@
 
 Keep the three most recent completed work sessions only. Add a concise entry after a session is complete, including its date, what changed, executed evidence, and the next improvement. Do not copy proposed or failed checks as if they passed.
 
-## 2026-11-17 — Prepare 0.2.7.1 release candidate
+## 2026-11-17 — Publish 0.2.7.1
 
 - Isolated the requested Spotify, Android recovery and artwork, and Windows Space fixes from published 0.2.7. Android is version 0.2.7.1/code19; the Windows MSI and app use 0.2.8 for compatibility with existing updaters.
 - **Executed checks:** Core, data, Android playback and app, and desktop unit suites passed. Spotify parser tests and Android debug compilation passed. Review identified and prompted fixes for the recovery helper and backup durability. Artifact and runtime acceptance remain separate.
-- **Next improvement:** Complete release builds, signer and installer identity checks, emulator recovery, native Windows keyboard handling, and the installed-app updater and data-preservation gates.
+- **Release evidence:** Published the four assets at `v0.2.7.1` from `6ba33c20a6fd9ed0f6a74bfd5201a3ca5dd1bab2`. Android release build/lint, original signer and package checks, and an in-place 0.2.7 to 0.2.7.1 emulator upgrade and launch passed. MSI identity, public asset checks, updater helper download, and installed 0.2.7 app discovery/download/verification passed. See [the release record](releases/0.2.7.1.md).
+- **Next improvement:** Complete interactive Windows installation, restart and data/credential preservation, and verify emulator recovery and native keyboard behavior.
 
 ## 2026-11-12 — Verified candidate guidance and settings
 
