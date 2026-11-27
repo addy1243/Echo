@@ -78,3 +78,9 @@ The Gradle root includes all five modules. The desktop app includes selected fil
 Android targets API 36, minimum API 26, and Java/Kotlin 17 bytecode. The Windows desktop runtime is packaged with the project's GPL Temurin JDK 21 distribution. Use the [Windows shipping skill](../.agents/skills/echo-windows-shipping/SKILL.md) for versioning, packaging, and installer acceptance.
 
 Android and Windows Stage position the compact player above browse content, measuring it for trailing scroll clearance; the normal Windows footer layout remains unchanged.
+
+## Android system dream and backup matching
+
+Android exposes a user-selected DreamService independently of foreground Standby. The system controls dream scheduling; the passive surface reads an existing playback session without transport mutations, hides metadata behind keyguard, and does not promise activation after manual lock. Its artwork-only fallback is separate from the foreground Cinema renderer. Windows Stage requires the default input desktop and cannot render over the secure lock screen.
+
+Windows playlist rows and Auto match share recording eligibility for unresolved Spotify and pathless local imports; explicit matching keeps snapshot validation and duplicate occurrences.

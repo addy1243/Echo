@@ -94,6 +94,9 @@ import kotlinx.coroutines.withTimeout
 internal fun shouldStopAfterTaskRemoval(pending: Boolean, playing: Boolean, playWhenReady: Boolean, playbackState: Int): Boolean =
     pending && !playing && (!playWhenReady || playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE)
 
+const val DREAM_CONTROLLER_HINT = "dev.echo.playback.dream_controller"
+@Volatile var echoPlaybackServiceRunning = false
+
 @AndroidEntryPoint
 @UnstableApi
 class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
@@ -207,6 +210,7 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
         }
         session = builder.build()
+        echoPlaybackServiceRunning = true
         connectedParticipation.attachNativeBridge(this)
         connectedParticipation.updateDisplacedMoveOperationId(runCatching { latestDisplacedMoveOperationId() }.getOrNull())
         scope.launch {
@@ -348,7 +352,8 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession {
-        if (controllerInfo.packageName == packageName) {
+        if (controllerInfo.packageName == packageName &&
+            !controllerInfo.connectionHints.getBoolean(DREAM_CONTROLLER_HINT, false)) {
             taskRemovalGeneration++
             taskRemovalPending = false
             taskRemovalShutdown?.cancel()
@@ -356,6 +361,7 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
         }
         return session
     }
+
 
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
         val generation = taskRemovalGeneration
@@ -1022,6 +1028,7 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
     }
 
     override fun onDestroy() {
+        echoPlaybackServiceRunning = false
         sleepTimer.cancel()
         stopConnectedParticipation()
         connectedParticipation.detachNativeBridge(this)

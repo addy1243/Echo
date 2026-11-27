@@ -858,6 +858,17 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
         run {
             item { OutlinedButton(onClick = openStageStandby, modifier = Modifier.testTag("stage-standby-open")) { Text("Open Standby screen") } }
             item { Text("Standby uses Cinema in landscape and Ambient in portrait.", style = MaterialTheme.typography.bodySmall) }
+            item {
+                val context = LocalContext.current
+                val dreamSettingsIntent = remember { Intent(android.provider.Settings.ACTION_DREAM_SETTINGS) }
+                val hasDreamSettings = dreamSettingsIntent.resolveActivity(context.packageManager) != null
+                OutlinedButton(enabled = hasDreamSettings, onClick = {
+                    runCatching { context.startActivity(dreamSettingsIntent) }
+                }, modifier = Modifier.testTag("system-dream-settings")) {
+                    Text(if (hasDreamSettings) "System standby settings" else "System standby unavailable")
+                }
+            }
+            item { Text("Android controls the system dream's timeout, charging and docking rules.", style = MaterialTheme.typography.bodySmall) }
             item { Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) { Text("Start Standby when idle"); Text("Only while Echo is open and in the foreground.", style = MaterialTheme.typography.bodySmall) }
                 Switch(standbySettings.automaticEnabled, { setStandbySettings(standbySettings.copy(automaticEnabled = it)) }, modifier = Modifier.testTag("standby-auto"))

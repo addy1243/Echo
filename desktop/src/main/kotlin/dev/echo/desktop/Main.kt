@@ -1253,7 +1253,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                             }
                             TextButton(onClick = { playlistName = playlist.name; renamePlaylist = playlist }) { Text("Rename") }
                             TextButton(onClick = { deletePlaylist = playlist }) { Text("Delete") }
-                            TextButton(enabled = matchingProgress == null && !downloads.offlineOnly, onClick = {
+                            TextButton(enabled = matchingProgress == null && !downloads.offlineOnly && tracks.any(::desktopNeedsRecording), onClick = {
                                 val expected = playlist.trackIds.toList()
                                 val items = tracks.toList()
                                 matchingJob = scope.launch {
@@ -1341,7 +1341,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                                 onDownload = track.takeIf { it.provider == "youtube" }?.let { {
                                     try { offline.download(it) } catch (e: Exception) { notice = e.message ?: "Download could not start" }
                                 } },
-                                onFind = selectedPlaylist?.let { playlist -> {
+                                onFind = selectedPlaylist?.takeIf { desktopNeedsManualRecording(track) }?.let { playlist -> {
                                     recordingTarget = Triple(playlist.id, index, playlist.trackIds.toList())
                                     playlistSearch = false
                                     query = "${track.artist} ${track.title}".take(200); search(forceSongs = true)

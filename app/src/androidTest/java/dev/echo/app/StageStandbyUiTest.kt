@@ -137,8 +137,9 @@ class StageStandbyUiTest {
             }
             compose.waitUntil(10_000) { compose.onAllNodesWithTag("stage-standby-screen").fetchSemanticsNodes().isNotEmpty() }
             compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-            compose.onNodeWithTag("stage-standby-open").assertIsDisplayed()
             compose.activityRule.scenario.onActivity { assertTrue(it.standbyClock.idleFor(android.os.SystemClock.elapsedRealtime()) < 5_000) }
+            compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("stage-standby-open"))
+            compose.onNodeWithTag("stage-standby-open").assertIsDisplayed()
         } finally { store.update(before) }
     }
 

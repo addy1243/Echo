@@ -41,7 +41,7 @@ fun DesktopImportDialog(store: DesktopLibrary, spotifyArchiveDirectory: java.nio
             try {
                 val result = action(); pending = result.first; description = result.second
                 val originals = result.first.playlists.flatMap { it.tracks }
-                val unmatched = originals.filter { it.provider == "spotify" && it.sourceUri == null }.distinctBy { it.id }
+                val unmatched = originals.filter(::desktopNeedsRecording).distinctBy { it.id }
                 if (result.first.archive == null && onlineAllowed && unmatched.isNotEmpty()) {
                     matching = true
                     val limit = unmatched.take(25)

@@ -1,0 +1,5 @@
+<resources>
+    <string name="dream_echo">ECHO</string>
+    <string name="dream_artwork">Current Echo artwork</string>
+    <string name="dream_playback_continues">Playback continues in the background</string>
+</resources>

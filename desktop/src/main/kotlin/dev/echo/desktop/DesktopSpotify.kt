@@ -60,7 +60,7 @@ suspend fun automaticDesktopMatches(
     search: suspend (String) -> List<Track>,
     onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
 ): Map<String, Track> {
-    val missing = items.filter { it.provider == "spotify" && it.sourceUri == null }.distinctBy { it.id }
+    val missing = items.filter(::desktopNeedsRecording).distinctBy { it.id }
     require(missing.isNotEmpty()) { "This playlist has no unmatched imported songs" }
     val local = localTracks.filter { it.provider == "local" && it.sourceUri != null }
     val result = mutableMapOf<String, Track>()
@@ -75,3 +75,9 @@ suspend fun automaticDesktopMatches(
     }
     return result
 }
+
+internal fun desktopNeedsRecording(track: Track): Boolean =
+    track.provider in setOf("spotify", "local") && track.sourceUri == null
+
+internal fun desktopNeedsManualRecording(track: Track): Boolean =
+    track.provider !in setOf("local", "youtube") || track.sourceUri.isNullOrBlank()
