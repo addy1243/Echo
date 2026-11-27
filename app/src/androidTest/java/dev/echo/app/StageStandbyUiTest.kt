@@ -1,5 +1,11 @@
 package dev.echo.app
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -18,6 +24,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import android.content.Context
 import androidx.lifecycle.Lifecycle
+import androidx.media3.common.VideoSize
 import dev.echo.core.Track
 import dev.echo.core.PlayableSource
 import java.util.concurrent.atomic.AtomicBoolean
@@ -111,10 +118,21 @@ class StageStandbyUiTest {
                 compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("standby-auto"))
                 compose.onNodeWithTag("standby-auto").performClick()
             }
-            compose.waitUntil(10_000) { compose.activity.hasWindowFocus() }
+            val activity = compose.activity
+            compose.waitUntil(10_000) { compose.runOnIdle { activity.hasWindowFocus() } }
+            val foregroundProbe = StageStandbySettings(automaticEnabled = true, idleTimeoutMs = 1L)
+            compose.activityRule.scenario.onActivity {
+                // Simulate a resume callback that ran before the lifecycle reached RESUMED.
+                it.standbyClock.setForeground(false, android.os.SystemClock.elapsedRealtime())
+            }
+            compose.waitUntil(10_000) {
+                compose.runOnIdle {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    activity.standbyClock.shouldEnter(foregroundProbe, now, charging = null)
+                }
+            }
             compose.activityRule.scenario.onActivity {
                 val now = android.os.SystemClock.elapsedRealtime()
-                it.standbyClock.setForeground(true, now)
                 it.standbyClock.recordInteraction(now - 1_000_000L)
             }
             compose.waitUntil(10_000) { compose.onAllNodesWithTag("stage-standby-screen").fetchSemanticsNodes().isNotEmpty() }
@@ -209,6 +227,25 @@ class StageStandbyUiTest {
         } }
         compose.onNodeWithText("Ambient fallback fixture").assertIsDisplayed()
         compose.onNodeWithText("Echo Stage").assertIsDisplayed()
+    }
+
+    @Test fun cinemaFitsPortraitAndAnamorphicVideoUsingDecodedPixelAspect() {
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            Box(Modifier.size(200.dp, 100.dp).testTag("picture-pane"), contentAlignment = Alignment.Center) {
+                Box(Modifier.stageCinemaVideoFit(VideoSize(300, 600)).testTag("portrait-video"))
+                Box(Modifier.stageCinemaVideoFit(VideoSize(640, 480, 2f)).testTag("anamorphic-video"))
+            }
+        } }
+        val pane = compose.onNodeWithTag("picture-pane").fetchSemanticsNode().boundsInRoot
+        val portrait = compose.onNodeWithTag("portrait-video").fetchSemanticsNode().boundsInRoot
+        assertEquals(pane.height, portrait.height, 1f)
+        assertEquals(pane.height / 2, portrait.width, 1f)
+        assertEquals(pane.center.x, portrait.center.x, 1f)
+
+        val anamorphic = compose.onNodeWithTag("anamorphic-video").fetchSemanticsNode().boundsInRoot
+        assertEquals(pane.width, anamorphic.width, 1f)
+        assertEquals(pane.width * 3 / 8, anamorphic.height, 1f)
+        assertEquals(pane.center.y, anamorphic.center.y, 1f)
     }
 
     @Test fun cinemaRendersARealVideoFrameFromTestSource() {

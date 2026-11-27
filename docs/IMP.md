@@ -4,7 +4,7 @@ Updated 2026-11-09. This is the durable requirements page for all agents. Curren
 
 ## Current release and active work
 
-- Unreleased Android Standby opens manually or after opt-in foreground inactivity, optionally only while charging. Portrait uses Ambient artwork; landscape uses Cinema for eligible local YouTube video and falls back to artwork. It does not start playback and is not a system DreamService.
+- Unreleased Android Standby opens manually or after opt-in foreground inactivity, optionally only while charging. Portrait uses Ambient artwork; landscape uses a split Cinema layout with artwork, song details and progress beside aspect-fitted video, falling back to artwork. Stage offers a 10-second idle option for testing. It does not start playback and is not a system DreamService; automatic entry does not run on Android Home or after the activity loses foreground.
 - Unreleased Windows Stage offers Cinema and Ambient screensaver styles, foreground or background system-idle activation, and an independent focused video player with transport, seek, Like, playlist, fullscreen and close controls. Automatic entry waits when Windows reports a display-awake request; video apps without such a request may still be interrupted. The separate `.scr` candidate is not part of this branch or registered with Windows.
 - These features require native Windows acceptance and Android video-across-rotation acceptance; no release has been made. See LOGS.md for executed checks and remaining limits.
 
@@ -84,3 +84,5 @@ The 0.2.3 release passed actual three-native-player local and production accepta
 - Android and Windows open a selected playlist search result directly into a track preview. YouTube can show its first page while the remaining pages load. Spotify link and file previews automatically look for clear recordings when online, with bounded searches and an option to skip. Import still requires confirmation.
 
 - A provisioned Windows build enables basic Google sign-in on a fresh profile. The build accepts only the installed-app client value for a validated Desktop OAuth client in Echo's Firebase project. Keep the full JSON, confidential server credentials, and user tokens out of release assets. Existing DPAPI-protected configuration takes precedence.
+
+- Android and Windows Stage compact player docks overlay browse content; trailing scroll clearance keeps the final content reachable.

@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.echo.data.spotify.PlaylistFile
 import dev.echo.data.spotify.parseSpotifyAccountZip
@@ -21,7 +22,13 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 @Composable
-internal fun DesktopSpotifyDataScreen(directory: Path, legacyDirectory: Path?, onlineAllowed: Boolean, onSearch: (String) -> Unit) {
+internal fun DesktopSpotifyDataScreen(
+    directory: Path,
+    legacyDirectory: Path?,
+    onlineAllowed: Boolean,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
+    onSearch: (String) -> Unit,
+) {
     var archives by remember(directory) { mutableStateOf<List<DesktopSpotifyArchive>>(emptyList()) }
     var selected by remember(directory) { mutableStateOf<String?>(null) }
     var data by remember(directory) { mutableStateOf<PlaylistFile?>(null) }
@@ -102,7 +109,7 @@ internal fun DesktopSpotifyDataScreen(directory: Path, legacyDirectory: Path?, o
                 runCatching { java.time.OffsetDateTime.parse(entry.timestamp).toInstant() }
                     .getOrElse { java.time.LocalDateTime.parse(entry.timestamp.replace(' ', 'T')).toInstant(java.time.ZoneOffset.UTC) }
             } }
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            LazyColumn(Modifier.weight(1f), contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (category == "History" && parsed.history.isNotEmpty()) {
                     items(sortedHistory) { entry ->
                         ListItem(headlineContent = { Text(entry.track.title) }, supportingContent = {
@@ -140,11 +147,20 @@ internal fun DesktopSpotifyDataScreen(directory: Path, legacyDirectory: Path?, o
 }
 
 @Composable
-internal fun DesktopSpotifySettingsPage(preferences: DesktopPreferences, onImport: () -> Unit, onBrowse: () -> Unit, onDelete: () -> Unit) {
+internal fun DesktopSpotifySettingsPage(
+    preferences: DesktopPreferences,
+    onImport: () -> Unit,
+    onBrowse: () -> Unit,
+    onDelete: () -> Unit,
+    bottomInset: Dp = 0.dp,
+    leadingContent: @Composable () -> Unit = {},
+) {
     var confirmDelete by remember { mutableStateOf(false) }
     var customAccent by remember { mutableStateOf(preferences.customAccent) }
     LaunchedEffect(preferences.customAccent) { customAccent = preferences.customAccent }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp).padding(bottom = bottomInset),
+        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        leadingContent()
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
         preferences.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Text("Appearance", style = MaterialTheme.typography.titleLarge)

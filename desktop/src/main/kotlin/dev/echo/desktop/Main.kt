@@ -55,6 +55,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.key
@@ -1068,6 +1069,69 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             null -> false
         }
     }
+    val dockFooter: @Composable (Modifier) -> Unit = { modifier ->
+        Column(modifier) {
+            if (selectedRemoteId == null && playback.error != null) Text(playback.error.orEmpty(), color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(12.dp))
+            if (!fullPlayerOnScreen) DesktopPlayerBar(presentedTrack, presentedTitle, presentedArtist, presentedPlaying, presentedPosition, presentedDuration,
+                remoteMode = remoteFocused,
+                remoteDevice = remotePlayer.takeIf { remoteFocused },
+                focusedDeviceLabel = if (focusedGroup != null) "Play together" else remotePlayer?.label?.let(::playerDeviceName) ?: "This laptop",
+                onOpenFullPlayer = { fullPlayerOpen = true },
+                queueOpen = dockQueueOpen, onToggleQueue = { queueOpen = !queueOpen },
+                remoteEnabled = remoteLive,
+                groupFocused = focusedGroup != null,
+                localAvailable = playback.current != null, localLoading = playback.loading,
+                localVolume = playback.volume, localRepeat = playback.repeatMode.name.lowercase(), localSleep = playback.sleepRemainingMs,
+                onLocalPrevious = ::previousFocusedPlayback,
+                onLocalToggle = ::toggleFocusedPlayback,
+                onLocalNext = ::nextFocusedPlayback,
+                onLocalSeek = ::seekFocusedPlayback,
+                groupSeekTarget = focusedGroupSeekTarget,
+                onGroupSeek = { target, position -> scope.launch { runCatching {
+                    connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.SEEK, position,
+                        target.ref, target.timelineSequence, target.occurrenceId)
+                }.onFailure { notice = it.message } } },
+                onLocalVolume = { if (stageSimulator != null && !stageLiveLocal) stageSimulator.setLocalVolume(it) else player.setVolume(it) },
+                onLocalRepeat = { if (connectedV2.group == null) if (stageSimulator != null && !stageLiveLocal) stageSimulator.cycleLocalRepeat()
+                    else player.setRepeatMode(DesktopRepeatMode.entries[(playback.repeatMode.ordinal + 1) % DesktopRepeatMode.entries.size]) },
+                onLocalShuffle = { if (connectedV2.group == null) { selectedRemoteId = null
+                    if (stageSimulator != null && !stageLiveLocal) stageSimulator.shuffleLocalUpcoming() else player.shuffleUpcoming() } },
+                onLocalSleep = { if (connectedV2.group == null) if (stageSimulator != null && !stageLiveLocal) stageSimulator.setLocalSleepTimer(it)
+                    else player.setSleepTimer(it) }, onRemoteCommand = ::sendRemoteCommand,
+                onlinePlayers = onlinePlayers, selectedRemoteId = selectedRemoteId,
+                sidecarPlayers = sidecarPlayers,
+                onSidecarFocus = ::focusPlayer,
+                onFocusStep = { direction ->
+                    if (focusedGroup == null && focusDevices.isNotEmpty()) {
+                        val next = nextIndependentPlayer(focusDevices, selectedRemoteId, direction,
+                            includeLocal = connectedV2.group == null,
+                            selectedRemoteSessionId = selectedRemote?.device?.sessionId.takeIf { remoteFocused })
+                        if (next != null || connectedV2.group == null) focusPlayer(next)
+                    }
+                },
+                upcomingIndexes = upcomingIndexes, playback = playback, recommendedIds = recommendedIds,
+                onClearQueue = { selectedRemoteId = null; if (stageSimulator != null && !stageLiveLocal) stageSimulator.clearLocalUpcoming() else player.clearUpcoming() },
+                onJump = { index, revision -> selectedRemoteId = null
+                    if (stageSimulator != null && !stageLiveLocal) stageSimulator.jumpLocal(index, revision) else scope.launch { player.jumpTo(index, revision) } },
+                onMove = { from, to, occurrence, revision -> selectedRemoteId = null
+                    if (stageSimulator != null && !stageLiveLocal) stageSimulator.moveLocal(from, to, occurrence, revision)
+                    else scope.launch { player.moveUpcoming(from, to, occurrence, revision) } },
+                onRemove = { index, occurrence, revision -> selectedRemoteId = null
+                    if (stageSimulator != null && !stageLiveLocal) stageSimulator.removeLocal(index, occurrence, revision)
+                    else scope.launch { player.removeUpcoming(index, occurrence, revision) } })
+        }
+    }
+    var stageDockHeightPx by remember { mutableIntStateOf(0) }
+    val stageDockInset = if (stagingMode && !fullPlayerOnScreen) {
+        with(LocalDensity.current) { stageDockHeightPx.toDp() }
+    } else 0.dp
+    val stageAdminGap = 12.dp
+    val stageBrowseInset = if (stagingMode && !fullPlayerOnScreen) {
+        stageDockInset + stageAdminGap + 56.dp + 4.dp
+    } else 0.dp
+    val stageListPadding = PaddingValues(bottom = stageBrowseInset)
+
     Surface(Modifier.fillMaxSize(), color = Canvas) {
         Box(Modifier.fillMaxSize().onKeyEvent(::handleShortcut).onPreviewKeyEvent {
             if (dockQueueOpen && it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
@@ -1077,7 +1141,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         }.semantics { if (fullPlayerOnScreen) hideFromAccessibility() }) {
         Column {
             Row(Modifier.weight(1f)) {
-                Column(Modifier.width(220.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceVariant).verticalScroll(rememberScrollState()).padding(22.dp)) {
+                Column(Modifier.width(220.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceVariant).verticalScroll(rememberScrollState()).padding(22.dp).padding(bottom = stageDockInset)) {
                     Text("echo", fontSize = 35.sp, fontWeight = FontWeight.Black, color = Accent)
                     Text("MUSIC, IN YOUR SPACE", fontSize = 9.sp, color = Muted, letterSpacing = 2.sp)
                     Spacer(Modifier.height(38.dp))
@@ -1138,10 +1202,12 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                     }
                     Spacer(Modifier.height(26.dp))
                     if (page == "Settings") {
-                        stageScreensaverPreferences?.let {
-                            StageScreensaverSettings(it, !stageSaverActive && stageSaverCanvasRestored, ::startStageScreensaver)
-                        }
-                        DesktopSpotifySettingsPage(preferences,
+                        DesktopSpotifySettingsPage(preferences, bottomInset = stageBrowseInset,
+                            leadingContent = {
+                                stageScreensaverPreferences?.let {
+                                    StageScreensaverSettings(it, !stageSaverActive && stageSaverCanvasRestored, ::startStageScreensaver)
+                                }
+                            },
                             onImport = { importInitialFilePicker = true; showImport = true },
                             onBrowse = { page = "Spotify archive" },
                             onDelete = { scope.launch {
@@ -1153,13 +1219,15 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                         )
                     } else if (page == "Spotify archive") {
                         DesktopSpotifyDataScreen(spotifyArchiveDirectory, store.file.resolveSibling("spotify-archives"),
-                            onlineAllowed = !stagingMode && !downloads.offlineOnly,
+                            onlineAllowed = !stagingMode && !downloads.offlineOnly, contentPadding = stageListPadding,
                             onSearch = { term -> query = term; playlistSearch = false; search(forceSongs = true) })
                     } else if (page == "Downloads") {
-                        DesktopDownloadsPanel(offline, onPlay = { track -> play(listOf(track), 0) }, modifier = Modifier.weight(1f))
+                        DesktopDownloadsPanel(offline, onPlay = { track -> play(listOf(track), 0) }, modifier = Modifier.weight(1f),
+                            contentPadding = stageListPadding)
                     } else if (page == "Home") {
                         DesktopDiscoverScreen(provider, library, { items, index -> play(items, index) },
                         { addTrack = it }, { notice = it }, Modifier.weight(1f), onlineAllowed = !stagingMode && !downloads.offlineOnly,
+                            contentPadding = stageListPadding,
                             onSaveMix = { items -> disk {
                                 store.importParsedPlaylists(DesktopPlaylistImport(listOf(DesktopImportPlaylist("Discovery mix", items))))
                             } })
@@ -1244,7 +1312,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                                 Text("Search for a public playlist title, then choose one to preview and import.",
                                     color = Muted, modifier = Modifier.padding(top = 10.dp))
                             }
-                        } else LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                        } else LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = stageListPadding) {
                             items(playlistResults.size, key = { index -> playlistResults[index].id }) { index ->
                                 val result = playlistResults[index]
                                 ListItem(headlineContent = { Text(result.title) }, supportingContent = {
@@ -1263,7 +1331,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                                 "Search for music, open audio files, or import an Echo backup.",
                                 color = Muted, modifier = Modifier.padding(top = 10.dp))
                         }
-                    } else LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                    } else LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = stageListPadding) {
                         itemsIndexed(tracks, key = { index, _ -> "$page:$index" }) { index, track ->
                             val event = if (page == "History") library.history.asReversed().getOrNull(index) else null
                             TrackRow(track, index, index == currentRow, track.id in library.favorites,
@@ -1317,6 +1385,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                 ) {
                     LocalQueueSidebar(
                         playback, upcomingIndexes, recommendedIds,
+                        contentPadding = stageListPadding,
                         onClose = { queueOpen = false },
                         onClear = { selectedRemoteId = null; if (stageSimulator != null && !stageLiveLocal) stageSimulator.clearLocalUpcoming() else player.clearUpcoming() },
                         onJump = { index, revision -> selectedRemoteId = null
@@ -1330,59 +1399,14 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                     )
                 }
             }
-            if (selectedRemoteId == null && playback.error != null) Text(playback.error.orEmpty(), color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 12.sp,
-                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(12.dp))
-            if (!fullPlayerOnScreen) DesktopPlayerBar(presentedTrack, presentedTitle, presentedArtist, presentedPlaying, presentedPosition, presentedDuration,
-                remoteMode = remoteFocused,
-                remoteDevice = remotePlayer.takeIf { remoteFocused },
-                focusedDeviceLabel = if (focusedGroup != null) "Play together" else remotePlayer?.label?.let(::playerDeviceName) ?: "This laptop",
-                onOpenFullPlayer = { fullPlayerOpen = true },
-                queueOpen = dockQueueOpen, onToggleQueue = { queueOpen = !queueOpen },
-                remoteEnabled = remoteLive,
-                groupFocused = focusedGroup != null,
-                localAvailable = playback.current != null, localLoading = playback.loading,
-                localVolume = playback.volume, localRepeat = playback.repeatMode.name.lowercase(), localSleep = playback.sleepRemainingMs,
-                onLocalPrevious = ::previousFocusedPlayback,
-                onLocalToggle = ::toggleFocusedPlayback,
-                onLocalNext = ::nextFocusedPlayback,
-                onLocalSeek = ::seekFocusedPlayback,
-                groupSeekTarget = focusedGroupSeekTarget,
-                onGroupSeek = { target, position -> scope.launch { runCatching {
-                    connectedPlayback.requestGroup(dev.echo.data.firebase.GroupActionV2.SEEK, position,
-                        target.ref, target.timelineSequence, target.occurrenceId)
-                }.onFailure { notice = it.message } } },
-                onLocalVolume = { if (stageSimulator != null && !stageLiveLocal) stageSimulator.setLocalVolume(it) else player.setVolume(it) },
-                onLocalRepeat = { if (connectedV2.group == null) if (stageSimulator != null && !stageLiveLocal) stageSimulator.cycleLocalRepeat()
-                    else player.setRepeatMode(DesktopRepeatMode.entries[(playback.repeatMode.ordinal + 1) % DesktopRepeatMode.entries.size]) },
-                onLocalShuffle = { if (connectedV2.group == null) { selectedRemoteId = null
-                    if (stageSimulator != null && !stageLiveLocal) stageSimulator.shuffleLocalUpcoming() else player.shuffleUpcoming() } },
-                onLocalSleep = { if (connectedV2.group == null) if (stageSimulator != null && !stageLiveLocal) stageSimulator.setLocalSleepTimer(it)
-                    else player.setSleepTimer(it) }, onRemoteCommand = ::sendRemoteCommand,
-                onlinePlayers = onlinePlayers, selectedRemoteId = selectedRemoteId,
-                sidecarPlayers = sidecarPlayers,
-                onSidecarFocus = ::focusPlayer,
-                onFocusStep = { direction ->
-                    if (focusedGroup == null && focusDevices.isNotEmpty()) {
-                        val next = nextIndependentPlayer(focusDevices, selectedRemoteId, direction,
-                            includeLocal = connectedV2.group == null,
-                            selectedRemoteSessionId = selectedRemote?.device?.sessionId.takeIf { remoteFocused })
-                        if (next != null || connectedV2.group == null) focusPlayer(next)
-                    }
-                },
-                upcomingIndexes = upcomingIndexes, playback = playback, recommendedIds = recommendedIds,
-                onClearQueue = { selectedRemoteId = null; if (stageSimulator != null && !stageLiveLocal) stageSimulator.clearLocalUpcoming() else player.clearUpcoming() },
-                onJump = { index, revision -> selectedRemoteId = null
-                    if (stageSimulator != null && !stageLiveLocal) stageSimulator.jumpLocal(index, revision) else scope.launch { player.jumpTo(index, revision) } },
-                onMove = { from, to, occurrence, revision -> selectedRemoteId = null
-                    if (stageSimulator != null && !stageLiveLocal) stageSimulator.moveLocal(from, to, occurrence, revision)
-                    else scope.launch { player.moveUpcoming(from, to, occurrence, revision) } },
-                onRemove = { index, occurrence, revision -> selectedRemoteId = null
-                    if (stageSimulator != null && !stageLiveLocal) stageSimulator.removeLocal(index, occurrence, revision)
-                    else scope.launch { player.removeUpcoming(index, occurrence, revision) } })
+            if (!stagingMode) dockFooter(Modifier)
+        }
+        if (stagingMode && !fullPlayerOnScreen) {
+            dockFooter(Modifier.align(Alignment.BottomCenter).onSizeChanged { stageDockHeightPx = it.height })
         }
         if (stagingMode) FloatingActionButton(
             onClick = { showStageAdmin = true },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 34.dp, bottom = 136.dp)
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 34.dp, bottom = if (fullPlayerOnScreen) 136.dp else stageDockInset + stageAdminGap)
                 .semantics { contentDescription = "Stage admin: manage demo devices" },
             containerColor = Accent, contentColor = MaterialTheme.colorScheme.onPrimary,
         ) {
@@ -2593,6 +2617,7 @@ private fun LocalQueueSidebar(
     playback: DesktopPlaybackState,
     upcoming: List<Int>,
     recommended: Set<String>,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
     onClose: () -> Unit,
     onClear: () -> Unit,
     onJump: (Int, Long) -> Unit,
@@ -2614,7 +2639,7 @@ private fun LocalQueueSidebar(
             Text("Up next · ${upcoming.size} songs", color = Muted, fontSize = 12.sp)
             Spacer(Modifier.height(10.dp))
             if (upcoming.isEmpty()) Text("Nothing is queued next.", color = Muted)
-            else LazyColumn(Modifier.weight(1f)) {
+            else LazyColumn(Modifier.weight(1f), contentPadding = contentPadding) {
                 itemsIndexed(upcoming, key = { _, absolute -> "${playback.queueRevision}:$absolute" }) { index, absolute ->
                     val track = playback.queue.getOrNull(absolute) ?: return@itemsIndexed
                     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),

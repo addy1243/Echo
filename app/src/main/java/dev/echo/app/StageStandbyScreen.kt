@@ -30,6 +30,7 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,7 +60,6 @@ internal fun StageStandbyScreen(vm: EchoViewModel, exit: () -> Unit) {
         if (index < 0 || index >= controller.currentTimeline.windowCount) null
         else controller.currentTimeline.getWindow(index, androidx.media3.common.Timeline.Window()).uid.toString()
     }.getOrNull() else null
-    var videoReady by remember(occurrenceKey, presentation.current?.id) { mutableStateOf(false) }
     DisposableEffect(lifecycle, context) {
         val window = activity?.window
         val wasKeepingScreenOn = window?.attributes?.flags?.and(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0
@@ -114,40 +114,73 @@ internal fun StageStandbyScreen(vm: EchoViewModel, exit: () -> Unit) {
             }
         }
         .onPreviewKeyEvent { exit(); true }
-    Box(Modifier.fillMaxSize().testTag(if (cinema) "standby-landscape" else "standby-portrait")) {
-    if (localVideo && occurrenceKey != null) StageCinema(
-        track = presentation.current, occurrenceKey = occurrenceKey,
-        audioPositionMs = presentation.positionMs, audioPlaying = presentation.playing,
-        resolveVideo = vm::resolveStageCinemaVideo, onVideoReady = { videoReady = it }, showAmbientDetails = false,
-    )
-    Column(
-        inputModifier.testTag("stage-standby-screen").semantics { customActions = listOf(CustomAccessibilityAction("Exit Standby") { exit(); true }) }
-            .focusRequester(focusRequester).focusable().fillMaxSize().background(Brush.verticalGradient(
-                if (localVideo && occurrenceKey != null) listOf(Color.Transparent, Color(0x22000000), Color(0xDD000000))
-                else listOf(Color(0xFF171522), Color(0xFF08090D))))
-            .padding(horizontal = 32.dp, vertical = 36.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            if (!videoReady || !localVideo) { Box(Modifier.size(320.dp).graphicsLayer { rotationZ = rotation.value; scaleX = 1.025f; scaleY = 1.025f }
-                .clip(RoundedCornerShape(30.dp)).background(Brush.radialGradient(listOf(Color(0xFF594779), Color(0xFF202D3B), Color.Transparent))))
-            Artwork(presentation.artworkUri, 260) }
-        }
-        Text("ECHO", color = Color.White, style = MaterialTheme.typography.labelLarge, letterSpacing = 5.sp)
-        Spacer(Modifier.height(18.dp))
-        Text(presentation.title, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(presentation.artist, style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = .78f),
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Spacer(Modifier.height(22.dp))
-        LinearProgressIndicator(
-            progress = { if (presentation.durationMs > 0) (position.toFloat() / presentation.durationMs).coerceIn(0f, 1f) else 0f },
-            modifier = Modifier.fillMaxWidth(.72f).height(3.dp),
-        )
-        Spacer(Modifier.height(16.dp))
-        Text(if (presentation.playing) "Tap or press any key to exit" else "Playback is paused · tap or press any key to exit",
-            style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = .78f))
+    val screenModifier = inputModifier
+        .fillMaxSize()
+        .testTag("stage-standby-screen")
+        .semantics { customActions = listOf(CustomAccessibilityAction("Exit Standby") { exit(); true }) }
+        .focusRequester(focusRequester)
+        .focusable()
+    val progress = {
+        if (presentation.durationMs > 0) (position.toFloat() / presentation.durationMs).coerceIn(0f, 1f) else 0f
     }
+    val exitHint = if (presentation.playing) "Tap or press any key to exit" else "Playback is paused · tap or press any key to exit"
+    Box(Modifier.fillMaxSize().testTag(if (cinema) "standby-landscape" else "standby-portrait")) {
+        if (cinema) {
+            Row(screenModifier.background(Color(0xFF08090D)), verticalAlignment = Alignment.CenterVertically) {
+                BoxWithConstraints(
+                    Modifier.weight(.2f).fillMaxHeight()
+                        .background(Color(0xFF171522))
+                        .testTag("stage-cinema-track")
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val artworkSize = minOf(maxWidth, maxHeight * .48f, 168.dp)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Artwork(presentation.artworkUri, artworkSize.value.toInt())
+                        Text(presentation.title, color = Color.White, style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(presentation.artist, color = Color.White.copy(alpha = .78f), style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        LinearProgressIndicator(progress = progress, modifier = Modifier.width(artworkSize).height(3.dp))
+                    }
+                }
+                Box(Modifier.weight(.8f).fillMaxHeight().testTag("stage-cinema-picture")) {
+                    StageCinema(
+                        track = presentation.current, occurrenceKey = occurrenceKey,
+                        audioPositionMs = presentation.positionMs, audioPlaying = presentation.playing,
+                        resolveVideo = vm::resolveStageCinemaVideo, showAmbientDetails = false,
+                    )
+                    Text(exitHint, modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp)
+                        .background(Color(0xB308090D), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = .78f))
+                }
+            }
+        } else {
+            Column(
+                screenModifier.background(Brush.verticalGradient(listOf(Color(0xFF171522), Color(0xFF08090D))))
+                    .padding(horizontal = 32.dp, vertical = 36.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(320.dp).graphicsLayer { rotationZ = rotation.value; scaleX = 1.025f; scaleY = 1.025f }
+                        .clip(RoundedCornerShape(30.dp)).background(Brush.radialGradient(listOf(Color(0xFF594779), Color(0xFF202D3B), Color.Transparent))))
+                    Artwork(presentation.artworkUri, 260)
+                }
+                Text("ECHO", color = Color.White, style = MaterialTheme.typography.labelLarge, letterSpacing = 5.sp)
+                Spacer(Modifier.height(18.dp))
+                Text(presentation.title, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(presentation.artist, style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = .78f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(22.dp))
+                LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth(.72f).height(3.dp))
+                Spacer(Modifier.height(16.dp))
+                Text(exitHint, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = .78f))
+            }
+        }
     }
 }

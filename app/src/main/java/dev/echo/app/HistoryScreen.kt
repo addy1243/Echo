@@ -23,7 +23,7 @@ internal fun HistoryScreen(vm: EchoViewModel) {
     val libraryTracks by vm.tracks.collectAsStateWithLifecycle()
     var confirmClear by rememberSaveable { mutableStateOf(false) }
     val formatter = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = browseContentPadding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Listening history", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))

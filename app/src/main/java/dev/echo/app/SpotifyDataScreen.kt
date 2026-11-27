@@ -153,7 +153,11 @@ internal fun SpotifyDataScreen(onSearch: (String) -> Unit) {
                     androidx.compose.material3.Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
                 }
             }
-            LazyColumn(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(
+                Modifier.fillMaxWidth().weight(1f),
+                contentPadding = browseContentPadding(0.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 when (tab) {
                     0 -> if (parsed.history.isEmpty()) item { Text("No listening history was found in this export.") }
                     else itemsIndexed(historyRows, key = { _, row -> row.index }) { _, row ->

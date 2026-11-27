@@ -40,7 +40,7 @@ import dev.echo.core.Track
 @Composable internal fun DownloadsScreen(vm: EchoViewModel) {
     val songs by vm.offlineSongs.collectAsStateWithLifecycle()
     val tracks by vm.tracks.collectAsStateWithLifecycle()
-    LazyColumn(Modifier.fillMaxSize().testTag("downloads-screen"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    LazyColumn(Modifier.fillMaxSize().testTag("downloads-screen"), contentPadding = browseContentPadding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { Text("Downloads", style = MaterialTheme.typography.headlineMedium) }
         item { Text("Manual downloads continue in the background with an Android notification. Interrupted transfers show Retry. Downloads are private to this device and are removed when Echo is uninstalled.", style = MaterialTheme.typography.bodySmall) }
         item { OfflineSettingsSection(vm) }

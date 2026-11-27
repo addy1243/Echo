@@ -135,6 +135,14 @@ class LiveStageStandbyServiceTest {
         compose.waitUntil(90_000) {
             compose.onAllNodesWithTag("stage-cinema-video-ready").fetchSemanticsNodes().isNotEmpty()
         }
+        val detailsBounds = compose.onNodeWithTag("stage-cinema-track").fetchSemanticsNode().boundsInRoot
+        val pictureBounds = compose.onNodeWithTag("stage-cinema-picture").fetchSemanticsNode().boundsInRoot
+        val videoBounds = compose.onNodeWithTag("stage-cinema-video-ready").fetchSemanticsNode().boundsInRoot
+        assertTrue("Track details must be left of the larger picture pane", detailsBounds.right <= pictureBounds.left &&
+            pictureBounds.width > detailsBounds.width)
+        assertTrue("The decoded video must remain within its pane",
+            videoBounds.left >= pictureBounds.left && videoBounds.right <= pictureBounds.right &&
+                videoBounds.top >= pictureBounds.top && videoBounds.bottom <= pictureBounds.bottom)
         val cinemaPosition = onMain { player.currentPosition }
         await("Service audio position must advance while Cinema renders") {
             onMain { player.isPlaying && player.currentPosition >= cinemaPosition + 1_000 }
@@ -146,6 +154,9 @@ class LiveStageStandbyServiceTest {
 
         onMain { player.pause() }
         await("Service audio must pause while Standby is open") { onMain { !player.isPlaying && !player.playWhenReady } }
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("stage-cinema-artwork-fallback").fetchSemanticsNodes().isNotEmpty()
+        }
         val pausedAt = onMain { player.currentPosition }
         Thread.sleep(1_000)
         assertTrue("Paused service position must remain stable", onMain { kotlin.math.abs(player.currentPosition - pausedAt) < 250 })

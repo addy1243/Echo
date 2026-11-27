@@ -25,6 +25,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -57,6 +58,7 @@ internal fun StageCinema(
     val currentPosition by rememberUpdatedState(audioPositionMs.coerceAtLeast(0))
     var foreground by remember { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) }
     var player by remember { mutableStateOf<ExoPlayer?>(null) }
+    var videoSize by remember { mutableStateOf(VideoSize.UNKNOWN) }
     var ready by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
     LaunchedEffect(ready) { onVideoReady(ready) }
@@ -82,6 +84,7 @@ internal fun StageCinema(
         player = null
         ready = false
         failed = false
+        videoSize = VideoSize.UNKNOWN
         if (!foreground) return@LaunchedEffect
         val selectedOccurrence = occurrenceKey ?: return@LaunchedEffect
         val selected = track?.takeIf {
@@ -97,6 +100,10 @@ internal fun StageCinema(
             .build()
         created.volume = 0f
         created.addListener(object : Player.Listener {
+            override fun onVideoSizeChanged(size: VideoSize) {
+                if (player === created) videoSize = size
+            }
+
             override fun onPlayerError(error: PlaybackException) {
                 if (player !== created) return
                 ready = false
@@ -145,16 +152,32 @@ internal fun StageCinema(
         }
     }
 
-    Box(modifier.fillMaxSize().background(Color(0xFF08090D))) {
+    Box(modifier.fillMaxSize().background(Color(0xFF08090D)), contentAlignment = Alignment.Center) {
         if (player != null) {
             AndroidView(
-                modifier = Modifier.fillMaxSize().testTag(if (ready) "stage-cinema-video-ready" else "stage-cinema-video-surface"),
+                modifier = Modifier.stageCinemaVideoFit(videoSize)
+                    .testTag(if (ready) "stage-cinema-video-ready" else "stage-cinema-video-surface"),
                 factory = { view -> TextureView(view).also { player?.setVideoTextureView(it) } },
                 update = { view -> player?.setVideoTextureView(view) },
             )
         }
-        if (!ready) AmbientStage(track, failed, Modifier.fillMaxSize(), showAmbientDetails)
+        if (!ready) {
+            AmbientStage(track, failed, Modifier.fillMaxSize(), showAmbientDetails)
+            if (!showAmbientDetails) BoxWithConstraints(
+                Modifier.fillMaxSize().testTag("stage-cinema-artwork-fallback"),
+                contentAlignment = Alignment.Center,
+            ) {
+                val artworkSize = minOf(maxWidth, maxHeight * .65f, 300.dp)
+                Artwork(track?.artworkUri, artworkSize.value.toInt())
+            }
+        }
     }
+}
+
+// Media3 reports the post-rotation size and pixel ratio from the decoder.
+internal fun Modifier.stageCinemaVideoFit(size: VideoSize): Modifier {
+    val ratio = size.width * size.pixelWidthHeightRatio / size.height
+    return aspectRatio(ratio.takeIf { it.isFinite() && it > 0f } ?: (16f / 9f))
 }
 
 @Composable

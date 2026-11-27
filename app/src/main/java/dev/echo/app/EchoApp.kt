@@ -31,10 +31,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.semantics.Role
@@ -54,6 +57,15 @@ import java.util.UUID
 
 private val Violet = Color(0xFFBFA4FF)
 private val Ink = Color(0xFF101014)
+private val LocalPlayerDockClearance = compositionLocalOf { 0.dp }
+
+@Composable
+internal fun browseContentPadding(padding: Dp): PaddingValues = PaddingValues(
+    start = padding,
+    top = padding,
+    end = padding,
+    bottom = padding + LocalPlayerDockClearance.current,
+)
 
 @Composable
 private fun rememberArtworkAccent(uri: String?): Color {
@@ -149,6 +161,7 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
         while (true) {
             val now = android.os.SystemClock.elapsedRealtime()
             val foreground = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) && activity.hasWindowFocus()
+            activity.standbyClock.setForeground(foreground, now)
             if (foreground && route != "stage-standby" && (!showTutorial || !tutorialVisible) &&
                 activity.standbyClock.shouldEnter(
                     standbySettings,
@@ -197,9 +210,15 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
             }
         )
         UpdatePrompt(vm)
+        val showBrowseChrome = route !in listOf("player", "stage-standby")
+        val showDock = showBrowseChrome && (vm.current != null || selectedPlaybackTargetId != null ||
+            connectedV2.group != null || (connectedPlaybackEnabled || BuildConfig.STAGING) && connected.devices.isNotEmpty())
+        val showAdmin = BuildConfig.STAGING && showBrowseChrome
+        var dockHeightPx by remember(showDock) { mutableIntStateOf(0) }
+        val dockClearance = with(LocalDensity.current) { dockHeightPx.toDp() }
         Scaffold(
-            snackbarHost = { SnackbarHost(snackbar) },
-            topBar = { if (route !in listOf("player", "stage-standby")) TopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.GraphicEq, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(10.dp)); Text("echo", fontWeight = FontWeight.Bold, letterSpacing = 2.sp) } },
+            snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = if (showAdmin) 0.dp else dockClearance)) },
+            topBar = { if (showBrowseChrome) TopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.GraphicEq, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(10.dp)); Text("echo", fontWeight = FontWeight.Bold, letterSpacing = 2.sp) } },
                 navigationIcon = { if (route !in listOf("home", "search", "library", "profile", "settings")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
                     if (connectedPlaybackEnabled || connected.devices.any { it.id != vm.connectedPlaybackDeviceIdForUi }) {
@@ -207,9 +226,7 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
                     }
                     IconButton(onClick = { nav.navigate("settings") { launchSingleTop = true } }) { Icon(Icons.Default.Settings, "Settings") }
                 }) },
-            bottomBar = { if (route !in listOf("player", "stage-standby")) Column {
-                if (vm.current != null || selectedPlaybackTargetId != null || connectedV2.group != null ||
-                    connectedPlaybackEnabled && connected.devices.isNotEmpty() || BuildConfig.STAGING && connected.devices.isNotEmpty()) PlayerDock(vm, tracks) { nav.navigate("player") { launchSingleTop = true } }
+            bottomBar = { if (showBrowseChrome) {
                 Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).navigationBarsPadding().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                     listOf(Triple("home", "Home", Icons.Default.Home), Triple("search", "Search", Icons.Default.Search), Triple("library", "Library", Icons.Default.LibraryMusic), Triple("profile", "Profile", Icons.Default.Person)).forEach { (key, label, icon) ->
                         Column(Modifier.weight(1f).fillMaxHeight().testTag("tab-$key").selectable(selected = activeTab == key, role = Role.Tab, onClick = {
@@ -221,41 +238,54 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
                     }
                 }
             } },
-            floatingActionButton = { if (BuildConfig.STAGING && route !in listOf("player", "stage-standby")) StageAdminControls(vm.stage) }
+            floatingActionButton = {
+                if (showAdmin) Box(Modifier.padding(bottom = dockClearance)) { StageAdminControls(vm.stage) }
+            }
         ) { padding ->
-            Column(Modifier.fillMaxSize().padding(padding)) {
-                (credentialError ?: historyError)?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) }
-                if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                vm.matchingProgress?.let { (done, total) -> Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Matching recordings · $done/$total", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = vm::cancelMatching) { Text("Cancel") }
-                } }
-                NavHost(nav, startDestination = "home", modifier = Modifier.weight(1f)) {
-                    composable("home") {
-                        HomeScreen(vm, tracks, playlists, favorites, recent, scan,
-                            { tab -> nav.navigate("discover?tab=$tab") },
-                            { nav.navigate("playlist/$it") }, { nav.navigate("library") }, { nav.navigate("search") })
+            Box(Modifier.fillMaxSize().padding(padding)) {
+                CompositionLocalProvider(LocalPlayerDockClearance provides dockClearance) {
+                    Column(Modifier.fillMaxSize()) {
+                        (credentialError ?: historyError)?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) }
+                        if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        vm.matchingProgress?.let { (done, total) -> Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Matching recordings · $done/$total", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                            TextButton(onClick = vm::cancelMatching) { Text("Cancel") }
+                        } }
+                        NavHost(nav, startDestination = "home", modifier = Modifier.weight(1f)) {
+                            composable("home") {
+                                HomeScreen(vm, tracks, playlists, favorites, recent, scan,
+                                    { tab -> nav.navigate("discover?tab=$tab") },
+                                    { nav.navigate("playlist/$it") }, { nav.navigate("library") }, { nav.navigate("search") })
+                            }
+                            composable("search") { SearchScreen(vm, tracks, playlists, favorites, spotifySearchPrefill) { spotifySearchPrefill = "" } }
+                            composable("spotify-data") { SpotifyDataScreen { query -> spotifySearchPrefill = query; nav.navigate("search") { launchSingleTop = true } } }
+                            composable("discover?tab={tab}", arguments = listOf(androidx.navigation.navArgument("tab") { type = androidx.navigation.NavType.IntType; defaultValue = 0 })) { back ->
+                                DiscoveryScreen(vm, playlists, favorites, back.arguments?.getInt("tab") ?: 0)
+                            }
+                            composable("library") { LibraryScreen(vm, tracks, playlists, favorites, scan, { filePicker.launch(arrayOf("audio/*")) }, { nav.navigate("playlist/$it") }) }
+                            composable("playlist/{id}") { back ->
+                                val id = back.arguments?.getString("id").orEmpty()
+                                PlaylistScreen(vm, id, playlists.find { it.id == id }, tracks, playlists, favorites)
+                            }
+                            composable("player") { FullPlayer(vm, tracks, playlists, favorites, openStandby = { nav.navigate("stage-standby") }) { nav.popBackStack() } }
+                            composable("stage-standby") { StageStandbyScreen(vm) {
+                                activity?.standbyClock?.recordInteraction(android.os.SystemClock.elapsedRealtime())
+                                nav.popBackStack()
+                            } }
+                            composable("profile") { ProfileScreen(vm) }
+                            composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }, { nav.navigate("profile") }, { nav.navigate("spotify-data") }, { nav.navigate("stage-standby") }, standbySettings) { value -> standbySettings = value; standbyPreferences.update(value); activity?.standbyClock?.recordInteraction(android.os.SystemClock.elapsedRealtime()) } }
+                            composable("licenses") { LicensesScreen() }
+                            composable("history") { HistoryScreen(vm) }
+                            composable("downloads") { DownloadsScreen(vm) }
+                        }
                     }
-                    composable("search") { SearchScreen(vm, tracks, playlists, favorites, spotifySearchPrefill) { spotifySearchPrefill = "" } }
-                    composable("spotify-data") { SpotifyDataScreen { query -> spotifySearchPrefill = query; nav.navigate("search") { launchSingleTop = true } } }
-                    composable("discover?tab={tab}", arguments = listOf(androidx.navigation.navArgument("tab") { type = androidx.navigation.NavType.IntType; defaultValue = 0 })) { back ->
-                        DiscoveryScreen(vm, playlists, favorites, back.arguments?.getInt("tab") ?: 0)
-                    }
-                    composable("library") { LibraryScreen(vm, tracks, playlists, favorites, scan, { filePicker.launch(arrayOf("audio/*")) }, { nav.navigate("playlist/$it") }) }
-                    composable("playlist/{id}") { back ->
-                        val id = back.arguments?.getString("id").orEmpty()
-                        PlaylistScreen(vm, id, playlists.find { it.id == id }, tracks, playlists, favorites)
-                    }
-                    composable("player") { FullPlayer(vm, tracks, playlists, favorites, openStandby = { nav.navigate("stage-standby") }) { nav.popBackStack() } }
-                    composable("stage-standby") { StageStandbyScreen(vm) {
-                        activity?.standbyClock?.recordInteraction(android.os.SystemClock.elapsedRealtime())
-                        nav.popBackStack()
-                    } }
-                    composable("profile") { ProfileScreen(vm) }
-                    composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }, { nav.navigate("profile") }, { nav.navigate("spotify-data") }, { nav.navigate("stage-standby") }, standbySettings) { value -> standbySettings = value; standbyPreferences.update(value); activity?.standbyClock?.recordInteraction(android.os.SystemClock.elapsedRealtime()) } }
-                    composable("licenses") { LicensesScreen() }
-                    composable("history") { HistoryScreen(vm) }
-                    composable("downloads") { DownloadsScreen(vm) }
+                }
+                if (showDock) {
+                    PlayerDock(
+                        vm,
+                        tracks,
+                        Modifier.align(Alignment.BottomCenter).onSizeChanged { dockHeightPx = it.height },
+                    ) { nav.navigate("player") { launchSingleTop = true } }
                 }
             }
         }
@@ -270,7 +300,7 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
     val suggestions = vm.discoveryResults.ifEmpty { vm.newMusicResults }
     val preview = suggestions.ifEmpty { tracks.filter { it.sourceUri != null } }.take(5)
     val liked = tracks.filter { it.id in favorites && it.sourceUri != null }
-    LazyColumn(Modifier.testTag("home-feed"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    LazyColumn(Modifier.testTag("home-feed"), contentPadding = browseContentPadding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item(key = "welcome") { Column {
             Text("Made for today", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text("A few discoveries. All your favorites.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -435,7 +465,7 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
     var youtubeMode by rememberSaveable { mutableIntStateOf(0) }
     var importLink by remember { mutableStateOf<String?>(null) }
     val history by vm.settings.searchHistory.collectAsStateWithLifecycle(emptyList())
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(contentPadding = browseContentPadding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionTitle("Find your next favorite") }
         item { OutlinedTextField(query, { query = it }, label = { Text("Songs, artists, albums or playlist titles") }, leadingIcon = { Icon(Icons.Default.Search, null) }, modifier = Modifier.fillMaxWidth(), singleLine = true) }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Library", "Licensed audio", "YouTube").forEachIndexed { index, label -> FilterChip(source == index, { source = index }, label = { Text(label) }, modifier = Modifier.testTag("search-source-$index")) } } }
@@ -479,7 +509,7 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
     LaunchedEffect(Unit) { if (!BuildConfig.STAGING && vm.newMusicResults.isEmpty()) vm.refreshDiscovery() }
     var tab by rememberSaveable { mutableIntStateOf(initialTab.coerceIn(0, 1)) }
     val songs = if (tab == 0) vm.discoveryResults else vm.newMusicResults
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(contentPadding = browseContentPadding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionTitle("Discover with Echo") }
         item { Text("Artist-based discoveries from your likes and library. New music searches YouTube for this month's releases; results may include older songs. Refresh to check again.", style = MaterialTheme.typography.bodySmall) }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -503,7 +533,7 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
     val importPlaylist = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) fileImport = uri
     }
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(contentPadding = browseContentPadding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionTitle("Your collection") }
         item { Button(enabled = !vm.busy, onClick = { linkImport = true }) { Icon(Icons.Default.Link, null); Spacer(Modifier.width(8.dp)); Text("Import public playlist link") } }
         item { OutlinedButton(enabled = !vm.busy, onClick = { importPlaylist.launch(arrayOf("application/zip", "application/x-zip-compressed", "text/csv", "application/json", "text/plain", "application/vnd.ms-excel", "text/comma-separated-values")) }) { Text("Import Spotify data file") } }
@@ -670,7 +700,7 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
     val selectedPlaybackTargetId by vm.selectedConnectedPlaybackTargetId.collectAsStateWithLifecycle()
     val firstPlayable = if (BuildConfig.STAGING && selectedPlaybackTargetId != null) songs.indices.firstOrNull() ?: -1
         else firstPlayableIndex(songs, offlineSettings.offlineOnly, downloads.filter { it.status == "saved" }.map { it.trackId }.toSet())
-    LazyColumn(Modifier.testTag("playlist-feed"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.testTag("playlist-feed"), contentPadding = browseContentPadding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Hero(playlist?.name ?: "Playlist", "${songs.size} tracks · made for your moments") }
         vm.linkedPlaylists.find { it.id == id }?.let { source -> item {
             Text("Auto-update on · Last updated ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(source.updatedAt))}", style = MaterialTheme.typography.bodySmall)
@@ -782,7 +812,7 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
             vm.library.importBackup(json)
         }
     }
-    LazyColumn(Modifier.testTag("settings-screen"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    LazyColumn(Modifier.testTag("settings-screen"), contentPadding = browseContentPadding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { SectionTitle("Make Echo yours") }
         item { Text("Appearance", style = MaterialTheme.typography.titleMedium) }
         item { Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
@@ -836,6 +866,10 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
                 Text("Only while charging", modifier = Modifier.weight(1f))
                 Switch(standbySettings.chargingOnly, { setStandbySettings(standbySettings.copy(chargingOnly = it)) }, modifier = Modifier.testTag("standby-charging"))
             } }
+            if (BuildConfig.STAGING) item {
+                FilterChip(standbySettings.idleTimeoutMs == 10_000L,
+                    { setStandbySettings(standbySettings.copy(idleTimeoutMs = 10_000L)) }, label = { Text("10 sec (test)") })
+            }
             item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(1, 5, 15).forEach { minutes -> FilterChip(standbySettings.idleTimeoutMs == minutes * 60_000L,
                     { setStandbySettings(standbySettings.copy(idleTimeoutMs = minutes * 60_000L)) }, label = { Text("$minutes min") }) }
