@@ -4,6 +4,10 @@ Updated 2026-11-09. This is the durable requirements page for all agents. Curren
 
 ## Current release and active work
 
+- Unreleased Android Standby opens manually or after opt-in foreground inactivity, optionally only while charging. Portrait uses Ambient artwork; landscape uses Cinema for eligible local YouTube video and falls back to artwork. It does not start playback and is not a system DreamService.
+- Unreleased Windows Stage offers Cinema and Ambient screensaver styles, foreground or background system-idle activation, and an independent focused video player with transport, seek, Like, playlist, fullscreen and close controls. Automatic entry waits when Windows reports a display-awake request; video apps without such a request may still be interrupted. The separate `.scr` candidate is not part of this branch or registered with Windows.
+- These features require native Windows acceptance and Android video-across-rotation acceptance; no release has been made. See LOGS.md for executed checks and remaining limits.
+
 - Current published release is Android 0.2.7/code18 and Windows 0.2.7, from tag `v0.2.7` at commit `1222d03d284b9d1a234b369ca504617ec9f7ca84`. Preserve earlier tags and assets. See [the 0.2.7 release record](releases/0.2.7.md) for artifacts, evidence, and outstanding acceptance.
 - GitHub lists all four v0.2.5 binary assets and its reported SHA-256 digests match the local artifacts. The public Windows updater check passed from baseline 0.2.4, including MSI download, digest, and identity validation. The owner reports the update now works; the interactive Windows installer/restart/data-preservation gates remain separate. See [LOGS.md](LOGS.md) for the exact evidence.
 - The candidate's session-bound feature sidecar preserves the deployed 0.2.4 device-row shape. Unit tests cover missing-feature fallback in both group directions, and local RTDB emulator tests cover owner/session rules. The complete additive RTDB rules were deployed after explicit owner authorization and live-readback verified; actual 0.2.4-to-0.2.5 app interop remains untested.

@@ -9,6 +9,7 @@ val spotifyClientId = providers.gradleProperty("spotifyClientId").orElse("").get
 require(spotifyClientId.isEmpty() || spotifyClientId.matches(Regex("[a-zA-Z0-9]{32}"))) { "spotifyClientId must be the public 32-character Spotify app ID" }
 android {
     namespace = "dev.echo.app"
+    testBuildType = providers.gradleProperty("echoTestBuildType").getOrElse("debug")
     compileSdk = 36
     defaultConfig {
         applicationId = "dev.echo.music"
@@ -36,6 +37,9 @@ android {
             manifestPlaceholders["spotifyRedirectScheme"] = "echomusic-stage"
         }
     }
+    if (providers.gradleProperty("echoTestBuildType").orNull == "stage") {
+        sourceSets["stage"].java.srcDir("src/debug/java")
+    }
 }
 kapt { correctErrorTypes = true }
 dependencies {
@@ -53,6 +57,7 @@ dependencies {
     implementation(libs.compose.material)
     implementation(libs.compose.icons)
     implementation(libs.coil)
+    implementation(libs.media3.player)
     implementation(libs.browser)
     implementation(libs.okhttp)
     implementation(libs.hilt.android)

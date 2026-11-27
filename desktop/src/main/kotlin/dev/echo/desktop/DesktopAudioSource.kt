@@ -79,6 +79,17 @@ internal class DesktopAudioSource(initial: PlayableSource, private val refresh: 
     }
 }
 
+internal fun sameDesktopYouTubeRepresentation(first: PlayableSource, replacement: PlayableSource): Boolean {
+    if (!validDesktopYouTubeSource(first) || !validDesktopYouTubeSource(replacement)) return false
+    fun identity(source: PlayableSource): Pair<String, String>? {
+        val url = source.uri.toHttpUrlOrNull() ?: return null
+        val itag = url.queryParameter("itag")?.takeIf { it.matches(Regex("\\d+")) } ?: return null
+        val mimeType = source.mimeType?.substringBefore(';')?.trim()?.lowercase()?.takeIf(String::isNotEmpty) ?: return null
+        return mimeType to itag
+    }
+    return identity(first) != null && identity(first) == identity(replacement)
+}
+
 internal fun validDesktopYouTubeSource(source: PlayableSource): Boolean {
     val url = source.uri.toHttpUrlOrNull() ?: return false
     return trustedYouTubeRequestUrl(url) && (url.host == "googlevideo.com" || url.host.endsWith(".googlevideo.com")) &&

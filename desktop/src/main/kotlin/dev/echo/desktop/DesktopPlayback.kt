@@ -21,6 +21,7 @@ import dev.echo.core.connected.validateTransferQueue
 import dev.echo.data.firebase.ConnectedPlaybackAction
 import dev.echo.data.firebase.ConnectedPlaybackCommand
 import dev.echo.data.provider.YouTubeProvider
+import java.awt.Canvas
 import java.io.Closeable
 import java.io.File
 import java.util.concurrent.Executors
@@ -40,6 +41,20 @@ internal fun desktopPlaybackRetryDelayMs(attempt: Int): Long = when (attempt) {
     2 -> 3_000L
     else -> minOf(60_000L, 6_000L * (1L shl (attempt - 3).coerceIn(0, 10)))
 }
+
+internal fun desktopVideoSwitchSnapshotMatches(state: DesktopPlaybackState, trackId: String, occurrence: Long,
+    transportRevision: Long? = null): Boolean = state.current?.id == trackId && state.occurrence == occurrence &&
+    (transportRevision == null || state.transportRevision == transportRevision)
+
+internal fun DesktopPlaybackState.canEnableFocusedVideo(expectedOccurrence: Long, attemptedOccurrence: Long? = null): Boolean =
+    occurrence == expectedOccurrence && occurrence != attemptedOccurrence && current?.provider == "youtube" &&
+        !loading && !videoLoading && !videoMode && !ended && error == null
+
+internal fun desktopVideoSwitchError(currentError: String?, recoveringVideoFailure: Boolean): String? =
+    if (recoveringVideoFailure) currentError else null
+
+internal fun desktopHasSelectedAudioTrack(trackId: Int, tracks: List<uk.co.caprica.vlcj.player.base.TrackDescription>): Boolean =
+    trackId >= 0 && tracks.any { it.id() == trackId }
 
 internal fun desktopPlaybackIsActive(state: DesktopPlaybackState): Boolean = state.playing || state.retrying
 
@@ -65,6 +80,10 @@ data class DesktopPlaybackState(
     val sleepRemainingMs: Long? = null,
     val displacedMoveOperationId: String? = null,
     val retrying: Boolean = false,
+    val videoMode: Boolean = false,
+    val videoLoading: Boolean = false,
+    val videoError: String? = null,
+    val videoAccentArgb: Int? = null,
 ) {
     val current: Track? get() = queue.getOrNull(index)
     val canRetainCurrent: Boolean get() = current != null && !ended && !loading && error == null
@@ -143,6 +162,7 @@ class DesktopPlayback(
     private val offline: DesktopOfflineRepository? = null,
     recoveryFile: File = File(System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "EchoMusic/playback-v2-recovery.json"),
     findLocalTrack: (String) -> Track? = { null },
+    private val stageVideoEnabled: Boolean = false,
     private val onHistory: (Track, String, Long) -> Unit = { _, _, _ -> },
 ) : Closeable, NativePlaybackBridgeV2 {
     fun isV2Participating(): Boolean = activeGroup != null || preparedTransfer != null ||
@@ -164,6 +184,14 @@ class DesktopPlayback(
     private var factory: MediaPlayerFactory? = null
     private var player: MediaPlayer? = null
     private var source: DesktopAudioSource? = null
+    private var videoSource: DesktopAudioSource? = null
+    private var videoRequiresAudioSlave = false
+    val videoCanvas = Canvas()
+    private var videoSurface: uk.co.caprica.vlcj.player.embedded.videosurface.VideoSurface? = null
+    private var boundVideoCanvas: Canvas? = null
+    private var videoCanvasHandoffId = 0L
+    @Volatile private var switchingVideoGeneration: Long? = null
+    private var videoPlaybackFailedGeneration: Long? = null
     private data class NativeSlot(val player: MediaPlayer?, val source: DesktopAudioSource?, val state: DesktopPlaybackState)
     private data class PreparedTransfer(
         val operationId: String,
@@ -210,11 +238,15 @@ class DesktopPlayback(
 
     private fun checkFence(expected: EngineFence) {
         validateEngineFence(expected)
+        check(!state.value.videoLoading) { "Wait for the video switch to finish before moving this queue." }
+        check(!state.value.videoMode) { "Turn off video before connected playback operations." }
         check(fenceNow() == expected) { "Playback changed before the operation could be applied" }
     }
 
     override suspend fun fence(): EngineFence = withContext(dispatcher) {
         check(!closed) { "This player session has closed" }
+        check(!state.value.videoLoading) { "Wait for the video switch to finish before moving this queue." }
+        check(!state.value.videoMode) { "Turn off video before connected playback operations." }
         fenceNow()
     }
 
@@ -224,6 +256,8 @@ class DesktopPlayback(
             "Finish the current connected playback operation before moving this queue."
         }
         val current = state.value
+        check(!current.videoLoading) { "Wait for the video switch to finish before moving this queue." }
+        check(!current.videoMode) { "Turn off video before connected playback operations." }
         require(current.current == null || current.canRetainCurrent) { "The current song is not ready to move" }
         val capture = if (current.current == null) EngineCapture(fenceNow(),
             TransferQueue(emptyList(), RepeatModeV2.OFF, false), 0, false)
@@ -299,8 +333,10 @@ class DesktopPlayback(
             val track = portableTrack(queue.entries.first().recording)
             val resolved = provider.resolve(track) ?: error("Could not resolve ${track.title} on this device")
             check(validDesktopYouTubeSource(resolved)) { "The recording returned an unsupported audio source" }
-            val stagedSource = DesktopAudioSource(resolved) { provider.resolve(track) }
-            val createdFactory = factory ?: MediaPlayerFactory("--no-video", "--quiet", "--no-media-library", "--no-metadata-network-access").also { factory = it }
+            val stagedSource = DesktopAudioSource(resolved) {
+                provider.resolve(track)?.takeIf { !stageVideoEnabled || sameDesktopYouTubeRepresentation(resolved, it) }
+            }
+            val createdFactory = playbackFactory()
             val stagedPlayer = createdFactory.mediaPlayers().newMediaPlayer()
             try {
                 val ready = CompletableDeferred<Unit>()
@@ -340,9 +376,10 @@ class DesktopPlayback(
 
     private suspend fun activateStagedQueue(operationId: String, positionMs: Long, play: Boolean,
         preserveMoveBackup: Boolean): EngineObservation = withContext(dispatcher) {
+        check(!state.value.videoLoading && !state.value.videoMode) { "Turn off video before changing this queue." }
         val candidate = preparedTransfer?.takeIf { it.operationId == operationId }
         val stage = candidate ?: error("Playback preparation expired. Try again.")
-        if (fenceNow() != stage.expectedTarget) {
+        if (state.value.videoLoading || fenceNow() != stage.expectedTarget) {
             discardPrepared(stage)
             error("The destination changed after preparation. Its current queue was kept.")
         }
@@ -370,7 +407,7 @@ class DesktopPlayback(
         val oldIntent = state.value.playing
         oldPlayer?.controls()?.setPause(true)
         oldPlayer?.let { awaitNativePaused(it) }
-        if (fenceNow() != stage.expectedTarget) {
+        if (state.value.videoLoading || fenceNow() != stage.expectedTarget) {
             if (oldIntent && oldPlayer != null && oldPlayer === player && state.value.occurrence == stage.expectedTarget.occurrenceRevision &&
                 state.value.queueRevision == stage.expectedTarget.queueRevision) oldPlayer.controls().play()
             newlySavedBackupKey?.let(recovery::remove)
@@ -391,6 +428,7 @@ class DesktopPlayback(
         activeGroup = stage.group
         activatingTransferOperationId = operationId
         update { it.copy(queue = stage.tracks, index = 0, playing = false, loading = false,
+            videoMode = false, videoLoading = false, videoError = null,
             positionMs = positionMs, durationMs = stage.queue.entries.first().recording.durationMs,
             error = null, occurrence = ticket, queueRevision = it.queueRevision + 1,
             transportRevision = it.transportRevision + 1,
@@ -542,6 +580,7 @@ class DesktopPlayback(
         if (currentSource !== backup.source) currentSource?.close()
         load?.cancel()
         generation++
+        videoPlaybackFailedGeneration = null
         val nextQueueRevision = state.value.queueRevision + 1
         val nextTransportRevision = state.value.transportRevision + 1
         player = backup.player
@@ -582,6 +621,48 @@ class DesktopPlayback(
         }
     }
 
+    // VLC's default demux can resume a video-only stream at an earlier fragment after seeking.
+    private fun videoMediaOptions(audioSlave: DesktopAudioSource?): List<String> =
+        if (audioSlave == null) emptyList() else listOf(":input-slave=${audioSlave.uri}", ":demux=avformat")
+
+    private suspend fun playNativePaused(
+        native: MediaPlayer,
+        uri: String,
+        options: List<String> = emptyList(),
+        requireAudioTrack: Boolean = false,
+        startPositionMs: Long = 0,
+        isCurrent: () -> Boolean = { true },
+    ) {
+        val ready = CompletableDeferred<Boolean>()
+        val listener = object : MediaPlayerEventAdapter() {
+            override fun paused(mediaPlayer: MediaPlayer) {
+                if (runCatching { mediaPlayer.media().info().mrl() == uri }.getOrDefault(false)) ready.complete(true)
+            }
+            override fun error(mediaPlayer: MediaPlayer) {
+                if (runCatching { mediaPlayer.media().info().mrl() == uri }.getOrDefault(false)) ready.complete(false)
+            }
+        }
+        native.events().addMediaPlayerEventListener(listener)
+        try {
+            val startOptions = if (startPositionMs > 0) options + ":start-time=${startPositionMs / 1_000.0}" else options
+            check(native.media().play(uri, *(startOptions + ":start-paused").toTypedArray())) { "VLC could not open this media stream" }
+            val opened = try { withTimeout(20_000) { ready.await() } }
+            catch (timeout: TimeoutCancellationException) { throw IllegalStateException("VLC timed out opening this media stream", timeout) }
+            check(opened) { "VLC could not open this media stream" }
+            if (requireAudioTrack) try {
+                withTimeout(4_000) {
+                    while (true) {
+                        check(isCurrent()) { "Playback changed before VLC selected an audio track" }
+                        if (desktopHasSelectedAudioTrack(native.audio().track(), native.audio().trackDescriptions())) break
+                        delay(50)
+                    }
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                throw IllegalStateException("VLC did not select an audio track", timeout)
+            }
+        } finally { native.events().removeMediaPlayerEventListener(listener) }
+    }
+
     private fun discardPrepared(stage: PreparedTransfer) {
         if (preparedTransfer === stage) preparedTransfer = null
         stage.player.release()
@@ -601,20 +682,28 @@ class DesktopPlayback(
         repository.state.collect { settings ->
             if (settings.offlineOnly && remoteActive) {
                 ++generation; load?.cancel(); wantsPlaying = false; record("INTERRUPTED")
-                source?.close(); source = null; remoteActive = false
+                videoPlaybackFailedGeneration = null
+                source?.close(); source = null; videoSource?.close(); videoSource = null; videoRequiresAudioSlave = false; remoteActive = false
                 player?.controls()?.stop()
-                update { it.copy(playing = false, loading = false, error = "Offline mode is enabled. Choose downloaded music or a local file.") }
+                videoSurface = null
+                boundVideoCanvas = null
+                update { it.copy(playing = false, loading = false, videoMode = false, videoLoading = false, videoError = null,
+                    error = "Offline mode is enabled. Choose downloaded music or a local file.") }
             }
         }
     } } }
 
     private fun update(transform: (DesktopPlaybackState) -> DesktopPlaybackState) { mutableState.value = transform(mutableState.value) }
 
+    private fun playbackFactory(): MediaPlayerFactory = factory ?: (
+        if (stageVideoEnabled) MediaPlayerFactory("--quiet", "--no-media-library", "--no-metadata-network-access", "--no-osd")
+        else MediaPlayerFactory("--no-video", "--quiet", "--no-media-library", "--no-metadata-network-access")
+    ).also { factory = it }
+
     private fun nativePlayer(ticket: Long): MediaPlayer {
         player?.let { return it }
-        val createdFactory = factory ?: MediaPlayerFactory("--no-video", "--quiet", "--no-media-library", "--no-metadata-network-access")
-        factory = createdFactory
-        return createdFactory.mediaPlayers().newMediaPlayer().also { created ->
+        val players = playbackFactory().mediaPlayers()
+        return (if (stageVideoEnabled) players.newEmbeddedMediaPlayer() else players.newMediaPlayer()).also { created ->
             player = created
             attachPlaybackEvents(created, ticket)
         }
@@ -622,20 +711,26 @@ class DesktopPlayback(
 
     private fun attachPlaybackEvents(created: MediaPlayer, ticket: Long) {
         fun event(mediaPlayer: MediaPlayer, action: () -> Unit) {
+            if (switchingVideoGeneration == ticket) return
             scope.launch { if (generation == ticket && player === mediaPlayer && !closed) action() }
         }
         created.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
                 override fun playing(mediaPlayer: MediaPlayer) { event(mediaPlayer) {
+                    if (switchingVideoGeneration == ticket) return@event
                     if (!wantsPlaying) player?.controls()?.setPause(true)
                     else if (!state.value.loading && state.value.current != null) {
-                        cancelPlaybackRetry()
+                        retryJob?.cancel(); retryJob = null
                         if (playingSince == null) playingSince = TimeSource.Monotonic.markNow()
                         recordStart()
                         update { it.copy(playing = true, error = null) }
                     }
                 } }
-                override fun paused(mediaPlayer: MediaPlayer) { event(mediaPlayer) { stopCounting(); update { it.copy(playing = false) } } }
+                override fun paused(mediaPlayer: MediaPlayer) { event(mediaPlayer) {
+                    if (switchingVideoGeneration == ticket) return@event
+                    stopCounting(); update { it.copy(playing = false) }
+                } }
                 override fun buffering(mediaPlayer: MediaPlayer, newCache: Float) { event(mediaPlayer) {
+                    if (switchingVideoGeneration == ticket) return@event
                     if (newCache < 100f) { stopCounting(); update { it.copy(playing = false) } }
                     else if (wantsPlaying && !state.value.loading && player?.status()?.isPlaying == true) {
                         if (playingSince == null) playingSince = TimeSource.Monotonic.markNow()
@@ -643,10 +738,16 @@ class DesktopPlayback(
                         update { it.copy(playing = true) }
                     }
                 } }
-                override fun timeChanged(mediaPlayer: MediaPlayer, newTime: Long) { event(mediaPlayer) { update { it.copy(positionMs = newTime.coerceAtLeast(0)) } } }
-                override fun lengthChanged(mediaPlayer: MediaPlayer, newLength: Long) { event(mediaPlayer) { update { it.copy(durationMs = newLength.coerceAtLeast(0)) } } }
+                override fun timeChanged(mediaPlayer: MediaPlayer, newTime: Long) { event(mediaPlayer) {
+                    if (switchingVideoGeneration == ticket) return@event
+                    if ((playingSince?.elapsedNow()?.inWholeSeconds ?: 0) >= 30) { retryAttempt = 0 }
+                    update { it.copy(positionMs = newTime.coerceAtLeast(0)) }
+                } }
+                override fun lengthChanged(mediaPlayer: MediaPlayer, newLength: Long) { event(mediaPlayer) {
+                    if (switchingVideoGeneration != ticket) update { it.copy(durationMs = newLength.coerceAtLeast(0)) }
+                } }
                 override fun finished(mediaPlayer: MediaPlayer) { event(mediaPlayer) {
-                    if (!state.value.loading) {
+                    if (!state.value.loading && switchingVideoGeneration != ticket) {
                         record("COMPLETED")
                         val next = when {
                             activeGroup != null -> -1
@@ -660,10 +761,18 @@ class DesktopPlayback(
                 } }
                 override fun error(mediaPlayer: MediaPlayer) { event(mediaPlayer) {
                     if (!state.value.loading) {
+                        if (switchingVideoGeneration == ticket) return@event
+                        if (state.value.videoMode) {
+                            videoPlaybackFailedGeneration = ticket
+                            update { it.copy(videoError = "Video could not play. Showing artwork.") }
+                            if (!state.value.videoLoading) setVideoMode(false)
+                            return@event
+                        }
                         val message = "Audio could not play. Try another recording or check your connection."
-                        val retrying = schedulePlaybackRetry(ticket, source?.terminalResponseCode)
-                        if (retrying) stopCounting() else record("ERROR")
+                        if (retryJob != null) return@event
                         update { it.copy(playing = false, loading = false, error = message) }
+                        if (schedulePlaybackRetry(ticket, source?.terminalResponseCode)) stopCounting()
+                        else record("ERROR")
                     }
                 } }
             })
@@ -675,19 +784,316 @@ class DesktopPlayback(
         scope.launch { if (activeGroup == null) { record("SKIPPED"); start(snapshot, index) } }
     }
 
+    fun setVideoMode(enabled: Boolean) {
+        if (!closed) scope.launch { setVideoModeOnPlayer(enabled) }
+    }
+
+    internal suspend fun enableFocusedVideo(expectedOccurrence: Long): Boolean = withContext(dispatcher) {
+        if (closed || !state.value.canEnableFocusedVideo(expectedOccurrence)) return@withContext false
+        setVideoModeOnPlayer(true)
+    }
+
+    private suspend fun setVideoModeOnPlayer(enabled: Boolean, target: Canvas = videoCanvas): Boolean =
+        coroutineScope {
+            var fallbackFailed = false
+            val snapshot = state.value
+            val track = snapshot.current
+            if (!stageVideoEnabled || snapshot.videoMode == enabled || snapshot.loading || snapshot.videoLoading || track?.provider != "youtube" ||
+                activeGroup != null || preparedTransfer != null || preparingTransferOperationId != null ||
+                activatingTransferOperationId != null || snapshot.ended || offline?.state?.value?.offlineOnly == true) return@coroutineScope false
+            val ticket = generation
+            val occurrence = snapshot.occurrence
+            val recoveringVideoFailure = !enabled && videoPlaybackFailedGeneration == ticket
+            update { it.copy(videoLoading = true, videoError = desktopVideoSwitchError(it.videoError, recoveringVideoFailure)) }
+            var replacementVideo: DesktopAudioSource? = null
+            try {
+                val selection = if (enabled) provider.resolveVideoSelection(track)
+                    ?: error("No compatible video is available") else null
+                selection?.let { check(validDesktopYouTubeSource(it.source)) { "The recording returned an unsupported media source" } }
+                if (offline?.state?.value?.offlineOnly == true || generation != ticket ||
+                    !desktopVideoSwitchSnapshotMatches(state.value, track.id, occurrence) || state.value.error != null) {
+                    if (generation == ticket && state.value.occurrence == occurrence) update { it.copy(videoLoading = false) }
+                    return@coroutineScope false
+                }
+                val native = player ?: error("Playback is not ready")
+                val previousSource = source ?: error("Playback source is not ready")
+                fun isCurrent() = generation == ticket && state.value.occurrence == occurrence &&
+                    player === native && source === previousSource
+                if (enabled) {
+                    val canvasReady = withTimeoutOrNull(5_000) {
+                        while (!target.isDisplayable) delay(20)
+                        true
+                    }
+                    check(canvasReady == true) { "The video surface is unavailable" }
+                    if (!isCurrent()) return@coroutineScope false
+                }
+                val embedded = native as uk.co.caprica.vlcj.player.embedded.EmbeddedMediaPlayer
+                val nextVideoSurface = if (enabled) factory!!.videoSurfaces().newVideoSurface(target) else null
+                val transportRevision = state.value.transportRevision
+                val position = state.value.positionMs.coerceAtLeast(0)
+                val oldVideoSource = videoSource
+                val oldMediaSource = if (snapshot.videoMode) oldVideoSource ?: error("Video source is not ready") else previousSource
+                var activeVideoRequiresAudioSlave = false
+                try {
+                    switchingVideoGeneration = ticket
+                    embedded.videoSurface().set(nextVideoSurface)
+                    native.controls().setPause(true)
+                    if (enabled) {
+                        val videoSelection = selection ?: error("Video selection is missing")
+                        replacementVideo = DesktopAudioSource(videoSelection.source) {
+                            provider.resolveVideoSelection(track)?.takeIf { refreshed ->
+                                refreshed.requiresAudioSlave == videoSelection.requiresAudioSlave &&
+                                    sameDesktopYouTubeRepresentation(videoSelection.source, refreshed.source)
+                            }?.source
+                        }
+                        activeVideoRequiresAudioSlave = videoSelection.requiresAudioSlave
+                        try {
+                            val options = videoMediaOptions(previousSource.takeIf { activeVideoRequiresAudioSlave })
+                            playNativePaused(native, replacementVideo!!.uri, options, requireAudioTrack = true,
+                                startPositionMs = position, isCurrent = ::isCurrent)
+                        } catch (videoError: Throwable) {
+                            if (videoError is CancellationException || !isCurrent()) throw videoError
+                            val fallback = videoSelection.muxedFallback
+                            if (!videoSelection.requiresAudioSlave || fallback == null) throw videoError
+                            replacementVideo?.close()
+                            replacementVideo = DesktopAudioSource(fallback) {
+                                provider.resolveVideoSelection(track)?.muxedFallback?.takeIf {
+                                    sameDesktopYouTubeRepresentation(fallback, it)
+                                }
+                            }
+                            activeVideoRequiresAudioSlave = false
+                            playNativePaused(native, replacementVideo!!.uri, requireAudioTrack = true,
+                                startPositionMs = position, isCurrent = ::isCurrent)
+                        }
+                    } else playNativePaused(native, previousSource.uri, startPositionMs = position)
+                } catch (error: Throwable) {
+                    replacementVideo?.close(); replacementVideo = null
+                    if (!isCurrent()) return@coroutineScope false
+                    embedded.videoSurface().set(videoSurface)
+                    try {
+                        val oldOptions = videoMediaOptions(previousSource.takeIf { snapshot.videoMode && videoRequiresAudioSlave })
+                        withContext(NonCancellable) { playNativePaused(native, oldMediaSource.uri, oldOptions, startPositionMs = position) }
+                    }
+                    catch (restoreError: Throwable) {
+                        fallbackFailed = true
+                        error.addSuppressed(restoreError)
+                        throw error
+                    }
+                    if (!isCurrent()) return@coroutineScope false
+                    val restorePosition = if (state.value.transportRevision == transportRevision) position
+                        else state.value.positionMs.coerceAtLeast(0)
+                    val resumeAfterFailure = wantsPlaying
+                    if (restorePosition != position) native.controls().setTime(restorePosition)
+                    native.controls().setPause(!resumeAfterFailure)
+                    throw error
+                } finally {
+                    if (switchingVideoGeneration == ticket) switchingVideoGeneration = null
+                }
+                if (generation != ticket || !desktopVideoSwitchSnapshotMatches(state.value, track.id, occurrence) ||
+                    player !== native || source !== previousSource || activeGroup != null || offline?.state?.value?.offlineOnly == true) {
+                    replacementVideo?.close(); replacementVideo = null
+                    if (player === native) (native as uk.co.caprica.vlcj.player.embedded.EmbeddedMediaPlayer)
+                        .videoSurface().set(videoSurface)
+                    if (generation == ticket && state.value.occurrence == occurrence) update { it.copy(videoLoading = false) }
+                    return@coroutineScope false
+                }
+                val targetPosition = if (state.value.transportRevision == transportRevision) position
+                    else state.value.positionMs.coerceAtLeast(0)
+                if (targetPosition != position) native.controls().setTime(targetPosition)
+                native.controls().setPause(!wantsPlaying)
+                if (enabled) {
+                    videoSource = replacementVideo ?: error("The video source was not created")
+                    replacementVideo = null
+                    videoRequiresAudioSlave = activeVideoRequiresAudioSlave
+                } else {
+                    videoSource?.close()
+                    videoSource = null
+                    videoRequiresAudioSlave = false
+                }
+                videoSurface = nextVideoSurface
+                boundVideoCanvas = target.takeIf { enabled }
+                update { it.copy(videoMode = enabled, videoLoading = false,
+                    videoError = desktopVideoSwitchError(it.videoError, recoveringVideoFailure), positionMs = targetPosition) }
+                videoPlaybackFailedGeneration = null
+                true
+            } catch (cancelled: CancellationException) {
+                replacementVideo?.close()
+                if (generation == ticket && state.value.occurrence == occurrence) {
+                    update { it.copy(videoLoading = false) }
+                    if (fallbackFailed && !schedulePlaybackRetry(ticket, source?.terminalResponseCode)) {
+                        record("ERROR")
+                    }
+                }
+                throw cancelled
+            }
+            catch (error: Throwable) {
+                replacementVideo?.close()
+                if (generation == ticket && state.value.occurrence == occurrence) update {
+                    (player as? uk.co.caprica.vlcj.player.embedded.EmbeddedMediaPlayer)?.videoSurface()?.set(videoSurface)
+                    it.copy(videoLoading = false, videoMode = snapshot.videoMode,
+                        videoError = error.message ?: "Could not switch playback mode")
+                }
+                if ((fallbackFailed || (!enabled && snapshot.videoMode && videoPlaybackFailedGeneration == ticket)) &&
+                    generation == ticket && state.value.occurrence == occurrence &&
+                    !schedulePlaybackRetry(ticket, source?.terminalResponseCode)) record("ERROR")
+                false
+            }
+        }
+
+    suspend fun bindVideoCanvas(
+        target: Canvas,
+        enableIfNeeded: Boolean = false,
+        expectedOccurrence: Long? = null,
+    ): Boolean = withContext(dispatcher) {
+        val snapshot = state.value
+        if (expectedOccurrence != null && snapshot.occurrence != expectedOccurrence) return@withContext false
+        if (!snapshot.videoMode && !enableIfNeeded && !snapshot.videoLoading) return@withContext true
+        if (closed || snapshot.videoLoading || snapshot.loading ||
+            activeGroup != null || preparedTransfer != null || preparingTransferOperationId != null ||
+            activatingTransferOperationId != null) return@withContext false
+        if (!snapshot.videoMode) return@withContext setVideoModeOnPlayer(true, target)
+        if (boundVideoCanvas === target) return@withContext true
+        val native = player as? uk.co.caprica.vlcj.player.embedded.EmbeddedMediaPlayer ?: return@withContext false
+        val currentSource = source ?: return@withContext false
+        val currentVideoSource = videoSource ?: return@withContext false
+        val ticket = generation
+        val occurrence = snapshot.occurrence
+        val oldSurface = videoSurface
+        val nextSurface: uk.co.caprica.vlcj.player.embedded.videosurface.VideoSurface
+        val handoffId = ++videoCanvasHandoffId
+        update { it.copy(videoLoading = true) }
+        try {
+            withTimeout(5_000) { while (!target.isDisplayable) delay(20) }
+            if (generation != ticket || !desktopVideoSwitchSnapshotMatches(state.value, snapshot.current?.id.orEmpty(), occurrence) ||
+                player !== native || source !== currentSource || videoSource !== currentVideoSource || !state.value.videoMode) {
+                if (videoCanvasHandoffId == handoffId && generation == ticket) update { it.copy(videoLoading = false) }
+                return@withContext false
+            }
+            nextSurface = factory?.videoSurfaces()?.newVideoSurface(target) ?: error("VLC video surface is unavailable")
+            val transportRevision = state.value.transportRevision
+            val position = state.value.positionMs.coerceAtLeast(0)
+            val mediaUri = currentVideoSource.uri
+            val audioOptions = videoMediaOptions(currentSource.takeIf { videoRequiresAudioSlave })
+            switchingVideoGeneration = ticket
+            try {
+                native.controls().setPause(true)
+                native.videoSurface().set(nextSurface)
+                playNativePaused(native, mediaUri, audioOptions, requireAudioTrack = true, startPositionMs = position)
+                if (generation != ticket || state.value.occurrence != occurrence || player !== native ||
+                    source !== currentSource || videoSource !== currentVideoSource || !state.value.videoMode) {
+                    native.videoSurface().set(oldSurface)
+                    if (videoCanvasHandoffId == handoffId && generation == ticket) update { it.copy(videoLoading = false) }
+                    return@withContext false
+                }
+                val targetPosition = if (state.value.transportRevision == transportRevision) position
+                    else state.value.positionMs.coerceAtLeast(0)
+                if (targetPosition != position) native.controls().setTime(targetPosition)
+                native.controls().setPause(!wantsPlaying)
+                videoSurface = nextSurface
+                boundVideoCanvas = target
+                update { it.copy(videoLoading = false, positionMs = targetPosition) }
+                true
+            } catch (error: Throwable) {
+                native.videoSurface().set(oldSurface)
+                withContext(NonCancellable) {
+                    if (generation == ticket && state.value.occurrence == occurrence && player === native &&
+                        source === currentSource && videoSource === currentVideoSource) {
+                        try {
+                            playNativePaused(native, mediaUri, audioOptions, requireAudioTrack = true, startPositionMs = position)
+                            val restorePosition = if (state.value.transportRevision == transportRevision) position
+                                else state.value.positionMs.coerceAtLeast(0)
+                            if (restorePosition != position) native.controls().setTime(restorePosition)
+                            native.controls().setPause(!wantsPlaying)
+                        } catch (restoreError: Throwable) {
+                            error.addSuppressed(restoreError)
+                            // Keep the same queue and audio source available if the video stream cannot be reopened.
+                            try {
+                                native.videoSurface().set(null)
+                                val restorePosition = state.value.positionMs.coerceAtLeast(0)
+                                playNativePaused(native, currentSource.uri, startPositionMs = restorePosition)
+                                val latestPosition = state.value.positionMs.coerceAtLeast(0)
+                                if (latestPosition != restorePosition) native.controls().setTime(latestPosition)
+                                native.controls().setPause(!wantsPlaying)
+                                videoSource?.close()
+                                videoSource = null
+                                videoRequiresAudioSlave = false
+                                videoSurface = null
+                                boundVideoCanvas = null
+                                update { it.copy(videoMode = false, videoError = error.message ?: "Could not move the video surface") }
+                            } catch (audioError: Throwable) {
+                                error.addSuppressed(audioError)
+                                videoSource?.close()
+                                videoSource = null
+                                videoRequiresAudioSlave = false
+                                videoSurface = null
+                                boundVideoCanvas = null
+                                update { it.copy(videoMode = false, playing = false, videoError = "Video and audio could not recover; playback recovery started.") }
+                                if (!schedulePlaybackRetry(ticket, currentSource.terminalResponseCode)) record("ERROR")
+                            }
+                        }
+                    }
+                }
+                if (videoCanvasHandoffId == handoffId && generation == ticket) update { it.copy(videoLoading = false) }
+                if (error is CancellationException) throw error
+                false
+            } finally {
+                if (switchingVideoGeneration == ticket) switchingVideoGeneration = null
+            }
+        } catch (error: Throwable) {
+            if (videoCanvasHandoffId == handoffId && generation == ticket && state.value.occurrence == occurrence) {
+                update { it.copy(videoLoading = false,
+                    videoError = if (error is CancellationException) it.videoError else error.message ?: "Could not move the video surface") }
+            }
+            if (error is CancellationException) throw error
+            false
+        }
+    }
+
+    suspend fun hasDecodedVideoFrame(target: Canvas): Boolean = withContext(dispatcher) {
+        if (closed || !state.value.videoMode || state.value.videoLoading || boundVideoCanvas !== target) return@withContext false
+        player?.media()?.info()?.statistics()?.picturesDisplayed()?.let { it > 0 } == true
+    }
+
+    suspend fun returnVideoCanvas(saverCanvas: Canvas, restoreVideo: Boolean): Boolean = withContext(dispatcher) {
+        if (state.value.videoLoading) return@withContext false
+        if (boundVideoCanvas !== saverCanvas) return@withContext true
+        if (restoreVideo) bindVideoCanvas(videoCanvas)
+        else setVideoModeOnPlayer(false)
+    }
+
+    suspend fun recoverMissingVideoFrame(target: Canvas, occurrence: Long) = withContext(dispatcher) {
+        val current = state.value
+        if (closed || !current.videoMode || current.videoLoading || current.occurrence != occurrence ||
+            boundVideoCanvas !== target) return@withContext
+        videoPlaybackFailedGeneration = generation
+        update { it.copy(videoError = "Video could not display a frame. Showing artwork.") }
+        setVideoModeOnPlayer(false)
+        Unit
+    }
+
+    suspend fun sampleVideoAccent() = withContext(dispatcher) {
+        val native = player?.takeIf { !closed && state.value.videoMode } ?: return@withContext
+        val accent = runCatching {
+            val image = java.nio.file.Files.createTempFile("echo-video-frame-", ".png")
+            try {
+                if (!native.snapshots().save(image.toFile(), 64, 36)) null
+                else javax.imageio.ImageIO.read(image.toFile())?.let(::desktopVideoFrameAccent)
+            } finally { runCatching { java.nio.file.Files.deleteIfExists(image) } }
+        }.getOrNull()
+        if (player === native && state.value.videoMode) update { it.copy(videoAccentArgb = accent) }
+    }
+
     private fun start(tracks: List<Track>, index: Int, preserveBridgeQueue: Boolean = false,
         requestedPositionMs: Long = 0, playOnStart: Boolean = true, automaticRetry: Boolean = false) {
-        if (!automaticRetry) {
-            retryToken++
-            retryJob?.cancel()
-            retryJob = null
-            retryAttempt = 0
-        }
+        videoCanvasHandoffId++
+        if (!automaticRetry) cancelPlaybackRetry()
         load?.cancel()
         val ticket = ++generation
+        videoPlaybackFailedGeneration = null
         if (!preserveBridgeQueue) { activeGroup = null; activeTransferQueue = null; discardBackups() }
         wantsPlaying = playOnStart
         update { it.copy(queue = tracks, index = index, playing = false, retrying = false, loading = true, ended = false,
+            videoMode = false, videoLoading = false, videoError = null,
             positionMs = requestedPositionMs.coerceAtLeast(0), durationMs = tracks[index].durationMs,
             error = if (automaticRetry) it.error else null,
             occurrence = if (automaticRetry) it.occurrence else ticket,
@@ -695,6 +1101,9 @@ class DesktopPlayback(
             transportRevision = if (automaticRetry) it.transportRevision + 1 else it.transportRevision) }
         player?.controls()?.stop(); player?.release(); player = null
         source?.close(); source = null
+        videoSource?.close(); videoSource = null; videoRequiresAudioSlave = false
+        videoSurface = null
+        boundVideoCanvas = null
         remoteActive = false
         if (automaticRetry) stopCounting()
         else { listenedMs = 0; playingSince = null; playedRecorded = false; terminalRecorded = false }
@@ -710,7 +1119,9 @@ class DesktopPlayback(
                         val resolved = provider.resolve(track) ?: error("Recording has no playable audio")
                         ensureActive()
                         if (generation != ticket) return@launch
-                        DesktopAudioSource(resolved) { provider.resolve(track) }.also { source = it }.uri
+                        DesktopAudioSource(resolved) {
+                            provider.resolve(track)?.takeIf { !stageVideoEnabled || sameDesktopYouTubeRepresentation(resolved, it) }
+                        }.also { source = it }.uri
                     }
                     else -> error("This provider is not supported on desktop yet")
                 }
@@ -791,14 +1202,23 @@ class DesktopPlayback(
         if (state.value.retrying) update { it.copy(retrying = false) }
     }
 
-    fun toggle() { if (!closed) scope.launch { if (!state.value.loading) setPlayingNow(!desktopPlaybackIsActive(state.value)) } }
+    fun toggle() { if (!closed) scope.launch {
+        val active = if (switchingVideoGeneration == generation) wantsPlaying else desktopPlaybackIsActive(state.value)
+        if (!state.value.loading) setPlayingNow(!active)
+    } }
+
+    fun pause() { if (!closed) scope.launch { setPlayingNow(false) } }
 
     private fun setPlayingNow(playing: Boolean) {
         if (activeGroup != null) return
-        val wasActive = desktopPlaybackIsActive(state.value)
+        val wasActive = if (switchingVideoGeneration == generation) wantsPlaying else desktopPlaybackIsActive(state.value)
         if (!playing) cancelPlaybackRetry()
         if (wasActive != playing) update { it.copy(transportRevision = it.transportRevision + 1) }
-        if (state.value.loading) { wantsPlaying = playing; return }
+        if (state.value.loading || switchingVideoGeneration == generation) {
+            wantsPlaying = playing
+            if (!playing) { stopCounting(); update { it.copy(playing = false) } }
+            return
+        }
         if (!playing) { wantsPlaying = false; stopCounting(); player?.controls()?.setPause(true); update { it.copy(playing = false, retrying = false) } }
         else if (state.value.current != null && !state.value.playing) {
             wantsPlaying = true
@@ -840,14 +1260,16 @@ class DesktopPlayback(
             }
         }
     }
-    fun seek(positionMs: Long) { if (!closed) scope.launch {
-        if (!state.value.loading && state.value.durationMs > 0) seekNow(positionMs)
+    fun seek(positionMs: Long, expectedOccurrence: Long? = null) { if (!closed) scope.launch {
+        val current = state.value
+        if ((expectedOccurrence == null || current.occurrence == expectedOccurrence) &&
+            !current.loading && current.durationMs > 0) seekNow(positionMs)
     } }
     private fun seekNow(positionMs: Long) {
         if (activeGroup != null) return
         val native = player ?: return
         val target = positionMs.coerceIn(0, state.value.durationMs.coerceAtLeast(0))
-        native.controls().setTime(target)
+        if (switchingVideoGeneration != generation) native.controls().setTime(target)
         // VLC does not emit timeChanged while paused; resume callbacks reconcile the requested position.
         update { it.copy(positionMs = target, transportRevision = it.transportRevision + 1) }
     }
@@ -979,6 +1401,7 @@ class DesktopPlayback(
             preparedTransfer?.let(::discardPrepared)
             discardBackups()
             source?.close(); source = null
+            videoSource?.close(); videoSource = null; videoRequiresAudioSlave = false
             player?.controls()?.stop(); player?.release(); player = null
             factory?.release(); factory = null
             scope.cancel()

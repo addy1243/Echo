@@ -23,6 +23,7 @@ import dev.echo.playback.QueueCommands
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.echo.core.Track
+import dev.echo.core.PlayableSource
 import dev.echo.core.connected.EngineCapture
 import dev.echo.core.connected.portableTransferQueue
 import dev.echo.data.library.LibraryRepository
@@ -109,6 +110,24 @@ class EchoViewModel @Inject constructor(
     var duration by mutableStateOf(0L); private set
     var revision by mutableStateOf(0); private set
     internal var queueItems by mutableStateOf<List<QueueEntry>>(emptyList()); private set
+
+    /** Resolve video only for the exact local YouTube recording currently owned by Echo's audio player. */
+    internal suspend fun resolveStageCinemaVideo(track: Track, occurrenceKey: String): PlayableSource? {
+        if (track.provider != "youtube" || offlineSettings.value.offlineOnly) return null
+        val active = controller ?: return null
+        if (!isStageCinemaOccurrenceActive(active, track, occurrenceKey)) return null
+        val video = youtube.cachedVideo(track) ?: return null
+        return video.takeIf { isStageCinemaOccurrenceActive(active, track, occurrenceKey) }
+    }
+
+    private fun isStageCinemaOccurrenceActive(active: MediaController, track: Track, occurrenceKey: String): Boolean {
+        if (controller !== active || active.currentMediaItem?.mediaId != track.id || current?.mediaId != track.id) return false
+        val timeline = active.currentTimeline
+        val index = active.currentMediaItemIndex
+        return index in 0 until timeline.windowCount &&
+            timeline.getWindow(index, androidx.media3.common.Timeline.Window()).uid.toString() == occurrenceKey
+    }
+
     var recommendedIds by mutableStateOf<Set<String>>(emptySet()); private set
     var matchingProgress by mutableStateOf<Pair<Int, Int>?>(null); private set
     private var matchingJob: Job? = null

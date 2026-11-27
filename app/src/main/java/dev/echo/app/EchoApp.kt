@@ -140,6 +140,27 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
     var tutorialPage by rememberSaveable { mutableIntStateOf(tutorialPrefs.getInt("page", 0).coerceIn(0, 4)) }
     var tutorialVisible by remember { mutableStateOf(!tutorialPrefs.getBoolean("complete", false)) }
     var tutorialSaveFailed by rememberSaveable { mutableStateOf(false) }
+    val standbyPreferences = remember(context) { StageStandbyPreferences(context) }
+    var standbySettings by remember(standbyPreferences) { mutableStateOf(standbyPreferences.read()) }
+    val activity = context as? MainActivity
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(route, standbySettings, activity, lifecycle, showTutorial, tutorialVisible) {
+        if (activity == null || !standbySettings.automaticEnabled) return@LaunchedEffect
+        while (true) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            val foreground = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) && activity.hasWindowFocus()
+            if (foreground && route != "stage-standby" && (!showTutorial || !tutorialVisible) &&
+                activity.standbyClock.shouldEnter(
+                    standbySettings,
+                    now,
+                    if (standbySettings.chargingOnly) readStageChargingState(context) else null,
+                )) {
+                activity.standbyClock.recordInteraction(now)
+                nav.navigate("stage-standby") { launchSingleTop = true }
+            }
+            delay(1000)
+        }
+    }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.runAction("File added to library") {
             context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -178,7 +199,7 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
         UpdatePrompt(vm)
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
-            topBar = { if (route != "player") TopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.GraphicEq, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(10.dp)); Text("echo", fontWeight = FontWeight.Bold, letterSpacing = 2.sp) } },
+            topBar = { if (route !in listOf("player", "stage-standby")) TopAppBar(title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.GraphicEq, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(10.dp)); Text("echo", fontWeight = FontWeight.Bold, letterSpacing = 2.sp) } },
                 navigationIcon = { if (route !in listOf("home", "search", "library", "profile", "settings")) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
                     if (connectedPlaybackEnabled || connected.devices.any { it.id != vm.connectedPlaybackDeviceIdForUi }) {
@@ -186,7 +207,7 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
                     }
                     IconButton(onClick = { nav.navigate("settings") { launchSingleTop = true } }) { Icon(Icons.Default.Settings, "Settings") }
                 }) },
-            bottomBar = { if (route != "player") Column {
+            bottomBar = { if (route !in listOf("player", "stage-standby")) Column {
                 if (vm.current != null || selectedPlaybackTargetId != null || connectedV2.group != null ||
                     connectedPlaybackEnabled && connected.devices.isNotEmpty() || BuildConfig.STAGING && connected.devices.isNotEmpty()) PlayerDock(vm, tracks) { nav.navigate("player") { launchSingleTop = true } }
                 Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).navigationBarsPadding().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -200,7 +221,7 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
                     }
                 }
             } },
-            floatingActionButton = { if (BuildConfig.STAGING && route != "player") StageAdminControls(vm.stage) }
+            floatingActionButton = { if (BuildConfig.STAGING && route !in listOf("player", "stage-standby")) StageAdminControls(vm.stage) }
         ) { padding ->
             Column(Modifier.fillMaxSize().padding(padding)) {
                 (credentialError ?: historyError)?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) }
@@ -225,9 +246,13 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
                         val id = back.arguments?.getString("id").orEmpty()
                         PlaylistScreen(vm, id, playlists.find { it.id == id }, tracks, playlists, favorites)
                     }
-                    composable("player") { FullPlayer(vm, tracks, playlists, favorites) { nav.popBackStack() } }
+                    composable("player") { FullPlayer(vm, tracks, playlists, favorites, openStandby = { nav.navigate("stage-standby") }) { nav.popBackStack() } }
+                    composable("stage-standby") { StageStandbyScreen(vm) {
+                        activity?.standbyClock?.recordInteraction(android.os.SystemClock.elapsedRealtime())
+                        nav.popBackStack()
+                    } }
                     composable("profile") { ProfileScreen(vm) }
-                    composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }, { nav.navigate("profile") }, { nav.navigate("spotify-data") }) }
+                    composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }, { nav.navigate("profile") }, { nav.navigate("spotify-data") }, { nav.navigate("stage-standby") }, standbySettings) { value -> standbySettings = value; standbyPreferences.update(value); activity?.standbyClock?.recordInteraction(android.os.SystemClock.elapsedRealtime()) } }
                     composable("licenses") { LicensesScreen() }
                     composable("history") { HistoryScreen(vm) }
                     composable("downloads") { DownloadsScreen(vm) }
@@ -722,7 +747,7 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
     }) } } }, confirmButton = { TextButton(onClick = { match = null }) { Text("Cancel") } }) }
 }
 
-@Composable private fun SettingsScreen(vm: EchoViewModel, openHistory: () -> Unit, openDownloads: () -> Unit, openLicenses: () -> Unit, openProfile: () -> Unit, openSpotifyData: () -> Unit) {
+@Composable private fun SettingsScreen(vm: EchoViewModel, openHistory: () -> Unit, openDownloads: () -> Unit, openLicenses: () -> Unit, openProfile: () -> Unit, openSpotifyData: () -> Unit, openStageStandby: () -> Unit, standbySettings: StageStandbySettings, setStandbySettings: (StageStandbySettings) -> Unit) {
     val updateStatus by vm.updater.status.collectAsStateWithLifecycle()
     val connected by vm.spotify.connected.collectAsStateWithLifecycle()
     var sourcePriority by remember { mutableStateOf(vm.sources.priority) }
@@ -757,7 +782,7 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
             vm.library.importBackup(json)
         }
     }
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    LazyColumn(Modifier.testTag("settings-screen"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { SectionTitle("Make Echo yours") }
         item { Text("Appearance", style = MaterialTheme.typography.titleMedium) }
         item { Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
@@ -800,6 +825,22 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
             Switch(checked = keepBackground, onCheckedChange = { value -> vm.runAction { vm.settings.setKeepBackground(value) } })
         } }
         item { OutlinedButton(onClick = openProfile) { Text("Profile & Google account") } }
+        run {
+            item { OutlinedButton(onClick = openStageStandby, modifier = Modifier.testTag("stage-standby-open")) { Text("Open Standby screen") } }
+            item { Text("Standby uses Cinema in landscape and Ambient in portrait.", style = MaterialTheme.typography.bodySmall) }
+            item { Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { Text("Start Standby when idle"); Text("Only while Echo is open and in the foreground.", style = MaterialTheme.typography.bodySmall) }
+                Switch(standbySettings.automaticEnabled, { setStandbySettings(standbySettings.copy(automaticEnabled = it)) }, modifier = Modifier.testTag("standby-auto"))
+            } }
+            item { Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Only while charging", modifier = Modifier.weight(1f))
+                Switch(standbySettings.chargingOnly, { setStandbySettings(standbySettings.copy(chargingOnly = it)) }, modifier = Modifier.testTag("standby-charging"))
+            } }
+            item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(1, 5, 15).forEach { minutes -> FilterChip(standbySettings.idleTimeoutMs == minutes * 60_000L,
+                    { setStandbySettings(standbySettings.copy(idleTimeoutMs = minutes * 60_000L)) }, label = { Text("$minutes min") }) }
+            } }
+        }
         item { OutlinedButton(onClick = openHistory) { Text("Listening history") } }
         item { Text("Echo Music ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium) }
         item { OutlinedButton(onClick = openLicenses) { Text("Licenses & source") } }
