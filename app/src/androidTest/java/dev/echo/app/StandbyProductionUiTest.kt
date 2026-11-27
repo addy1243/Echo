@@ -23,6 +23,8 @@ class StandbyProductionUiTest {
             compose.onNodeWithTag("tutorial-skip").performClick()
         }
         compose.onNodeWithContentDescription("Settings").performClick()
+        compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("settings-section-standby"))
+        compose.onNodeWithTag("settings-section-standby").performClick()
         compose.mainClock.advanceTimeBy(6_000)
         compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("stage-standby-open"))
         compose.onNodeWithTag("stage-standby-open").performClick()

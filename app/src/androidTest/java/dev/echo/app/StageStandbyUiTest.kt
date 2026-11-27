@@ -45,10 +45,26 @@ class StageStandbyUiTest {
             compose.onNodeWithTag("tutorial-skip").performClick()
         }
     }
+    private fun expandStandby() {
+        compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("settings-section-standby"))
+        compose.onNodeWithTag("settings-section-standby").performClick()
+    }
+
+    @Test fun settingsSectionsExpandAndCollapse() {
+        dismissTutorialIfShown()
+        compose.onNodeWithContentDescription("Settings").performClick()
+        compose.onNodeWithTag("settings-section-standby").assertIsDisplayed()
+        compose.onNodeWithTag("stage-standby-open").assertDoesNotExist()
+        expandStandby()
+        compose.onNodeWithTag("stage-standby-open").assertIsDisplayed()
+        compose.onNodeWithTag("settings-section-standby").performClick()
+        compose.onNodeWithTag("stage-standby-open").assertDoesNotExist()
+    }
 
     @Test fun settingsStandbyReturnsToSameScreen() {
         dismissTutorialIfShown()
         compose.onNodeWithContentDescription("Settings").performClick()
+        expandStandby()
         compose.mainClock.advanceTimeBy(6_000)
         compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("stage-standby-open"))
         compose.onNodeWithTag("stage-standby-open").performClick()
@@ -62,6 +78,7 @@ class StageStandbyUiTest {
     @Test fun touchExitsStandbyAndPausedPlaybackRemainsPaused() {
         dismissTutorialIfShown()
         compose.onNodeWithContentDescription("Settings").performClick()
+        expandStandby()
         compose.mainClock.advanceTimeBy(6_000)
         compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("stage-standby-open"))
         compose.onNodeWithTag("stage-standby-open").performClick()
@@ -75,6 +92,7 @@ class StageStandbyUiTest {
     @Test fun accessibilityCustomActionExitsStandbyAndResetsIdleClock() {
         dismissTutorialIfShown()
         compose.onNodeWithContentDescription("Settings").performClick()
+        expandStandby()
         compose.mainClock.advanceTimeBy(6_000)
         compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("stage-standby-open"))
         compose.onNodeWithTag("stage-standby-open").performClick()
@@ -110,6 +128,7 @@ class StageStandbyUiTest {
         try {
             dismissTutorialIfShown()
             compose.onNodeWithContentDescription("Settings").performClick()
+            expandStandby()
             if (before.chargingOnly) {
                 compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("standby-charging"))
                 compose.onNodeWithTag("standby-charging").performClick()

@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -54,6 +55,8 @@ class HistoryOfflineUiTest {
             compose.onNodeWithText("Sign in with Google").assertIsEnabled()
             compose.onAllNodesWithText("Google sign-in setup is pending.", substring = true).assertCountEquals(0)
             compose.onNodeWithContentDescription("Settings").performClick()
+            compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("settings-section-library"))
+            compose.onNodeWithTag("settings-section-library").performClick()
             scrollSettingsTo("Listening history")
             compose.onNodeWithText("Listening history").performClick()
             waitForFixture()

@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.*
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,6 +43,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
 import androidx.core.graphics.drawable.toBitmap
@@ -790,6 +794,8 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
     LaunchedEffect(savedAccent) { if (savedAccent.startsWith("#")) customAccent = savedAccent }
     var spotifyFileImport by remember { mutableStateOf<android.net.Uri?>(null) }
     var deleteSpotifyArchives by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(setOf("appearance")) }
+    fun toggle(section: String) { expanded = if (section in expanded) expanded - section else expanded + section }
     val context = LocalContext.current
     val spotifyPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> spotifyFileImport = uri }
     val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -812,31 +818,20 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
             vm.library.importBackup(json)
         }
     }
-    LazyColumn(Modifier.testTag("settings-screen"), contentPadding = browseContentPadding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { SectionTitle("Make Echo yours") }
-        item { Text("Appearance", style = MaterialTheme.typography.titleMedium) }
-        item { Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Album, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
-                Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-                    Text("Your Echo", style = MaterialTheme.typography.titleMedium)
-                    Text("A live preview of your colors", style = MaterialTheme.typography.bodySmall)
-                }
-                Icon(Icons.Default.PlayArrow, null, tint = MaterialTheme.colorScheme.primary)
-            }
-        } }
-        item { Text("Artwork theme follows the focused player's cover. Fixed GUI uses your chosen accent.", style = MaterialTheme.typography.bodySmall) }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("artwork" to "Artwork", "gui" to "Fixed GUI").forEach { (value, label) ->
+    LazyColumn(Modifier.testTag("settings-screen"), contentPadding = browseContentPadding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { SettingsSectionHeader("Appearance", "Theme and accent", "appearance" in expanded) { toggle("appearance") } }
+        if ("appearance" in expanded) {
+        item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("artwork" to "Artwork", "gui" to "Fixed color").forEach { (value, label) ->
                 FilterChip(appearance == value, onClick = { vm.runAction { vm.settings.setAppearance(value) } }, label = { Text(label) }, modifier = Modifier.testTag("appearance-$value"))
             }
         } }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("dark" to "Dark", "light" to "Light").forEach { (value, label) ->
                 FilterChip(brightness == value, onClick = { vm.runAction { vm.settings.setBrightness(value) } }, label = { Text(label) }, modifier = Modifier.testTag("brightness-$value"))
             }
         } }
-        if (appearance == "gui") item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (appearance == "gui") item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("violet" to "Violet", "teal" to "Teal", "rose" to "Rose", "amber" to "Amber").forEach { (value, label) ->
                 FilterChip(accentName == value, onClick = { vm.runAction { vm.settings.setGuiAccent(value) } }, label = { Text(label) }, modifier = Modifier.testTag("accent-$value"))
             }
@@ -845,19 +840,29 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
             OutlinedTextField(customAccent, { customAccent = it.take(7) }, label = { Text("Custom hex color") }, singleLine = true, modifier = Modifier.weight(1f).testTag("custom-accent"))
             Button(enabled = customAccent.matches(Regex("#[0-9a-fA-F]{6}")), onClick = { vm.runAction { vm.settings.setGuiAccent(customAccent) } }) { Text("Save") }
         } }
+        }
+        item { SettingsSectionHeader("Playback", "Playback, background access and sources", "playback" in expanded) { toggle("playback") } }
+        if ("playback" in expanded) {
         item { OutlinedButton(enabled = vm.current != null && vm.controller?.isCommandAvailable(Player.COMMAND_STOP) == true,
             onClick = { vm.controller?.stop(); vm.message = "Playback stopped. The foreground playback session stays available for background and connected controls." }, modifier = Modifier.testTag("stop-playback")) { Text("Stop playback") } }
+        item { Text("Playback sources", style = MaterialTheme.typography.titleMedium) }
+        item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("local", "youtube", "commons").forEach { id -> FilterChip(id in sourcePriority, onClick = { vm.runAction { sourcePriority = if (id in sourcePriority) sourcePriority - id else sourcePriority + id; vm.sources.priority = sourcePriority } }, label = { Text(when (id) { "local" -> "Local files"; "youtube" -> "YouTube"; else -> "Commons" }) }) }
+        } }
+        item { Text("Priority: ${sourcePriority.joinToString(" → ").ifBlank { "All providers disabled" }}", style = MaterialTheme.typography.bodySmall) }
         item { Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Keep Echo available after closing the app")
-                Text("When off, Echo stops after playback pauses or ends and the app is closed. Locking the screen does not stop playback.", style = MaterialTheme.typography.bodySmall)
+                Text("Playback can continue while Echo is closed; turning this off stops after playback pauses or ends.", style = MaterialTheme.typography.bodySmall)
             }
             Switch(checked = keepBackground, onCheckedChange = { value -> vm.runAction { vm.settings.setKeepBackground(value) } })
         } }
-        item { OutlinedButton(onClick = openProfile) { Text("Profile & Google account") } }
+        }
+        item { SettingsSectionHeader("Standby", "Echo Standby and Android Dream", "standby" in expanded) { toggle("standby") } }
+        if ("standby" in expanded) {
         run {
             item { OutlinedButton(onClick = openStageStandby, modifier = Modifier.testTag("stage-standby-open")) { Text("Open Standby screen") } }
-            item { Text("Standby uses Cinema in landscape and Ambient in portrait.", style = MaterialTheme.typography.bodySmall) }
+            item { Text("Cinema in landscape, Ambient in portrait. Standby starts only while Echo is foregrounded.", style = MaterialTheme.typography.bodySmall) }
             item {
                 val context = LocalContext.current
                 val dreamSettingsIntent = remember { Intent(android.provider.Settings.ACTION_DREAM_SETTINGS) }
@@ -868,7 +873,7 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
                     Text(if (hasDreamSettings) "System standby settings" else "System standby unavailable")
                 }
             }
-            item { Text("Android controls the system dream's timeout, charging and docking rules.", style = MaterialTheme.typography.bodySmall) }
+            item { Text("System standby is an Android-managed screensaver; its timeout, charging and docking rules are separate from Echo Standby.", style = MaterialTheme.typography.bodySmall) }
             item { Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) { Text("Start Standby when idle"); Text("Only while Echo is open and in the foreground.", style = MaterialTheme.typography.bodySmall) }
                 Switch(standbySettings.automaticEnabled, { setStandbySettings(standbySettings.copy(automaticEnabled = it)) }, modifier = Modifier.testTag("standby-auto"))
@@ -881,13 +886,36 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
                 FilterChip(standbySettings.idleTimeoutMs == 10_000L,
                     { setStandbySettings(standbySettings.copy(idleTimeoutMs = 10_000L)) }, label = { Text("10 sec (test)") })
             }
-            item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(1, 5, 15).forEach { minutes -> FilterChip(standbySettings.idleTimeoutMs == minutes * 60_000L,
                     { setStandbySettings(standbySettings.copy(idleTimeoutMs = minutes * 60_000L)) }, label = { Text("$minutes min") }) }
             } }
         }
+        }
+        item { SettingsSectionHeader("Library & storage", "History, offline music and backups", "library" in expanded) { toggle("library") } }
+        if ("library" in expanded) {
         item { OutlinedButton(onClick = openHistory) { Text("Listening history") } }
-        item { Text("Echo Music ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium) }
+        item { OfflineSettingsSection(vm) }
+        item { OutlinedButton(onClick = openDownloads) { Text("Downloads & cache") } }
+        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { export.launch("echo-library.json") }) { Text("Export library") }
+            OutlinedButton(onClick = { importBackup.launch(arrayOf("application/json")) }) { Text("Import backup") }
+        } }
+        item { Text("Backups merge tracks and replace playlists with matching IDs. Audio files and credentials are not included.", style = MaterialTheme.typography.bodySmall) }
+        item { OutlinedButton(onClick = { vm.runAction("Artwork cache cleared") { coil.Coil.imageLoader(context).memoryCache?.clear(); coil.Coil.imageLoader(context).diskCache?.clear() } }) { Text("Clear artwork cache") } }
+        }
+        item { SettingsSectionHeader("Account & imports", "Google account and Spotify data", "account" in expanded) { toggle("account") } }
+        if ("account" in expanded) {
+        item { OutlinedButton(onClick = openProfile) { Text("Profile & Google account") } }
+        item { Text("Spotify exports stay encrypted on this device and are separate from Echo history and sync.", style = MaterialTheme.typography.bodySmall) }
+        item { OutlinedButton(onClick = openSpotifyData) { Text("Browse saved Spotify exports") } }
+        item { OutlinedButton(onClick = { spotifyPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/json", "text/plain", "text/csv")) }) { Text("Import Spotify data") } }
+        item { TextButton(onClick = { deleteSpotifyArchives = true }) { Text("Delete saved Spotify ZIPs") } }
+        if (connected) item { OutlinedButton(onClick = { vm.runAction("Disconnected") { vm.spotify.disconnect() } }) { Text("Disconnect previous Spotify session") } }
+        }
+        item { SettingsSectionHeader("About", "Version, updates and licenses", "about" in expanded) { toggle("about") } }
+        if ("about" in expanded) {
+        item { Text("Echo Music ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyLarge) }
         item { OutlinedButton(onClick = openLicenses) { Text("Licenses & source") } }
         item { OutlinedButton(enabled = updateStatus !is UpdateStatus.Checking && updateStatus !is UpdateStatus.Downloading, onClick = vm::checkUpdates) { Text(if (updateStatus is UpdateStatus.Checking) "Checking for updates…" else "Check for updates") } }
         if (updateStatus is UpdateStatus.Downloading) item {
@@ -895,30 +923,7 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
             Text("Update download: ${downloading.percent}%")
             TextButton(onClick = vm::cancelUpdate) { Text("Cancel update download") }
         }
-        item { Text("Playlist imports", style = MaterialTheme.typography.titleMedium) }
-        item { Text("Import from Library using a public YouTube or Spotify playlist link, or Spotify CSV/JSON. Link imports preview available counts first. Spotify entries have no audio and may need a recording choice; links never sync automatically.", style = MaterialTheme.typography.bodySmall) }
-        item { HorizontalDivider(); Text("Spotify data", style = MaterialTheme.typography.titleMedium) }
-        item { Text("Import a Spotify account-data ZIP to keep an encrypted local copy and browse its listening history, saved artists, and saved albums.", style = MaterialTheme.typography.bodySmall) }
-        item { OutlinedButton(onClick = openSpotifyData) { Text("Browse saved Spotify exports") } }
-        item { OutlinedButton(onClick = { spotifyPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/json", "text/plain", "text/csv")) }) { Text("Import Spotify data") } }
-        item { TextButton(onClick = { deleteSpotifyArchives = true }) { Text("Delete saved Spotify ZIPs") } }
-        if (connected) item { OutlinedButton(onClick = { vm.runAction("Disconnected") { vm.spotify.disconnect() } }) { Text("Disconnect previous Spotify session") } }
-        item { HorizontalDivider(); SectionTitle("Playback & storage") }
-        item { OfflineSettingsSection(vm) }
-        item { OutlinedButton(onClick = openDownloads) { Text("Downloads & cache") } }
-        item { Text("Playback sources", style = MaterialTheme.typography.titleMedium) }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("local", "youtube", "commons").forEach { id -> FilterChip(id in sourcePriority, onClick = { vm.runAction { sourcePriority = if (id in sourcePriority) sourcePriority - id else sourcePriority + id; vm.sources.priority = sourcePriority } }, label = { Text(when (id) { "local" -> "Local files"; "youtube" -> "YouTube"; else -> "Commons" }) }) }
-        } }
-        item { Text("Priority: ${sourcePriority.joinToString(" → ").ifBlank { "All providers disabled" }}", style = MaterialTheme.typography.bodySmall) }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { export.launch("echo-library.json") }) { Text("Export library") }
-            OutlinedButton(onClick = { importBackup.launch(arrayOf("application/json")) }) { Text("Import backup") }
-        } }
-        item { Text("Backups contain library metadata, playlists, likes and local matches. Import merges tracks and replaces playlists with matching IDs. Audio files and API credentials are excluded.", style = MaterialTheme.typography.bodySmall) }
-        item { Text(if (BuildConfig.STAGING) "Echo Stage uses an isolated demo library and simulated players.\nDark theme · Android Auto browsing through Media3." else "Original source quality · normal speed\nDownloads and listening history stay on this device.\nPlaylists can sync privately with your Google account.\nDark theme · Android Auto browsing through Media3.") }
-        item { OutlinedButton(onClick = { vm.runAction("Artwork cache cleared") { coil.Coil.imageLoader(context).memoryCache?.clear(); coil.Coil.imageLoader(context).diskCache?.clear() } }) { Text("Clear artwork cache") } }
-        item { Text("Android Auto needs a compatible host and Desktop Head Unit for validation. See docs/ARCHITECTURE.md in the project.", style = MaterialTheme.typography.bodySmall) }
+        }
     }
     spotifyFileImport?.let { uri -> PublicPlaylistDialog(vm, initialLink = "", initialFile = uri,
         close = { spotifyFileImport = null }, imported = { spotifyFileImport = null }) }
@@ -926,6 +931,17 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
         text = { Text("This deletes the encrypted Spotify export copies kept by Echo on this device. It does not delete imported playlists or Echo listening history.") },
         confirmButton = { TextButton(onClick = { deleteSpotifyArchives = false; vm.runAction("Saved Spotify ZIPs deleted") { dev.echo.data.spotify.SpotifyArchiveStore(context).deleteAll() } }) { Text("Delete ZIPs") } },
         dismissButton = { TextButton(onClick = { deleteSpotifyArchives = false }) { Text("Cancel") } })
+}
+
+@Composable private fun SettingsSectionHeader(title: String, summary: String, expanded: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
+        .clickable(role = Role.Button, onClick = onClick).testTag("settings-section-${title.lowercase().replace(" & ", "-").replace(" ", "-")}").padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleLarge)
+            Text(summary, style = MaterialTheme.typography.bodySmall)
+        }
+        Icon(if (expanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight, null)
+    }
 }
 
 @Composable private fun NameDialog(title: String, initial: String, dismiss: () -> Unit, save: (String) -> Unit) {

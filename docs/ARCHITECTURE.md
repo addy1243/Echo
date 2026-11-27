@@ -84,3 +84,5 @@ Android and Windows Stage position the compact player above browse content, meas
 Android exposes a user-selected DreamService independently of foreground Standby. The system controls dream scheduling; the passive surface reads an existing playback session without transport mutations, hides metadata behind keyguard, and does not promise activation after manual lock. Its artwork-only fallback is separate from the foreground Cinema renderer. Windows Stage requires the default input desktop and cannot render over the secure lock screen.
 
 Windows playlist rows and Auto match share recording eligibility for unresolved Spotify and pathless local imports; explicit matching keeps snapshot validation and duplicate occurrences.
+
+Android Settings groups its existing controls into expandable sections; appearance opens by default. Section state is presentation-only and does not change stored preferences or Standby behavior.

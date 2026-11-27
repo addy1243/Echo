@@ -88,3 +88,5 @@ The 0.2.3 release passed actual three-native-player local and production accepta
 - Android and Windows Stage compact player docks overlay browse content; trailing scroll clearance keeps the final content reachable.
 
 - Windows playlist rows offer Find recording only when a recording is unavailable; Auto match also handles imported local metadata whose device path was stripped, using the existing conservative matching and snapshot checks.
+
+- Android Settings uses compact expandable groups for Appearance, Playback, Standby, Library & storage, Account & imports, and About. The former decorative player preview is removed; existing actions and backup merge warnings remain available.
