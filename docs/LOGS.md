@@ -2,6 +2,13 @@
 
 Keep the three most recent completed work sessions only. Add a concise entry after a session is complete, including its date, what changed, executed evidence, and the next improvement. Do not copy proposed or failed checks as if they passed.
 
+## 2026-11-28 — Cache retry after playback interruption
+
+- Fixed a same-window retry bookkeeping edge: a previously failed cache item can retry after foreground video suspends preparation, including when preparation resumes before cancellation cleanup finishes. This does not identify the cause of the owner's observed one-time failure, which had already begun retrying on its own.
+- **Executed evidence:** Focused StagePreparationTest passed, including a deterministic suspension/resume-during-cleanup regression. The normal Android debug app assembled for an emulator preview. Independent review checked priority, cancellation and avoidance of tight retry loops.
+- **Remaining limits:** The original transfer exception was not retained; real recurrence and longer network/video acceptance remain unverified. No release or merge to main.
+- **Next improvement:** Verify the candidate on Windows and the emulator, and investigate repeated cache failures without exposing resolved URLs or personal library data.
+
 ## 2026-11-28 — Prevent empty Standby
 
 - Promoted focused Windows video and audio/video caching to production mode, retaining audio-only playback and connected-device guards. Guarded Android foreground Standby and Windows Stage screensaver entry against empty, paused or reconnecting playback; disabled manual controls with an explanation. Android system Dream exits when its local session has no actively playing song or cannot connect; its preview also exits without playback.
@@ -15,10 +22,3 @@ Keep the three most recent completed work sessions only. Add a concise entry aft
 - **Executed evidence:** Desktop tests and both generated-audio native VLC cache checks passed with dummy output. Android debug compilation and the focused YouTubeDownloader unit test passed; the full data unit test run was stopped after it did not finish. Independent review found cancellation and group-boundary issues, which were addressed and re-reviewed without further findings in those fixes.
 - **Remaining limits:** Connected Move-to-video native acceptance, real video continuity and weak-network buffering were not tested, and the user's interruption has not been reproduced. PR #2 is based on main without published 0.2.7.1 fixes; Android dream and Windows packaged Stage acceptance are also incomplete. Temporary directories may remain after abrupt exit. No release or merge.
 - **Next improvement:** Complete final review, reconcile 0.2.7.1 into the integration branch, and verify actual Stage video and playlist continuity before production promotion.
-
-## 2026-11-28 — Reuse the current captured stream
-
-- The current VLC audio relay can adopt its own complete validated capture and serve subsequent requests and seeks from a pinned local file, without restarting the player. Active upstream requests and network-backed video continue to hold the conservative transfer rate. Capture discard cleanup no longer holds the relay write lock while performing file or cache cleanup.
-- **Executed evidence:** Full `:desktop:test` passed. Deterministic fake-origin tests cover local GET/HEAD/ranges, overlapping upstream requests, pin lifecycle, and blocked cleanup. The synthetic native VLC check passed with dummy output, an origin disabled after capture, a local range probe, and same-player playback; this does not prove VLC itself fetched the probed local range. Independent review found and verified the cleanup fix.
-- **Remaining limits:** Real YouTube playback, audible handoff, exact download rates, and weak-network continuity remain unverified. A badge alone cannot prove a different cache preparation is the exact stream representation; only an eligible original stream capture is adopted. Streamed video or an outstanding upstream read retains the conservative rate.
-- **Next improvement:** Restart Stage and verify the current-song capture and next-song rate with real recordings; inspect video and seek behavior without disrupting audio.

@@ -365,6 +365,55 @@ class StagePreparationTest {
             assertTrue("retry is delayed after speculative preemption", secondAttemptAtMs - startedAtMs >= 250)
         } finally { worker.cancelAndJoin() }
     }
+
+    @Test fun suspensionAllowsFailedTrackToRetryWhenSameWindowResumes() = runBlocking {
+        val a = song("aaaaaaaaaaa"); val b = song("bbbbbbbbbbb")
+        val state = DesktopPlaybackState(queue = listOf(a, b), index = 0)
+        fun plan(speculationEnabled: Boolean) = StagePreparationPlan(stagePreparationFence(state), eligible = true,
+            reconcile = true, window = listOf(a, b), order = listOf(a, b), slots = stageBufferPositions(state),
+            speculationEnabled = speculationEnabled)
+        val desired = MutableStateFlow<StagePreparationPlan?>(plan(speculationEnabled = true))
+        val bStarted = CompletableDeferred<Unit>()
+        val cleanupStarted = CompletableDeferred<Unit>()
+        val allowCleanup = CompletableDeferred<Unit>()
+        val aRetried = CompletableDeferred<Unit>()
+        val requests = mutableListOf<String>()
+        var token = 0L
+        val worker = launch {
+            runStagePreparationWorker(desired, videoEnabled = false,
+                isReady = { _, _ -> false }, beginTransfer = { _, _ -> ++token },
+                reportProgress = { _, _, _, _ -> }, finishTransfer = { _, _, _, _ -> },
+                prepare = { track, _, _ ->
+                    requests += track.id
+                    when (track.id) {
+                        a.id -> if (requests.count { it == a.id } == 1) false else { aRetried.complete(Unit); true }
+                        else -> {
+                            bStarted.complete(Unit)
+                            try { awaitCancellation() } finally {
+                                withContext(NonCancellable) {
+                                    cleanupStarted.complete(Unit)
+                                    allowCleanup.await()
+                                }
+                            }
+                        }
+                    }
+                }, afterTransfer = { _, _ -> })
+        }
+        try {
+            withTimeout(1_000) { bStarted.await() }
+            desired.value = plan(speculationEnabled = false)
+            withTimeout(1_000) { cleanupStarted.await() }
+            assertEquals(listOf(a.id, b.id), requests)
+            desired.value = plan(speculationEnabled = true)
+            allowCleanup.complete(Unit)
+            withTimeout(2_000) { aRetried.await() }
+            assertEquals(listOf(a.id, b.id, a.id), requests)
+        } finally {
+            allowCleanup.complete(Unit)
+            worker.cancelAndJoin()
+        }
+    }
+
     @Test fun liveCaptureDoesNotBlockNextSongAndDiscardCanRetry() = runBlocking {
         val current = song("aaaaaaaaaaa"); val next = song("bbbbbbbbbbb")
         val state = DesktopPlaybackState(queue = listOf(current, next), index = 0)

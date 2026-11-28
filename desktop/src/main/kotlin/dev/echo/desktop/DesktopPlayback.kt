@@ -239,7 +239,7 @@ internal suspend fun runStagePreparationWorker(
         val token = beginTransfer(next, isVideo)
         var terminalPhase: StageBufferTransferPhase? = null
         try {
-            val completed = coroutineScope {
+            val (outcome, obsoletePlan) = coroutineScope {
                 val transfer = async(Dispatchers.IO) {
                     prepare(next, isVideo) { progress ->
                         if (progress.phase in setOf(StageBufferTransferPhase.READY, StageBufferTransferPhase.FAILED,
@@ -253,20 +253,23 @@ internal suspend fun runStagePreparationWorker(
                             isVideo && !latest.videoCachingEnabled
                     }
                 }
-                val result = select<Boolean?> {
-                    transfer.onAwait { it }
-                    obsolete.onAwait { null }
+                val result = select<Pair<Boolean?, StagePreparationPlan?>> {
+                    transfer.onAwait { it to null }
+                    obsolete.onAwait { null to it }
                 }
-                if (result == null) transfer.cancelAndJoin() else obsolete.cancel()
+                if (result.first == null) transfer.cancelAndJoin() else obsolete.cancel()
                 result
             }
-            finishTransfer(next, isVideo, token, when (completed) {
+            finishTransfer(next, isVideo, token, when (outcome) {
                 true -> StageBufferTransferPhase.READY
                 false -> terminalPhase ?: StageBufferTransferPhase.FAILED
                 null -> null
             })
-            if (completed == false) failed += Triple(plan.fence, next.id, isVideo)
-            if (completed == true) preemptionRetryDelayMs = 300L
+            if (outcome == null && obsoletePlan?.speculationEnabled == false) {
+                failed.clear()
+            }
+            if (outcome == false) failed += Triple(plan.fence, next.id, isVideo)
+            if (outcome == true) preemptionRetryDelayMs = 300L
         } catch (_: StageStreamCapturePending) {
             finishTransfer(next, isVideo, token, StageBufferTransferPhase.CAPTURING)
         } catch (_: StageStreamCaptureDiscarded) {

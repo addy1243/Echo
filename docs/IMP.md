@@ -33,6 +33,8 @@ Updated 2026-11-09. This is the durable requirements page for all agents. Curren
 
 - Separate per-process caches limit audio to 100 MiB and video to 200 MiB, and lease files while VLC uses them. Complete, validated captures of current audio or video can be served on subsequent relay requests without restarting VLC; incomplete captures are discarded. Disabling caching stops speculative transfers and current captures without intentionally stopping playback. Offline and connected-group boundaries remain independent. Abrupt termination can leave temporary directories behind.
 
+- A cache preparation failure may be retried when the preparation context changes. Suspending and resuming an in-flight transfer must clear stale failure suppression even if resumption occurs during cancellation; do not retry failed transfers in a tight loop.
+
 - To protect uninterrupted video, speculative preparation is suspended and an active speculative request cancelled while focused video is loading or an active video input needs the network; it can resume when paused or fully local. This is a mitigation, not proof that network buffering cannot occur. Real YouTube playback, weak-network continuity, cache-backed Cinema and full native acceptance are still required. The owner accepted the personal-use terms risk; this does not establish provider authorization.
 
 - Windows Stage sends only its three explicit silent fixtures to the local simulator. Unmatched imported songs prompt for a recording without replacing the active queue; real library recordings take precedence over simulated metadata with the same ID.
