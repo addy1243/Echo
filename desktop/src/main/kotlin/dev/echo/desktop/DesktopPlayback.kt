@@ -721,7 +721,8 @@ class DesktopPlayback internal constructor(
                 provider.resolve(track)?.takeIf { !stageVideoEnabled || sameDesktopYouTubeRepresentation(resolved, it) }
             }
             val createdFactory = playbackFactory()
-            val stagedPlayer = createdFactory.mediaPlayers().newMediaPlayer()
+            val stagedPlayer = if (stageVideoEnabled) createdFactory.mediaPlayers().newEmbeddedMediaPlayer()
+                else createdFactory.mediaPlayers().newMediaPlayer()
             try {
                 val ready = CompletableDeferred<Unit>()
                 stagedPlayer.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
