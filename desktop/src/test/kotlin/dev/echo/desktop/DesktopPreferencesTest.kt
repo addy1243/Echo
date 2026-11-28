@@ -10,6 +10,55 @@ import org.junit.rules.TemporaryFolder
 class DesktopPreferencesTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun mediaCachingIsOptInAndPersistsAcrossOtherChanges() {
+        val file = temporary.root.toPath().resolve("appearance.json")
+        val preferences = DesktopPreferences(file)
+        assertFalse(preferences.mediaCachingEnabled)
+        preferences.updateMediaCachingEnabled(true)
+        preferences.updateStageVideoCachingEnabled(false)
+        assertTrue(DesktopPreferences(file).mediaCachingEnabled)
+        preferences.updateMediaCachingEnabled(false)
+        assertFalse(DesktopPreferences(file).mediaCachingEnabled)
+    }
+
+    @Test fun stageCacheDefaultsToAudioAndVideoForNewAndExistingPreferences() {
+        val file = temporary.root.toPath().resolve("appearance.json")
+        assertTrue(DesktopPreferences(file).stageVideoCachingEnabled)
+        Files.writeString(file, """{"theme":"LIGHT","closeToTray":false}""")
+        val preferences = DesktopPreferences(file)
+        assertTrue(preferences.stageVideoCachingEnabled)
+        assertEquals(DesktopThemeMode.LIGHT, preferences.themeMode)
+        assertFalse(preferences.closeToTray)
+    }
+
+    @Test fun stageCacheChoicePersistsAndSurvivesOtherPreferenceUpdates() {
+        val file = temporary.root.toPath().resolve("appearance.json")
+        Files.writeString(file, """{"unrelated":"preserve"}""")
+        val preferences = DesktopPreferences(file)
+        preferences.updateStageVideoCachingEnabled(false)
+        preferences.setTheme(DesktopThemeMode.LIGHT)
+        preferences.setAccent("#83E5CB")
+        preferences.updateCloseToTray(false)
+        val reopened = DesktopPreferences(file)
+        assertFalse(reopened.stageVideoCachingEnabled)
+        assertEquals(DesktopThemeMode.LIGHT, reopened.themeMode)
+        assertEquals("#83E5CB", reopened.customAccent)
+        assertFalse(reopened.closeToTray)
+        assertEquals("preserve", org.json.JSONObject(Files.readString(file)).getString("unrelated"))
+        reopened.updateStageVideoCachingEnabled(true)
+        assertTrue(DesktopPreferences(file).stageVideoCachingEnabled)
+    }
+
+    @Test fun failedStageCachePreferenceSavePreservesFileAndActiveChoice() {
+        val file = temporary.root.toPath().resolve("appearance.json")
+        Files.writeString(file, "{broken")
+        val preferences = DesktopPreferences(file)
+        preferences.updateStageVideoCachingEnabled(false)
+        assertTrue(preferences.stageVideoCachingEnabled)
+        assertNotNull(preferences.error)
+        assertEquals("{broken", Files.readString(file))
+    }
+
     @Test fun tutorialCompletionMarkerPersistsAcrossRestart() {
         val file = temporary.root.toPath().resolve("preferences.json")
         val preferences = DesktopPreferences(file)

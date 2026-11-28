@@ -68,4 +68,19 @@ class YouTubeDownloaderTest {
         }
         assertEquals(1, calls)
     }
+
+    @Test fun cancelledSpeculationDoesNotStartAnOkHttpCall() {
+        var calls = 0
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            calls++
+            okhttp3.Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200)
+                .message("OK").body("response".toResponseBody()).build()
+        }.build()
+        val token = SpeculativeExtractionToken().apply { cancel() }
+        val downloader = YouTubeDownloader(client).apply { speculativeToken = token }
+        assertThrows(kotlinx.coroutines.CancellationException::class.java) {
+            downloader.execute(Request.newBuilder().get("https://www.youtube.com/watch?v=aB12_cD34-e").build())
+        }
+        assertEquals(0, calls)
+    }
 }

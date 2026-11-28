@@ -191,3 +191,19 @@ tasks.register<JavaExec>("publishedWindowsUpdateCheck") {
     providers.gradleProperty("echoDiagnoseWindowsBaseline").orNull?.let { args("--diagnose-from-version", it) }
         ?: providers.gradleProperty("echoPublishedWindowsBaseline").orNull?.let { args("--download-from-version", it) }
 }
+tasks.register<JavaExec>("stageCacheNativeCheck") {
+    group = "verification"
+    description = "Verify generated Stage cache bytes with native VLC and a disabled synthetic origin."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.echo.desktop.DesktopStageCacheNativeCheckKt")
+    jvmArgs("--add-modules=jdk.httpserver")
+}
+tasks.register<JavaExec>("stageStreamCaptureNativeCheck") {
+    group = "verification"
+    description = "Verify VLC can cache a generated stream without an additional download."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.echo.desktop.DesktopStageStreamCaptureNativeCheckKt")
+    jvmArgs("--add-modules=jdk.httpserver")
+}

@@ -215,12 +215,30 @@ internal fun launchDesktop(stagingMode: Boolean) = application {
     val store = startup.getOrNull()
     val provider = remember { YouTubeProvider() }
     val offline = remember(dataDirectory) { DesktopOfflineRepository(provider, dataDirectory.resolve("offline-audio")) }
+    val stageTransferGate = remember(stagingMode) { StageMediaTransferGate() }
+    val stageMediaCache = remember(provider, stagingMode) {
+        runCatching { DesktopStageMediaCache(provider, stageTransferGate) }.getOrNull()
+    }
+    val stageVideoCache = remember(provider, stagingMode) {
+        if (stagingMode) runCatching { DesktopStageVideoCache(provider, stageTransferGate) }.getOrNull() else null
+    }
+    DisposableEffect(stageMediaCache, stageVideoCache) {
+        onDispose {
+            stageMediaCache?.close()
+            stageVideoCache?.close()
+        }
+    }
     val player = remember { store?.let { DesktopPlayback(provider, offline,
         recoveryFile = it.file.resolveSibling("playback-v2-recovery.json").toFile(),
         stageVideoEnabled = stagingMode,
+        stageMediaCache = stageMediaCache,
+        stageVideoCache = stageVideoCache,
         findLocalTrack = { key -> it.snapshot().tracks.firstOrNull { track -> safeEngineRecordingId(track) == key } }) { track, event, listened ->
         it.recordHistory(track, event, listened, track.durationMs)
     } } }
+    LaunchedEffect(player, preferences.stageVideoCachingEnabled) {
+        player?.setStageVideoCachingEnabled(preferences.stageVideoCachingEnabled)
+    }
     var videoFullscreen by remember { mutableStateOf<StageWindowFullscreen?>(null) }
     fun exitVideoFullscreen() {
         val fullscreen = videoFullscreen ?: return
@@ -283,6 +301,7 @@ internal fun launchDesktop(stagingMode: Boolean) = application {
                 background = androidx.compose.ui.graphics.lerp(DarkCanvas, accent, .04f), surface = androidx.compose.ui.graphics.lerp(DarkPanel, accent, .06f), onSurface = Color(0xFFEAF0F7))
         MaterialTheme(colorScheme = colors) {
             if (store != null && player != null) DesktopApp(store, provider, player, offline, stagingMode, preferences,
+                stageMediaCache != null, stageVideoCache != null,
                 desktopSpotifyArchiveDirectory(dataDirectory), dataDirectory.resolve("google-account.dpapi"),
                 windowVisible && !windowState.isMinimized, stageSaverMode, { stageSaverModeState.value },
                 ::enterStageSaver, ::exitStageSaver, videoFullscreen != null,
@@ -317,6 +336,7 @@ fun main() = launchDesktop(stagingMode = false)
 @OptIn(ExperimentalComposeUiApi::class)
 private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player: DesktopPlayback,
     offline: DesktopOfflineRepository, stagingMode: Boolean, preferences: DesktopPreferences,
+    mediaCacheAvailable: Boolean, videoCacheAvailable: Boolean,
     spotifyArchiveDirectory: java.nio.file.Path, accountFile: java.nio.file.Path,
     windowVisible: Boolean, stageSaverMode: StageSaverMode?, currentStageSaverMode: () -> StageSaverMode?,
     onEnterStageSaver: (StageSaverMode) -> Unit, onExitStageSaver: () -> Unit,
@@ -391,7 +411,11 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         if (stageSimulator != null && !stageLiveLocal) stageSimulator.localPlayback else player.state
     }
     val playback by playbackFlow.collectAsState()
+    val stageBufferStatus by player.stageBufferStatus.collectAsState()
     val downloads by offline.state.collectAsState()
+    LaunchedEffect(stagingMode, stageLiveLocal, downloads.offlineOnly, preferences.mediaCachingEnabled) {
+        player.setStagePreparationEnabled(preferences.mediaCachingEnabled && (!stagingMode || stageLiveLocal) && !downloads.offlineOnly)
+    }
     var library by remember { mutableStateOf(store.snapshot()) }
     var showTutorial by remember { mutableStateOf(!preferences.tutorialCompleted) }
     var page by remember { mutableStateOf("Home") }
@@ -534,7 +558,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         }
     }
     val selectedPlaylist = library.playlists.find { "playlist:${it.id}" == page }
-    val trackMap = (library.tracks + stageSimulator?.tracksForPresentation().orEmpty()).associateBy { it.id }
+    val trackMap = stageTrackLookup(library.tracks, stageSimulator?.tracksForPresentation().orEmpty())
     val selectedRemote = selectedRemotePlayer(selectedRemoteId, connectedState.devices, lastSelectedRemote)
     val remotePlayer = selectedRemote?.device
     val selectedIsGroupMember = selectedRemoteId != null && connectedV2.group?.members?.any {
@@ -564,6 +588,9 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     val localStageVideo = stageLiveLocal && !remoteFocused && focusedGroup == null
     var focusedVideoRequested by remember { mutableStateOf(false) }
     var focusedVideoAttemptedOccurrence by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(localStageVideo, focusedVideoRequested, stageSaverMode) {
+        player.setStageVideoPreparationPriority(localStageVideo && (focusedVideoRequested || stageSaverMode != null))
+    }
     LaunchedEffect(localStageVideo) {
         if (!localStageVideo && focusedVideoRequested) {
             focusedVideoRequested = false
@@ -942,17 +969,21 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
         val track = items.getOrNull(index) ?: return
         if (dispatchPortableQueue(items, index, selectedOnly)) return
         if (stageSimulator != null) {
-            val playable = items.getOrNull(index)?.let(::desktopPlayable) == true
-            stageLiveLocal = playable
-            if (playable) {
+            if (desktopPlayable(track)) {
                 val queue = if (selectedOnly) listOf(track) else items.filter(::desktopPlayable)
                 val selected = if (selectedOnly) 0 else items.take(index).count(::desktopPlayable)
+                stageLiveLocal = true
+                player.setStagePreparationEnabled(preferences.mediaCachingEnabled && !downloads.offlineOnly)
                 player.play(queue, selected)
-            } else {
+                return
+            } else if (isStageFixture(track)) {
+                val queue = if (selectedOnly) listOf(track) else items.filter(::isStageFixture)
+                val selected = if (selectedOnly) 0 else items.take(index).count(::isStageFixture)
+                stageLiveLocal = false
                 player.pause()
-                stageSimulator.playLocal(items, index)
+                stageSimulator.playLocal(queue, selected)
+                return
             }
-            return
         }
 
         if (!desktopPlayable(track)) {
@@ -1204,6 +1235,25 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                     if (page == "Settings") {
                         DesktopSpotifySettingsPage(preferences, bottomInset = stageBrowseInset,
                             leadingContent = {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("Media cache", style = MaterialTheme.typography.titleMedium)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("Prepare upcoming media", modifier = Modifier.weight(1f))
+                                        Switch(checked = preferences.mediaCachingEnabled && mediaCacheAvailable,
+                                            onCheckedChange = preferences::updateMediaCachingEnabled, enabled = mediaCacheAvailable)
+                                    }
+                                    if (!mediaCacheAvailable) Text("Media cache is unavailable. Playback can still stream.", color = MaterialTheme.colorScheme.error)
+                                    else if (stagingMode && !videoCacheAvailable) Text("Video caching is unavailable; audio caching can still work.", color = MaterialTheme.colorScheme.error)
+                                    Text(if (stagingMode) "Prepare temporary files for nearby songs. Audio only saves video bandwidth; video can still stream."
+                                        else "Prepare temporary audio files for nearby songs. Video caching is available in Stage.",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        FilterChip(!preferences.stageVideoCachingEnabled || !videoCacheAvailable,
+                                            { preferences.updateStageVideoCachingEnabled(false) }, label = { Text("Audio only") })
+                                        FilterChip(preferences.stageVideoCachingEnabled && videoCacheAvailable,
+                                            { preferences.updateStageVideoCachingEnabled(true) }, enabled = videoCacheAvailable, label = { Text("Audio and video") })
+                                    }
+                                }
                                 stageScreensaverPreferences?.let {
                                     StageScreensaverSettings(it, !stageSaverActive && stageSaverCanvasRestored, ::startStageScreensaver)
                                 }
@@ -1529,6 +1579,10 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             ) {
             DesktopFullPlayer(Modifier.fillMaxWidth(),
             playerOpen = fullPlayerOpen,
+            stageBufferStatus = stageBufferStatus.takeIf {
+                stagingMode && stageLiveLocal && !remoteFocused && focusedGroup == null &&
+                    stageSaverMode == null
+            },
             track = presentedTrack, title = presentedTitle, artist = presentedArtist,
             tracksById = trackMap,
             playing = presentedPlaying, positionMs = presentedPosition, durationMs = presentedDuration,
@@ -1751,6 +1805,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
 private fun DesktopFullPlayer(
     modifier: Modifier,
     playerOpen: Boolean,
+    stageBufferStatus: StageBufferStatus?,
     track: Track?, title: String?, artist: String?, playing: Boolean, positionMs: Long, durationMs: Long,
     tracksById: Map<String, Track>,
     remoteMode: Boolean, remoteDevice: ConnectedDevice?, remoteEnabled: Boolean, commandPending: Boolean,
@@ -1959,6 +2014,9 @@ private fun DesktopFullPlayer(
                 }
             }
         }
+    }
+    if (stageBufferStatus != null && (cinemaVideo || videoFullscreen) && !stageCinemaActive && playerOpen) {
+        StageBufferTracker(stageBufferStatus, Modifier.width(220.dp).padding(start = 8.dp, bottom = 8.dp))
     }
     AnimatedVisibility(
         visible = !cinemaVideo && !stageCinemaActive && playerOpen && queueOpen && (remoteMode || group || localAvailable),

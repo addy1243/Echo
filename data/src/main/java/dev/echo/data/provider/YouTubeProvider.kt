@@ -120,10 +120,17 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
     }
 
     override suspend fun resolve(track: Track): PlayableSource? {
+        return resolve(track, speculative = false)
+    }
+
+    /** Resolves likely upcoming audio without letting it alter Cinema video selections. */
+    suspend fun resolveSpeculative(track: Track): PlayableSource? = resolve(track, speculative = true)
+
+    private suspend fun resolve(track: Track, speculative: Boolean): PlayableSource? {
         if (track.provider != id) return null
         val videoId = youtubeVideoId(track.sourceUri.orEmpty()) ?: return null
         if (track.id != "youtube:$videoId") return null
-        return extract {
+        return extract(speculative) {
             val info = StreamInfo.getInfo(ServiceList.YouTube, youtubeWatchUrl(videoId))
             info.errors.forEach { throwKnownYouTubeError(it) }
             if (info.id != videoId || info.ageLimit > 0 ||
@@ -132,11 +139,13 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
                 throw YouTubeRequestException("This YouTube recording is restricted or is not a recorded song")
             val audio = selectYouTubeAudio(info.audioStreams)
                 ?: throw YouTubeRequestException("No playable audio is available for this YouTube recording. Try another result.")
-            videoCache.remove(videoId)
-            try {
-                selectYouTubeVideoSelection(info.videoStreams + info.videoOnlyStreams)?.let { videoCache.put(videoId, it) }
-            } catch (_: Exception) {
-                // Cinema video is optional and must never change successful audio resolution.
+            if (!speculative) {
+                videoCache.remove(videoId)
+                try {
+                    selectYouTubeVideoSelection(info.videoStreams + info.videoOnlyStreams)?.let { videoCache.put(videoId, it) }
+                } catch (_: Exception) {
+                    // Cinema video is optional and must never change successful audio resolution.
+                }
             }
             audio
         }
@@ -155,10 +164,19 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
     }
 
     internal suspend fun resolveVideoSelection(track: Track): YouTubeVideoSelection? {
+        return resolveVideoSelection(track, speculative = false)
+    }
+
+    /** Resolves a likely next video's streams without changing the foreground Cinema cache. */
+    internal suspend fun resolveVideoSelectionSpeculative(track: Track): YouTubeVideoSelection? {
+        return resolveVideoSelection(track, speculative = true)
+    }
+
+    private suspend fun resolveVideoSelection(track: Track, speculative: Boolean): YouTubeVideoSelection? {
         if (track.provider != id) return null
         val videoId = youtubeVideoId(track.sourceUri.orEmpty()) ?: return null
         if (track.id != "youtube:$videoId") return null
-        return extract {
+        return extract(speculative) {
             val info = StreamInfo.getInfo(ServiceList.YouTube, youtubeWatchUrl(videoId))
             info.errors.forEach(::throwKnownYouTubeError)
             if (info.id != videoId || info.ageLimit > 0 ||
@@ -182,26 +200,64 @@ class YouTubeProvider @Inject constructor() : AudioSourceProvider, MusicMetadata
         }
     }
 
-    private suspend fun <T> extract(block: () -> T): T = extractorLock.withLock {
-        runInterruptible(Dispatchers.IO) {
-            try {
-                if (!initialized) {
-                    NewPipe.init(YouTubeDownloader())
-                    initialized = true
+    private suspend fun <T> extract(speculative: Boolean = false, block: () -> T): T {
+        val token = if (speculative) registerSpeculation() else null
+        if (!speculative) beginForeground()
+        val cancellationHandle = token?.let { cancelSpeculationOnJobCancellation(it) }
+        try {
+            return extractorLock.withLock {
+                token?.throwIfCancelled()
+                runInterruptible(Dispatchers.IO) {
+                    try {
+                        if (!initialized) {
+                            downloader = YouTubeDownloader()
+                            NewPipe.init(downloader!!)
+                            initialized = true
+                        }
+                        val activeDownloader = downloader!!
+                        activeDownloader.speculativeToken = token
+                        try { block().also { token?.throwIfCancelled() } }
+                        finally { activeDownloader.speculativeToken = null }
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (error: Exception) {
+                        token?.throwIfCancelled()
+                        throwKnownYouTubeError(error)
+                        generateSequence<Throwable>(error) { it.cause }.filterIsInstance<YouTubeRequestException>().firstOrNull()?.let { throw it }
+                        val retryable = generateSequence<Throwable>(error) { it.cause }.any { it is java.io.IOException }
+                        throw YouTubeRequestException("YouTube could not be reached or its response changed. Check your connection and try again; an Echo update may be needed.", retryable)
+                    }
                 }
-                block()
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) {
-                throwKnownYouTubeError(error)
-                generateSequence<Throwable>(error) { it.cause }.filterIsInstance<YouTubeRequestException>().firstOrNull()?.let { throw it }
-                val retryable = generateSequence<Throwable>(error) { it.cause }.any { it is java.io.IOException }
-                throw YouTubeRequestException("YouTube could not be reached or its response changed. Check your connection and try again; an Echo update may be needed.", retryable)
             }
+        } finally {
+            cancellationHandle?.dispose()
+            if (speculative) synchronized(speculativeTokens) { speculativeTokens.remove(token) }
+            else endForeground()
         }
+    }
+
+    private fun registerSpeculation() = SpeculativeExtractionToken().also {
+        synchronized(speculativeTokens) {
+            speculativeTokens += it
+            if (foregroundCount > 0) it.cancel()
+        }
+    }
+
+    private fun beginForeground() {
+        synchronized(speculativeTokens) {
+            foregroundCount++
+            speculativeTokens.forEach(SpeculativeExtractionToken::cancel)
+        }
+    }
+
+    private fun endForeground() {
+        synchronized(speculativeTokens) { foregroundCount-- }
     }
 
     private companion object {
         val extractorLock = Mutex()
+        val speculativeTokens = mutableSetOf<SpeculativeExtractionToken>()
+        var foregroundCount = 0
+        var downloader: YouTubeDownloader? = null
         var initialized = false
     }
 }

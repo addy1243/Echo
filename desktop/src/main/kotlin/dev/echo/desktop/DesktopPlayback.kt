@@ -1,5 +1,7 @@
 package dev.echo.desktop
 
+import dev.echo.core.PlayableSource
+
 import dev.echo.core.Track
 import dev.echo.core.connected.EngineCapture
 import dev.echo.core.connected.EngineFence
@@ -30,6 +32,10 @@ import kotlin.time.TimeSource
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.selects.select
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory
 import uk.co.caprica.vlcj.player.base.MediaPlayer
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter
@@ -92,6 +98,187 @@ data class DesktopPlaybackState(
 internal fun upcomingDesktopTracks(state: DesktopPlaybackState): List<Track> =
     if (state.current == null) emptyList() else state.queue.drop(state.index + 1) +
         if (state.repeatMode == DesktopRepeatMode.ALL) state.queue.take(state.index) else emptyList()
+
+internal fun stopDesktopPlaybackForOffline(offlineOnly: Boolean, remoteActive: Boolean, cachedAudio: Boolean) =
+    offlineOnly && (remoteActive || cachedAudio)
+
+internal fun stageShouldYieldToPlayback(buffering: Boolean, wantsPlaying: Boolean, videoMode: Boolean,
+    streamedAudio: Boolean, streamedVideo: Boolean, videoNeedsAudio: Boolean): Boolean =
+    buffering && wantsPlaying && if (videoMode) streamedVideo || (videoNeedsAudio && streamedAudio) else streamedAudio
+
+internal fun stageCanPrepareFast(state: DesktopPlaybackState, wantsPlaying: Boolean, localAudio: Boolean,
+    localVideo: Boolean, videoNeedsAudio: Boolean): Boolean = !wantsPlaying ||
+    (!state.loading && !state.videoLoading && state.current != null && state.error == null &&
+        if (state.videoMode) localVideo && (!videoNeedsAudio || localAudio) else localAudio)
+
+internal fun shouldSuspendStageSpeculation(state: DesktopPlaybackState, wantsPlaying: Boolean, localAudio: Boolean,
+    localVideo: Boolean, videoNeedsAudio: Boolean): Boolean = wantsPlaying &&
+    (state.videoLoading || state.videoMode && !(localVideo && (!videoNeedsAudio || localAudio)))
+
+internal fun stageCacheableTrack(track: Track) = track.provider == "youtube" && track.id.matches(Regex("youtube:[A-Za-z0-9_-]{11}"))
+
+internal fun stageBufferPositions(state: DesktopPlaybackState): List<Pair<Int, Track?>> = (-2..2).map { offset ->
+    val index = state.index + offset
+    val actual = when {
+        state.current == null -> -1
+        state.repeatMode == DesktopRepeatMode.ALL -> Math.floorMod(index, state.queue.size)
+        index in state.queue.indices -> index
+        else -> -1
+    }
+    offset to state.queue.getOrNull(actual)
+}
+
+internal fun stagePreparationWindow(state: DesktopPlaybackState): List<Track> {
+    val current = state.current ?: return emptyList()
+    fun step(index: Int, direction: Int): Int? = when {
+        state.repeatMode == DesktopRepeatMode.ALL && state.queue.isNotEmpty() ->
+            (index + direction + state.queue.size) % state.queue.size
+        index + direction in state.queue.indices -> index + direction
+        else -> null
+    }
+    val behind = buildList {
+        var previous = state.index
+        repeat(2) {
+            previous = step(previous, -1) ?: return@repeat
+            add(state.queue[previous])
+        }
+    }
+    val ahead = buildList {
+        var next = state.index
+        repeat(2) {
+            next = step(next, 1) ?: return@repeat
+            add(state.queue[next])
+        }
+    }
+    return behind + current + ahead
+}
+
+internal fun stagePreparationPriority(state: DesktopPlaybackState): List<Track> {
+    val window = stagePreparationWindow(state)
+    if (window.isEmpty()) return emptyList()
+    val behindCount = if (state.repeatMode == DesktopRepeatMode.ALL) 2 else minOf(2, state.index)
+    val ahead = window.drop(behindCount + 1)
+    return ahead + window.drop(behindCount).take(1) + window.take(behindCount)
+}
+
+internal data class StagePreparationFence(
+    val windowIds: List<String>,
+    val targetEnabled: Boolean = true, val offlineOnly: Boolean = false, val connectedGroup: Boolean = false,
+)
+
+internal fun stagePreparationFence(state: DesktopPlaybackState, targetEnabled: Boolean = true,
+    wantsPlaying: Boolean? = null, offlineOnly: Boolean = false, connectedGroup: Boolean = false) = StagePreparationFence(
+    stagePreparationWindow(state).map { it.id }, targetEnabled, offlineOnly, connectedGroup,
+)
+
+internal fun stagePreparationFenceIsCurrent(captured: StagePreparationFence, current: DesktopPlaybackState,
+    targetEnabled: Boolean = true, wantsPlaying: Boolean? = null, offlineOnly: Boolean = false, connectedGroup: Boolean = false) =
+    captured == stagePreparationFence(current, targetEnabled, wantsPlaying, offlineOnly, connectedGroup)
+
+internal data class StagePreparationFlowKey(
+    val fence: StagePreparationFence,
+    val version: Long,
+)
+
+internal data class StagePreparationPlan(
+    val fence: StagePreparationFence,
+    val eligible: Boolean,
+    val reconcile: Boolean,
+    val window: List<Track>,
+    val order: List<Track>,
+    val slots: List<Pair<Int, Track?>>,
+    val videoFirst: Boolean = false,
+    val refreshVersion: Long = 0,
+    val videoCachingEnabled: Boolean = true,
+    val speculationEnabled: Boolean = true,
+)
+
+internal fun stagePreparationFlowKey(state: DesktopPlaybackState, version: Long, targetEnabled: Boolean,
+    wantsPlaying: Boolean? = null, offlineOnly: Boolean = false, connectedGroup: Boolean = false) = StagePreparationFlowKey(
+    stagePreparationFence(state, targetEnabled, wantsPlaying, offlineOnly, connectedGroup), version,
+)
+
+internal fun shouldPrepareStageMedia(state: DesktopPlaybackState, targetEnabled: Boolean,
+    wantsPlaying: Boolean = false, offlineOnly: Boolean = false, connectedGroup: Boolean = false) =
+    targetEnabled && !state.loading && !state.ended && state.current != null && !offlineOnly && !connectedGroup
+
+internal suspend fun runStagePreparationWorker(
+    desired: StateFlow<StagePreparationPlan?>,
+    videoEnabled: Boolean,
+    isReady: (Track, Boolean) -> Boolean,
+    beginTransfer: (Track, Boolean) -> Long,
+    reportProgress: (Track, Boolean, Long, StageCacheProgress) -> Unit,
+    finishTransfer: (Track, Boolean, Long, StageBufferTransferPhase?) -> Unit,
+    prepare: suspend (Track, Boolean, (StageCacheProgress) -> Unit) -> Boolean,
+    afterTransfer: (StagePreparationPlan, Track) -> Unit,
+) {
+    val failed = mutableSetOf<Triple<StagePreparationFence, String, Boolean>>()
+    var preemptionRetryDelayMs = 300L
+    while (currentCoroutineContext().isActive) {
+        val plan = desired.filterNotNull().first { it.eligible && it.speculationEnabled }
+        val prepareVideo = videoEnabled && plan.videoCachingEnabled
+        val mediaOrder = if (plan.videoFirst) plan.order.flatMap { track ->
+            listOf(track to false) + if (prepareVideo) listOf(track to true) else emptyList()
+        } else plan.order.map { it to false } + if (prepareVideo) plan.order.map { it to true } else emptyList()
+        val nextMedia = mediaOrder.firstOrNull { (candidate, isVideo) ->
+            !isReady(candidate, isVideo) && Triple(plan.fence, candidate.id, isVideo) !in failed
+        }
+        if (nextMedia == null) {
+            desired.first { it == null || it.fence != plan.fence || !it.speculationEnabled || it.videoFirst != plan.videoFirst ||
+                it.refreshVersion != plan.refreshVersion || it.videoCachingEnabled != plan.videoCachingEnabled || !it.eligible }
+            failed.clear()
+            continue
+        }
+        val (next, isVideo) = nextMedia
+        val token = beginTransfer(next, isVideo)
+        var terminalPhase: StageBufferTransferPhase? = null
+        try {
+            val completed = coroutineScope {
+                val transfer = async(Dispatchers.IO) {
+                    prepare(next, isVideo) { progress ->
+                        if (progress.phase in setOf(StageBufferTransferPhase.READY, StageBufferTransferPhase.FAILED,
+                                StageBufferTransferPhase.UNAVAILABLE)) terminalPhase = progress.phase
+                        reportProgress(next, isVideo, token, progress)
+                    }
+                }
+                val obsolete = async {
+                    desired.filterNotNull().first { latest ->
+                        !latest.reconcile || !latest.speculationEnabled || next.id !in latest.window.map { it.id } ||
+                            isVideo && !latest.videoCachingEnabled
+                    }
+                }
+                val result = select<Boolean?> {
+                    transfer.onAwait { it }
+                    obsolete.onAwait { null }
+                }
+                if (result == null) transfer.cancelAndJoin() else obsolete.cancel()
+                result
+            }
+            finishTransfer(next, isVideo, token, when (completed) {
+                true -> StageBufferTransferPhase.READY
+                false -> terminalPhase ?: StageBufferTransferPhase.FAILED
+                null -> null
+            })
+            if (completed == false) failed += Triple(plan.fence, next.id, isVideo)
+            if (completed == true) preemptionRetryDelayMs = 300L
+        } catch (_: StageStreamCapturePending) {
+            finishTransfer(next, isVideo, token, StageBufferTransferPhase.CAPTURING)
+        } catch (_: StageStreamCaptureDiscarded) {
+            finishTransfer(next, isVideo, token, StageBufferTransferPhase.WAITING)
+            delay(300)
+        } catch (cancelled: CancellationException) {
+            finishTransfer(next, isVideo, token, null)
+            if (!currentCoroutineContext().isActive) throw cancelled
+            delay(preemptionRetryDelayMs)
+            preemptionRetryDelayMs = (preemptionRetryDelayMs * 2).coerceAtMost(5_000L)
+        } catch (_: Exception) {
+            finishTransfer(next, isVideo, token, StageBufferTransferPhase.FAILED)
+            failed += Triple(plan.fence, next.id, isVideo)
+        }
+        afterTransfer(plan, next)
+        if (desired.value?.fence != plan.fence) failed.clear()
+    }
+}
 
 internal fun appendedDesktopQueue(state: DesktopPlaybackState, items: List<Track>, next: Boolean): DesktopPlaybackState? {
     val current = state.current ?: return null
@@ -157,12 +344,14 @@ internal fun safeEngineRecordingId(track: Track): String = if (track.provider ==
     java.security.MessageDigest.getInstance("SHA-256").digest(track.id.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
 
-class DesktopPlayback(
+class DesktopPlayback internal constructor(
     private val provider: YouTubeProvider = YouTubeProvider(),
     private val offline: DesktopOfflineRepository? = null,
     recoveryFile: File = File(System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "EchoMusic/playback-v2-recovery.json"),
     findLocalTrack: (String) -> Track? = { null },
     private val stageVideoEnabled: Boolean = false,
+    private val stageMediaCache: DesktopStageMediaCache? = null,
+    private val stageVideoCache: DesktopStageVideoCache? = null,
     private val onHistory: (Track, String, Long) -> Unit = { _, _, _ -> },
 ) : Closeable, NativePlaybackBridgeV2 {
     fun isV2Participating(): Boolean = activeGroup != null || preparedTransfer != null ||
@@ -184,7 +373,12 @@ class DesktopPlayback(
     private var factory: MediaPlayerFactory? = null
     private var player: MediaPlayer? = null
     private var source: DesktopAudioSource? = null
+    private var currentAudioUri: String? = null
+    private var cachedLease: CachedStageFile? = null
     private var videoSource: DesktopAudioSource? = null
+    private var videoRelayCandidate: DesktopAudioSource? = null
+    private var cachedVideoLease: CachedStageVideo? = null
+    private var videoLocator: String? = null
     private var videoRequiresAudioSlave = false
     val videoCanvas = Canvas()
     private var videoSurface: uk.co.caprica.vlcj.player.embedded.videosurface.VideoSurface? = null
@@ -192,7 +386,8 @@ class DesktopPlayback(
     private var videoCanvasHandoffId = 0L
     @Volatile private var switchingVideoGeneration: Long? = null
     private var videoPlaybackFailedGeneration: Long? = null
-    private data class NativeSlot(val player: MediaPlayer?, val source: DesktopAudioSource?, val state: DesktopPlaybackState)
+    private data class NativeSlot(val player: MediaPlayer?, val source: DesktopAudioSource?, val state: DesktopPlaybackState,
+        val cachedLease: CachedStageFile? = null, val audioUri: String? = null)
     private data class PreparedTransfer(
         val operationId: String,
         val queue: TransferQueue,
@@ -223,14 +418,203 @@ class DesktopPlayback(
     private var playedRecorded = false
     private var terminalRecorded = false
     private var wantsPlaying = false
+        set(value) {
+            val changed = field != value
+            field = value
+            refreshStageTransferRate()
+            if (changed) stagePreparationVersion.value++
+        }
     private var sleepJob: Job? = null
     private var playingSince: TimeSource.Monotonic.ValueTimeMark? = null
     @Volatile private var closed = false
     private var remoteActive = false
+    @Volatile private var stagePreparationEnabled = false
+    @Volatile private var stageVideoPreparationPriority = false
+    @Volatile private var stageVideoCachingEnabled = true
+    private val stagePreparationVersion = MutableStateFlow(0L)
+    private val mutableStageBufferStatus = MutableStateFlow(StageBufferStatus(emptyList()))
+    internal val stageBufferStatus: StateFlow<StageBufferStatus> = mutableStageBufferStatus
 
     init {
         mutableState.value = mutableState.value.copy(displacedMoveOperationId =
             runCatching { recovery.latestMoveOperationId() }.getOrNull())
+        stageMediaCache?.let { cache ->
+            val desired = MutableStateFlow<StagePreparationPlan?>(null)
+            val trackerLock = Any()
+            val audio = mutableMapOf<String, StageBufferTransfer>()
+            val video = mutableMapOf<String, StageBufferTransfer>()
+            val transferTokens = mutableMapOf<Pair<String, Boolean>, Long>()
+            var nextTransferToken = 0L
+            var lastReconciledIds: Set<String>? = null
+            var visibleSlots = emptyList<Pair<Int, Track?>>()
+            var visibleIds = emptySet<String>()
+            fun publishLocked() {
+                val idle = StageBufferTransfer(StageBufferTransferPhase.IDLE)
+                mutableStageBufferStatus.value = StageBufferStatus(visibleSlots.mapNotNull { (offset, track) ->
+                    track?.let { StageBufferPosition(offset, it, audio[it.id] ?: idle, video[it.id] ?: idle) }
+                })
+            }
+            fun beginTransfer(id: String, isVideo: Boolean): Long = synchronized(trackerLock) {
+                val token = ++nextTransferToken
+                transferTokens[id to isVideo] = token
+                val transfers = if (isVideo) video else audio
+                transfers[id] = StageBufferTransfer(StageBufferTransferPhase.PREPARING)
+                publishLocked()
+                token
+            }
+            fun progress(id: String, isVideo: Boolean, token: Long, value: StageCacheProgress) {
+                scope.launch {
+                    synchronized(trackerLock) {
+                        if (id !in visibleIds || transferTokens[id to isVideo] != token) return@synchronized
+                        val transfers = if (isVideo) video else audio
+                        if (transfers[id]?.phase == StageBufferTransferPhase.READY &&
+                            value.phase != StageBufferTransferPhase.READY) return@synchronized
+                        transfers[id] = StageBufferTransfer(value.phase, value.receivedBytes, value.totalBytes)
+                        publishLocked()
+                    }
+                }
+            }
+            fun finishTransfer(id: String, isVideo: Boolean, token: Long, phase: StageBufferTransferPhase?) {
+                synchronized(trackerLock) {
+                    if (transferTokens[id to isVideo] != token) return@synchronized
+                    transferTokens.remove(id to isVideo)
+                    val cached = if (isVideo) stageVideoCache?.contains(id) == true else cache.contains(id)
+                    (if (isVideo) video else audio)[id] = StageBufferTransfer(
+                        phase ?: if (cached) StageBufferTransferPhase.READY else StageBufferTransferPhase.IDLE,
+                    )
+                    publishLocked()
+                }
+            }
+
+            scope.launch {
+                combine(state, stagePreparationVersion) { playback, version -> playback to version }
+                    .collect { (playback, version) ->
+                        val offlineOnly = offline?.state?.value?.offlineOnly == true
+                        val inLocalWindow = stagePreparationEnabled && !offlineOnly && activeGroup == null &&
+                            playback.current != null && !playback.ended
+                        val window = if (inLocalWindow) stagePreparationWindow(playback).filter(::stageCacheableTrack) else emptyList()
+                        val eligible = shouldPrepareStageMedia(playback, stagePreparationEnabled,
+                            offlineOnly = offlineOnly, connectedGroup = activeGroup != null)
+                        val order = if (eligible) stagePreparationPriority(playback)
+                            .filter(::stageCacheableTrack).distinctBy { it.id } else emptyList()
+                        val fence = stagePreparationFence(playback, targetEnabled = stagePreparationEnabled,
+                            offlineOnly = offlineOnly, connectedGroup = activeGroup != null)
+                        val localAudio = currentAudioUri != null && (source == null || source?.isFullyLocal == true)
+                        val localVideo = cachedVideoLease != null && videoSource == null || videoSource?.isFullyLocal == true
+                        val suspendSpeculation = shouldSuspendStageSpeculation(playback, wantsPlaying,
+                            localAudio, localVideo, videoRequiresAudioSlave)
+                        val plan = StagePreparationPlan(fence, eligible, inLocalWindow, window, order,
+                            stageBufferPositions(playback), stageVideoPreparationPriority, version,
+                            videoCachingEnabled = stageVideoCachingEnabled, speculationEnabled = !suspendSpeculation)
+                        desired.value = plan
+                        if (plan.reconcile) {
+                            val ids = window.mapTo(mutableSetOf()) { it.id }
+                            if (lastReconciledIds != ids) {
+                                val audioReconciled = runCatching { cache.reconcile(ids) }.isSuccess
+                                val videoReconciled = runCatching { stageVideoCache?.reconcile(ids) }.isSuccess
+                                if (audioReconciled && videoReconciled) lastReconciledIds = ids
+                            }
+                        } else lastReconciledIds = null
+                        synchronized(trackerLock) {
+                            visibleSlots = plan.slots
+                            visibleIds = plan.slots.mapNotNullTo(mutableSetOf()) { it.second?.id }
+                            transferTokens.keys.retainAll { it.first in visibleIds }
+                            audio.keys.retainAll(visibleIds)
+                            video.keys.retainAll(visibleIds)
+                            plan.slots.mapNotNull { it.second }.distinctBy { it.id }.forEach { track ->
+                                val cacheable = stageCacheableTrack(track)
+                                audio.putIfAbsent(track.id, StageBufferTransfer(when {
+                                    !cacheable -> StageBufferTransferPhase.UNAVAILABLE
+                                    cache.contains(track.id) -> StageBufferTransferPhase.READY
+                                    eligible -> StageBufferTransferPhase.WAITING
+                                    else -> StageBufferTransferPhase.IDLE
+                                }))
+                                val captureState = cache.streamCaptureStatus(track.id)
+                                when {
+                                    cache.contains(track.id) -> audio[track.id] = StageBufferTransfer(StageBufferTransferPhase.READY)
+                                    captureState == DesktopStageStreamCapture.Status.CAPTURING ->
+                                        audio[track.id] = StageBufferTransfer(StageBufferTransferPhase.CAPTURING)
+                                    audio[track.id]?.phase == StageBufferTransferPhase.CAPTURING ->
+                                        audio[track.id] = StageBufferTransfer(if (eligible) StageBufferTransferPhase.WAITING else StageBufferTransferPhase.IDLE)
+                                }
+                                video.putIfAbsent(track.id, StageBufferTransfer(when {
+                                    !cacheable || stageVideoCache == null -> StageBufferTransferPhase.UNAVAILABLE
+                                    stageVideoCache.contains(track.id) -> StageBufferTransferPhase.READY
+                                    eligible -> StageBufferTransferPhase.WAITING
+                                    else -> StageBufferTransferPhase.IDLE
+                                }))
+                                when {
+                                    stageVideoCache?.contains(track.id) == true -> video[track.id] = StageBufferTransfer(StageBufferTransferPhase.READY)
+                                    stageVideoCache?.streamCaptureStatus(track.id) == DesktopStageStreamCapture.Status.CAPTURING ->
+                                        video[track.id] = StageBufferTransfer(StageBufferTransferPhase.CAPTURING)
+                                    video[track.id]?.phase == StageBufferTransferPhase.CAPTURING ->
+                                        video[track.id] = StageBufferTransfer(if (eligible) StageBufferTransferPhase.WAITING else StageBufferTransferPhase.IDLE)
+                                }
+                            }
+                            publishLocked()
+                        }
+                    }
+            }
+
+            scope.launch {
+                runStagePreparationWorker(
+                    desired = desired,
+                    videoEnabled = stageVideoCache != null,
+                    isReady = { track, isVideo -> if (isVideo) stageVideoCache?.contains(track.id) == true ||
+                        stageVideoCache?.streamCaptureStatus(track.id) == DesktopStageStreamCapture.Status.CAPTURING else
+                        cache.contains(track.id) || cache.streamCaptureStatus(track.id) == DesktopStageStreamCapture.Status.CAPTURING },
+                    beginTransfer = { track, isVideo -> beginTransfer(track.id, isVideo) },
+                    reportProgress = { track, isVideo, token, value -> progress(track.id, isVideo, token, value) },
+                    finishTransfer = { track, isVideo, token, phase -> finishTransfer(track.id, isVideo, token, phase) },
+                    prepare = { track, isVideo, report ->
+                        if (isVideo) {
+                            val prepared = stageVideoCache?.prepare(track, report)
+                            prepared?.close()
+                            prepared != null
+                        } else {
+                            cache.prepare(track, report).close()
+                            true
+                        }
+                    },
+                    afterTransfer = { _, next ->
+                    val latest = desired.value
+                    if (latest?.reconcile == true && next.id !in latest.window.map { it.id }) {
+                        val ids = latest.window.mapTo(mutableSetOf()) { it.id }
+                        runCatching { cache.reconcile(ids) }
+                        runCatching { stageVideoCache?.reconcile(ids) }
+                    }
+                    },
+                )
+            }
+        }
+    }
+
+    internal fun setStagePreparationEnabled(enabled: Boolean) {
+        if (stageMediaCache == null || closed || stagePreparationEnabled == enabled) return
+        stagePreparationEnabled = enabled
+        if (!enabled) {
+            stageMediaCache?.setForegroundBuffering(false)
+            state.value.current?.id?.let { id ->
+                stageMediaCache?.cancelStreamCapture(id)
+                stageVideoCache?.cancelStreamCapture(id)
+            }
+        }
+        stagePreparationVersion.value++
+    }
+
+    @Synchronized
+    internal fun setStageVideoCachingEnabled(enabled: Boolean) {
+        if (closed || stageVideoCachingEnabled == enabled) return
+        stageVideoCachingEnabled = enabled
+        if (!enabled) state.value.current?.id?.let { stageVideoCache?.cancelStreamCapture(it) }
+        stagePreparationVersion.value++
+    }
+
+    @Synchronized
+    internal fun setStageVideoPreparationPriority(enabled: Boolean) {
+        if (closed || stageVideoPreparationPriority == enabled) return
+        stageVideoPreparationPriority = enabled
+        stagePreparationVersion.value++
     }
 
     private fun fenceNow(): EngineFence = EngineFence(bridgeSessionId, state.value.queueRevision,
@@ -333,7 +717,7 @@ class DesktopPlayback(
             val track = portableTrack(queue.entries.first().recording)
             val resolved = provider.resolve(track) ?: error("Could not resolve ${track.title} on this device")
             check(validDesktopYouTubeSource(resolved)) { "The recording returned an unsupported audio source" }
-            val stagedSource = DesktopAudioSource(resolved) {
+            val stagedSource = relayedSource(resolved) {
                 provider.resolve(track)?.takeIf { !stageVideoEnabled || sameDesktopYouTubeRepresentation(resolved, it) }
             }
             val createdFactory = playbackFactory()
@@ -385,8 +769,8 @@ class DesktopPlayback(
         }
         require(positionMs in 0..stage.queue.entries.first().recording.durationMs) { "Position is outside the current song" }
         val prior = player?.let { native ->
-            NativeSlot(native, source, state.value.copy(positionMs = native.status().time().coerceAtLeast(0), playing = false))
-        } ?: NativeSlot(null, source, state.value.copy(playing = false))
+            NativeSlot(native, source, state.value.copy(positionMs = native.status().time().coerceAtLeast(0), playing = false), cachedLease, currentAudioUri)
+        } ?: NativeSlot(null, source, state.value.copy(playing = false), cachedLease, currentAudioUri)
         var newlySavedBackupKey: String? = null
         if (stage.group == null && preserveMoveBackup) {
             val key = moveRecoveryKey(operationId)
@@ -402,6 +786,7 @@ class DesktopPlayback(
 
         val oldPlayer = player
         val oldSource = source
+        val oldCachedLease = cachedLease
         val oldGroup = activeGroup
         val oldTransferQueue = activeTransferQueue
         val oldIntent = state.value.playing
@@ -422,6 +807,8 @@ class DesktopPlayback(
         val ticket = ++generation
         player = stage.player
         source = stage.source
+        cachedLease = null
+        currentAudioUri = stage.source.uri
         attachPlaybackEvents(stage.player, ticket)
         wantsPlaying = play
         activeTransferQueue = stage.queue
@@ -452,6 +839,8 @@ class DesktopPlayback(
             if (stage.source !== prior.source) stage.source.close()
             player = prior.player
             source = prior.source
+            cachedLease = prior.cachedLease
+            currentAudioUri = prior.audioUri
             activeTransferQueue = oldTransferQueue
             activeGroup = oldGroup
             if (prior.player != null) {
@@ -476,6 +865,9 @@ class DesktopPlayback(
         if (stage.group != null && groupBackups[stage.group.groupId]?.player !== oldPlayer) {
             oldPlayer?.release()
             if (oldSource !== stage.source) oldSource?.close()
+            if (oldCachedLease !== cachedLease) oldCachedLease?.close()
+        } else if (stage.group == null && !preserveMoveBackup) {
+            if (oldCachedLease !== cachedLease) oldCachedLease?.close()
         }
         activatingTransferOperationId = null
         if (stage.group == null && preserveMoveBackup) update { it.copy(displacedMoveOperationId = recovery.latestMoveOperationId()) }
@@ -576,8 +968,10 @@ class DesktopPlayback(
     private suspend fun restoreSlotPaused(backup: NativeSlot): EngineObservation {
         val currentPlayer = player
         val currentSource = source
+        val currentLease = cachedLease
         if (currentPlayer !== backup.player) currentPlayer?.release()
         if (currentSource !== backup.source) currentSource?.close()
+        if (currentLease !== backup.cachedLease) currentLease?.close()
         load?.cancel()
         generation++
         videoPlaybackFailedGeneration = null
@@ -585,6 +979,8 @@ class DesktopPlayback(
         val nextTransportRevision = state.value.transportRevision + 1
         player = backup.player
         source = backup.source
+        cachedLease = backup.cachedLease
+        currentAudioUri = backup.audioUri
         activeGroup = null
         activeTransferQueue = null
         wantsPlaying = false
@@ -622,8 +1018,14 @@ class DesktopPlayback(
     }
 
     // VLC's default demux can resume a video-only stream at an earlier fragment after seeking.
-    private fun videoMediaOptions(audioSlave: DesktopAudioSource?): List<String> =
-        if (audioSlave == null) emptyList() else listOf(":input-slave=${audioSlave.uri}", ":demux=avformat")
+    private fun videoMediaOptions(audioSlaveUri: String?): List<String> =
+        if (audioSlaveUri == null) emptyList() else listOf(":input-slave=$audioSlaveUri", ":demux=avformat")
+
+    private fun mediaMrlMatches(actual: String?, requested: String): Boolean =
+        actual == requested || runCatching { File(requested).toURI().toString() == actual }.getOrDefault(false) ||
+            runCatching {
+                actual?.let { java.net.URI(it).scheme == "file" && File(java.net.URI(it)).canonicalFile == File(requested).canonicalFile } == true
+            }.getOrDefault(false)
 
     private suspend fun playNativePaused(
         native: MediaPlayer,
@@ -636,10 +1038,10 @@ class DesktopPlayback(
         val ready = CompletableDeferred<Boolean>()
         val listener = object : MediaPlayerEventAdapter() {
             override fun paused(mediaPlayer: MediaPlayer) {
-                if (runCatching { mediaPlayer.media().info().mrl() == uri }.getOrDefault(false)) ready.complete(true)
+                if (runCatching { mediaMrlMatches(mediaPlayer.media().info().mrl(), uri) }.getOrDefault(false)) ready.complete(true)
             }
             override fun error(mediaPlayer: MediaPlayer) {
-                if (runCatching { mediaPlayer.media().info().mrl() == uri }.getOrDefault(false)) ready.complete(false)
+                if (runCatching { mediaMrlMatches(mediaPlayer.media().info().mrl(), uri) }.getOrDefault(false)) ready.complete(false)
             }
         }
         native.events().addMediaPlayerEventListener(listener)
@@ -673,17 +1075,29 @@ class DesktopPlayback(
         (displacedTransfers.values + groupBackups.values).distinctBy { it.player }.forEach { slot ->
             if (slot.player != null && slot.player !== player) runCatching { slot.player.release() }
             if (slot.source != null && slot.source !== source) runCatching { slot.source.close() }
+            if (slot.cachedLease != null && slot.cachedLease !== cachedLease) runCatching { slot.cachedLease.close() }
         }
         displacedTransfers.clear()
         groupBackups.clear()
     }
 
     init { offline?.let { repository -> scope.launch {
+        var previousOfflineOnly: Boolean? = null
         repository.state.collect { settings ->
-            if (settings.offlineOnly && remoteActive) {
+            if (previousOfflineOnly != settings.offlineOnly) {
+                previousOfflineOnly = settings.offlineOnly
+                stagePreparationVersion.value++
+                if (settings.offlineOnly) state.value.current?.id?.let { id ->
+                    stageMediaCache?.cancelStreamCapture(id)
+                    stageVideoCache?.cancelStreamCapture(id)
+                }
+            }
+            if (stopDesktopPlaybackForOffline(settings.offlineOnly, remoteActive, cachedLease != null)) {
                 ++generation; load?.cancel(); wantsPlaying = false; record("INTERRUPTED")
                 videoPlaybackFailedGeneration = null
-                source?.close(); source = null; videoSource?.close(); videoSource = null; videoRequiresAudioSlave = false; remoteActive = false
+                source?.close(); source = null; cachedLease?.close(); cachedLease = null; currentAudioUri = null
+                videoSource?.close(); videoSource = null; cachedVideoLease?.close(); cachedVideoLease = null
+                videoLocator = null; videoRequiresAudioSlave = false; remoteActive = false
                 player?.controls()?.stop()
                 videoSurface = null
                 boundVideoCanvas = null
@@ -693,10 +1107,73 @@ class DesktopPlayback(
         }
     } } }
 
-    private fun update(transform: (DesktopPlaybackState) -> DesktopPlaybackState) { mutableState.value = transform(mutableState.value) }
+    private fun update(transform: (DesktopPlaybackState) -> DesktopPlaybackState) {
+        mutableState.value = transform(mutableState.value)
+        refreshStageTransferRate()
+    }
+
+    private fun refreshStageTransferRate() {
+        stageMediaCache?.setFastTransfersAllowed(stageCanPrepareFast(state.value, wantsPlaying,
+            localAudio = currentAudioUri != null && (source == null || source?.isFullyLocal == true),
+            localVideo = cachedVideoLease != null && videoSource == null || videoSource?.isFullyLocal == true,
+            videoNeedsAudio = videoRequiresAudioSlave))
+    }
+
+    private fun relayedSource(initial: PlayableSource, capture: DesktopStageStreamCapture? = null,
+        onLocalPlaybackChanged: () -> Unit = {}, refresh: suspend () -> PlayableSource?): DesktopAudioSource {
+        val relayKey = Any()
+        return DesktopAudioSource(initial, stageCapture = capture,
+            onUpstreamActivityChanged = { active -> stageMediaCache?.setUpstreamRelayActive(relayKey, active) },
+            onLocalPlaybackChanged = onLocalPlaybackChanged, refresh = refresh)
+    }
+
+    private fun createVideoRelay(track: Track, ticket: Long, occurrence: Long, initial: PlayableSource,
+        requiresAudioSlave: Boolean, candidateIsCurrent: (DesktopAudioSource) -> Boolean,
+        refresh: suspend () -> PlayableSource?): DesktopAudioSource {
+        val capture = if (stagePreparationEnabled && stageVideoCachingEnabled && activeGroup == null) runCatching {
+            stageVideoCache?.beginStreamCapture(track, initial, requiresAudioSlave)
+        }.getOrNull() else null
+        lateinit var relay: DesktopAudioSource
+        relay = relayedSource(initial, capture = capture,
+            onLocalPlaybackChanged = {
+                scope.launch {
+                    if (!closed && generation == ticket && (videoSource === relay || videoRelayCandidate === relay || candidateIsCurrent(relay))) {
+                        refreshStageTransferRate()
+                        stagePreparationVersion.value++
+                    }
+                }
+            }, refresh = refresh)
+        videoRelayCandidate = relay
+        if (capture != null) scope.launch {
+            try {
+                val completed = capture.awaitComplete()
+                if (!closed && stagePreparationEnabled && stageVideoCachingEnabled && activeGroup == null && generation == ticket && state.value.occurrence == occurrence &&
+                    (videoSource === relay || videoRelayCandidate === relay || candidateIsCurrent(relay))) {
+                    val pin = stageVideoCache?.pinStreamCapture(track.id, capture, completed)
+                    if (pin != null) {
+                        if (!stagePreparationEnabled || activeGroup != null) {
+                            pin.close()
+                            stageVideoCache?.discardStreamCapture(track.id, capture, completed)
+                        } else if (!relay.attachCapturedFile(capture, completed, pin)) {
+                            stageVideoCache?.discardStreamCapture(track.id, capture, completed)
+                        }
+                    }
+                    refreshStageTransferRate()
+                    stagePreparationVersion.value++
+                } else stageVideoCache?.discardStreamCapture(track.id, capture, completed)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Incomplete or unverified capture leaves the live relay active. */ }
+            finally {
+                capture.awaitSettled()
+                stageVideoCache?.clearDiscardedStreamCapture(track.id)
+                stagePreparationVersion.value++
+            }
+        }
+        return relay
+    }
 
     private fun playbackFactory(): MediaPlayerFactory = factory ?: (
-        if (stageVideoEnabled) MediaPlayerFactory("--quiet", "--no-media-library", "--no-metadata-network-access", "--no-osd")
+        if (stageVideoEnabled) MediaPlayerFactory("--quiet", "--no-media-library", "--no-metadata-network-access", "--no-osd", "--no-snapshot-preview")
         else MediaPlayerFactory("--no-video", "--quiet", "--no-media-library", "--no-metadata-network-access")
     ).also { factory = it }
 
@@ -717,6 +1194,7 @@ class DesktopPlayback(
         created.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
                 override fun playing(mediaPlayer: MediaPlayer) { event(mediaPlayer) {
                     if (switchingVideoGeneration == ticket) return@event
+                    stageMediaCache?.setForegroundBuffering(false)
                     if (!wantsPlaying) player?.controls()?.setPause(true)
                     else if (!state.value.loading && state.value.current != null) {
                         retryJob?.cancel(); retryJob = null
@@ -727,10 +1205,13 @@ class DesktopPlayback(
                 } }
                 override fun paused(mediaPlayer: MediaPlayer) { event(mediaPlayer) {
                     if (switchingVideoGeneration == ticket) return@event
+                    if (!wantsPlaying) stageMediaCache?.setForegroundBuffering(false)
                     stopCounting(); update { it.copy(playing = false) }
                 } }
                 override fun buffering(mediaPlayer: MediaPlayer, newCache: Float) { event(mediaPlayer) {
                     if (switchingVideoGeneration == ticket) return@event
+                    stageMediaCache?.setForegroundBuffering(stageShouldYieldToPlayback(newCache < 100f, wantsPlaying,
+                        state.value.videoMode, source != null, videoSource != null, videoRequiresAudioSlave))
                     if (newCache < 100f) { stopCounting(); update { it.copy(playing = false) } }
                     else if (wantsPlaying && !state.value.loading && player?.status()?.isPlaying == true) {
                         if (playingSince == null) playingSince = TimeSource.Monotonic.markNow()
@@ -747,6 +1228,7 @@ class DesktopPlayback(
                     if (switchingVideoGeneration != ticket) update { it.copy(durationMs = newLength.coerceAtLeast(0)) }
                 } }
                 override fun finished(mediaPlayer: MediaPlayer) { event(mediaPlayer) {
+                    stageMediaCache?.setForegroundBuffering(false)
                     if (!state.value.loading && switchingVideoGeneration != ticket) {
                         record("COMPLETED")
                         val next = when {
@@ -760,6 +1242,7 @@ class DesktopPlayback(
                     }
                 } }
                 override fun error(mediaPlayer: MediaPlayer) { event(mediaPlayer) {
+                    stageMediaCache?.setForegroundBuffering(false)
                     if (!state.value.loading) {
                         if (switchingVideoGeneration == ticket) return@event
                         if (state.value.videoMode) {
@@ -806,8 +1289,12 @@ class DesktopPlayback(
             val recoveringVideoFailure = !enabled && videoPlaybackFailedGeneration == ticket
             update { it.copy(videoLoading = true, videoError = desktopVideoSwitchError(it.videoError, recoveringVideoFailure)) }
             var replacementVideo: DesktopAudioSource? = null
+            var replacementVideoLease: CachedStageVideo? = null
             try {
-                val selection = if (enabled) provider.resolveVideoSelection(track)
+                replacementVideoLease = if (enabled && stagePreparationEnabled) runCatching {
+                    stageVideoCache?.pin(track.id)
+                }.getOrNull() else null
+                val selection = if (enabled && replacementVideoLease == null) provider.resolveVideoSelection(track)
                     ?: error("No compatible video is available") else null
                 selection?.let { check(validDesktopYouTubeSource(it.source)) { "The recording returned an unsupported media source" } }
                 if (offline?.state?.value?.offlineOnly == true || generation != ticket ||
@@ -816,9 +1303,12 @@ class DesktopPlayback(
                     return@coroutineScope false
                 }
                 val native = player ?: error("Playback is not ready")
-                val previousSource = source ?: error("Playback source is not ready")
+                val previousSource = source
+                val previousCachedLease = cachedLease
+                val previousAudioLocator = previousCachedLease?.file?.absolutePath ?: previousSource?.uri ?: currentAudioUri
+                    ?: error("Playback source is not ready")
                 fun isCurrent() = generation == ticket && state.value.occurrence == occurrence &&
-                    player === native && source === previousSource
+                    player === native && source === previousSource && cachedLease === previousCachedLease
                 if (enabled) {
                     val canvasReady = withTimeoutOrNull(5_000) {
                         while (!target.isDisplayable) delay(20)
@@ -832,31 +1322,41 @@ class DesktopPlayback(
                 val transportRevision = state.value.transportRevision
                 val position = state.value.positionMs.coerceAtLeast(0)
                 val oldVideoSource = videoSource
-                val oldMediaSource = if (snapshot.videoMode) oldVideoSource ?: error("Video source is not ready") else previousSource
+                val oldVideoLease = cachedVideoLease
+                val oldMediaSource = if (snapshot.videoMode) videoLocator ?: error("Video source is not ready") else previousAudioLocator
+                val oldAudioSlave = if (snapshot.videoMode && videoRequiresAudioSlave) previousAudioLocator else null
                 var activeVideoRequiresAudioSlave = false
                 try {
                     switchingVideoGeneration = ticket
+                    if (wantsPlaying) stageMediaCache?.setForegroundBuffering(true)
                     embedded.videoSurface().set(nextVideoSurface)
                     native.controls().setPause(true)
                     if (enabled) {
-                        val videoSelection = selection ?: error("Video selection is missing")
-                        replacementVideo = DesktopAudioSource(videoSelection.source) {
-                            provider.resolveVideoSelection(track)?.takeIf { refreshed ->
-                                refreshed.requiresAudioSlave == videoSelection.requiresAudioSlave &&
-                                    sameDesktopYouTubeRepresentation(videoSelection.source, refreshed.source)
-                            }?.source
-                        }
-                        activeVideoRequiresAudioSlave = videoSelection.requiresAudioSlave
+                        val videoSelection = selection
+                        if (replacementVideoLease == null) {
+                            val resolvedSelection = videoSelection ?: error("Video selection is missing")
+                            replacementVideo = createVideoRelay(track, ticket, occurrence, resolvedSelection.source,
+                                resolvedSelection.requiresAudioSlave, candidateIsCurrent = { replacementVideo === it }) {
+                                provider.resolveVideoSelection(track)?.takeIf { refreshed ->
+                                    refreshed.requiresAudioSlave == resolvedSelection.requiresAudioSlave &&
+                                        sameDesktopYouTubeRepresentation(resolvedSelection.source, refreshed.source)
+                                }?.source
+                            }
+                            activeVideoRequiresAudioSlave = resolvedSelection.requiresAudioSlave
+                        } else activeVideoRequiresAudioSlave = replacementVideoLease!!.requiresAudioSlave
+                        val videoLocator = replacementVideoLease?.file?.absolutePath ?: replacementVideo?.uri
+                            ?: error("Video source is not ready")
                         try {
-                            val options = videoMediaOptions(previousSource.takeIf { activeVideoRequiresAudioSlave })
-                            playNativePaused(native, replacementVideo!!.uri, options, requireAudioTrack = true,
+                            val options = videoMediaOptions(previousAudioLocator.takeIf { activeVideoRequiresAudioSlave })
+                            playNativePaused(native, videoLocator, options, requireAudioTrack = true,
                                 startPositionMs = position, isCurrent = ::isCurrent)
                         } catch (videoError: Throwable) {
                             if (videoError is CancellationException || !isCurrent()) throw videoError
-                            val fallback = videoSelection.muxedFallback
-                            if (!videoSelection.requiresAudioSlave || fallback == null) throw videoError
+                            val fallback = videoSelection?.muxedFallback
+                            if (replacementVideoLease != null || videoSelection?.requiresAudioSlave != true || fallback == null) throw videoError
                             replacementVideo?.close()
-                            replacementVideo = DesktopAudioSource(fallback) {
+                            replacementVideo = createVideoRelay(track, ticket, occurrence, fallback, false,
+                                candidateIsCurrent = { replacementVideo === it }) {
                                 provider.resolveVideoSelection(track)?.muxedFallback?.takeIf {
                                     sameDesktopYouTubeRepresentation(fallback, it)
                                 }
@@ -865,14 +1365,15 @@ class DesktopPlayback(
                             playNativePaused(native, replacementVideo!!.uri, requireAudioTrack = true,
                                 startPositionMs = position, isCurrent = ::isCurrent)
                         }
-                    } else playNativePaused(native, previousSource.uri, startPositionMs = position)
+                    } else playNativePaused(native, previousAudioLocator, startPositionMs = position)
                 } catch (error: Throwable) {
                     replacementVideo?.close(); replacementVideo = null
+                    replacementVideoLease?.close(); replacementVideoLease = null
                     if (!isCurrent()) return@coroutineScope false
                     embedded.videoSurface().set(videoSurface)
                     try {
-                        val oldOptions = videoMediaOptions(previousSource.takeIf { snapshot.videoMode && videoRequiresAudioSlave })
-                        withContext(NonCancellable) { playNativePaused(native, oldMediaSource.uri, oldOptions, startPositionMs = position) }
+                        val oldOptions = videoMediaOptions(oldAudioSlave)
+                        withContext(NonCancellable) { playNativePaused(native, oldMediaSource, oldOptions, startPositionMs = position) }
                     }
                     catch (restoreError: Throwable) {
                         fallbackFailed = true
@@ -887,10 +1388,13 @@ class DesktopPlayback(
                     native.controls().setPause(!resumeAfterFailure)
                     throw error
                 } finally {
-                    if (switchingVideoGeneration == ticket) switchingVideoGeneration = null
+                    if (switchingVideoGeneration == ticket) {
+                        switchingVideoGeneration = null
+                        stageMediaCache?.setForegroundBuffering(false)
+                    }
                 }
                 if (generation != ticket || !desktopVideoSwitchSnapshotMatches(state.value, track.id, occurrence) ||
-                    player !== native || source !== previousSource || activeGroup != null || offline?.state?.value?.offlineOnly == true) {
+                    player !== native || source !== previousSource || cachedLease !== previousCachedLease || activeGroup != null || offline?.state?.value?.offlineOnly == true) {
                     replacementVideo?.close(); replacementVideo = null
                     if (player === native) (native as uk.co.caprica.vlcj.player.embedded.EmbeddedMediaPlayer)
                         .videoSurface().set(videoSurface)
@@ -902,12 +1406,20 @@ class DesktopPlayback(
                 if (targetPosition != position) native.controls().setTime(targetPosition)
                 native.controls().setPause(!wantsPlaying)
                 if (enabled) {
-                    videoSource = replacementVideo ?: error("The video source was not created")
+                    check(replacementVideo != null || replacementVideoLease != null) { "The video source was not created" }
+                    videoSource = replacementVideo
                     replacementVideo = null
+                    cachedVideoLease = replacementVideoLease
+                    replacementVideoLease = null
+                    videoLocator = cachedVideoLease?.file?.absolutePath ?: videoSource?.uri
+                        ?: error("The video source locator is missing")
                     videoRequiresAudioSlave = activeVideoRequiresAudioSlave
                 } else {
                     videoSource?.close()
                     videoSource = null
+                    cachedVideoLease?.close()
+                    cachedVideoLease = null
+                    videoLocator = null
                     videoRequiresAudioSlave = false
                 }
                 videoSurface = nextVideoSurface
@@ -918,6 +1430,7 @@ class DesktopPlayback(
                 true
             } catch (cancelled: CancellationException) {
                 replacementVideo?.close()
+                replacementVideoLease?.close()
                 if (generation == ticket && state.value.occurrence == occurrence) {
                     update { it.copy(videoLoading = false) }
                     if (fallbackFailed && !schedulePlaybackRetry(ticket, source?.terminalResponseCode)) {
@@ -928,6 +1441,7 @@ class DesktopPlayback(
             }
             catch (error: Throwable) {
                 replacementVideo?.close()
+                replacementVideoLease?.close()
                 if (generation == ticket && state.value.occurrence == occurrence) update {
                     (player as? uk.co.caprica.vlcj.player.embedded.EmbeddedMediaPlayer)?.videoSurface()?.set(videoSurface)
                     it.copy(videoLoading = false, videoMode = snapshot.videoMode,
@@ -937,6 +1451,8 @@ class DesktopPlayback(
                     generation == ticket && state.value.occurrence == occurrence &&
                     !schedulePlaybackRetry(ticket, source?.terminalResponseCode)) record("ERROR")
                 false
+            } finally {
+                replacementVideoLease?.close()
             }
         }
 
@@ -954,8 +1470,11 @@ class DesktopPlayback(
         if (!snapshot.videoMode) return@withContext setVideoModeOnPlayer(true, target)
         if (boundVideoCanvas === target) return@withContext true
         val native = player as? uk.co.caprica.vlcj.player.embedded.EmbeddedMediaPlayer ?: return@withContext false
-        val currentSource = source ?: return@withContext false
-        val currentVideoSource = videoSource ?: return@withContext false
+        val currentSource = source
+        val currentCachedLease = cachedLease
+        val currentVideoSource = videoSource
+        val currentCachedVideoLease = cachedVideoLease
+        if (currentVideoSource == null && currentCachedVideoLease == null) return@withContext false
         val ticket = generation
         val occurrence = snapshot.occurrence
         val oldSurface = videoSurface
@@ -965,22 +1484,26 @@ class DesktopPlayback(
         try {
             withTimeout(5_000) { while (!target.isDisplayable) delay(20) }
             if (generation != ticket || !desktopVideoSwitchSnapshotMatches(state.value, snapshot.current?.id.orEmpty(), occurrence) ||
-                player !== native || source !== currentSource || videoSource !== currentVideoSource || !state.value.videoMode) {
+                player !== native || source !== currentSource || cachedLease !== currentCachedLease ||
+                    videoSource !== currentVideoSource || cachedVideoLease !== currentCachedVideoLease || !state.value.videoMode) {
                 if (videoCanvasHandoffId == handoffId && generation == ticket) update { it.copy(videoLoading = false) }
                 return@withContext false
             }
             nextSurface = factory?.videoSurfaces()?.newVideoSurface(target) ?: error("VLC video surface is unavailable")
             val transportRevision = state.value.transportRevision
             val position = state.value.positionMs.coerceAtLeast(0)
-            val mediaUri = currentVideoSource.uri
-            val audioOptions = videoMediaOptions(currentSource.takeIf { videoRequiresAudioSlave })
+            val mediaUri = videoLocator ?: currentVideoSource?.uri ?: return@withContext false
+            val audioUri = currentCachedLease?.file?.absolutePath ?: currentSource?.uri ?: currentAudioUri
+            val audioOptions = videoMediaOptions(audioUri.takeIf { videoRequiresAudioSlave })
             switchingVideoGeneration = ticket
+            if (wantsPlaying) stageMediaCache?.setForegroundBuffering(true)
             try {
                 native.controls().setPause(true)
                 native.videoSurface().set(nextSurface)
                 playNativePaused(native, mediaUri, audioOptions, requireAudioTrack = true, startPositionMs = position)
                 if (generation != ticket || state.value.occurrence != occurrence || player !== native ||
-                    source !== currentSource || videoSource !== currentVideoSource || !state.value.videoMode) {
+                    source !== currentSource || cachedLease !== currentCachedLease ||
+                    videoSource !== currentVideoSource || cachedVideoLease !== currentCachedVideoLease || !state.value.videoMode) {
                     native.videoSurface().set(oldSurface)
                     if (videoCanvasHandoffId == handoffId && generation == ticket) update { it.copy(videoLoading = false) }
                     return@withContext false
@@ -997,7 +1520,8 @@ class DesktopPlayback(
                 native.videoSurface().set(oldSurface)
                 withContext(NonCancellable) {
                     if (generation == ticket && state.value.occurrence == occurrence && player === native &&
-                        source === currentSource && videoSource === currentVideoSource) {
+                        source === currentSource && cachedLease === currentCachedLease &&
+                        videoSource === currentVideoSource && cachedVideoLease === currentCachedVideoLease) {
                         try {
                             playNativePaused(native, mediaUri, audioOptions, requireAudioTrack = true, startPositionMs = position)
                             val restorePosition = if (state.value.transportRevision == transportRevision) position
@@ -1010,12 +1534,15 @@ class DesktopPlayback(
                             try {
                                 native.videoSurface().set(null)
                                 val restorePosition = state.value.positionMs.coerceAtLeast(0)
-                                playNativePaused(native, currentSource.uri, startPositionMs = restorePosition)
+                                playNativePaused(native, audioUri ?: error("Audio source is unavailable"), startPositionMs = restorePosition)
                                 val latestPosition = state.value.positionMs.coerceAtLeast(0)
                                 if (latestPosition != restorePosition) native.controls().setTime(latestPosition)
                                 native.controls().setPause(!wantsPlaying)
                                 videoSource?.close()
                                 videoSource = null
+                                cachedVideoLease?.close()
+                                cachedVideoLease = null
+                                videoLocator = null
                                 videoRequiresAudioSlave = false
                                 videoSurface = null
                                 boundVideoCanvas = null
@@ -1024,11 +1551,14 @@ class DesktopPlayback(
                                 error.addSuppressed(audioError)
                                 videoSource?.close()
                                 videoSource = null
+                                cachedVideoLease?.close()
+                                cachedVideoLease = null
+                                videoLocator = null
                                 videoRequiresAudioSlave = false
                                 videoSurface = null
                                 boundVideoCanvas = null
                                 update { it.copy(videoMode = false, playing = false, videoError = "Video and audio could not recover; playback recovery started.") }
-                                if (!schedulePlaybackRetry(ticket, currentSource.terminalResponseCode)) record("ERROR")
+                                if (!schedulePlaybackRetry(ticket, currentSource?.terminalResponseCode)) record("ERROR")
                             }
                         }
                     }
@@ -1037,7 +1567,10 @@ class DesktopPlayback(
                 if (error is CancellationException) throw error
                 false
             } finally {
-                if (switchingVideoGeneration == ticket) switchingVideoGeneration = null
+                if (switchingVideoGeneration == ticket) {
+                    switchingVideoGeneration = null
+                    stageMediaCache?.setForegroundBuffering(false)
+                }
             }
         } catch (error: Throwable) {
             if (videoCanvasHandoffId == handoffId && generation == ticket && state.value.occurrence == occurrence) {
@@ -1086,6 +1619,7 @@ class DesktopPlayback(
     private fun start(tracks: List<Track>, index: Int, preserveBridgeQueue: Boolean = false,
         requestedPositionMs: Long = 0, playOnStart: Boolean = true, automaticRetry: Boolean = false) {
         videoCanvasHandoffId++
+        stageMediaCache?.setForegroundBuffering(false)
         if (!automaticRetry) cancelPlaybackRetry()
         load?.cancel()
         val ticket = ++generation
@@ -1100,8 +1634,9 @@ class DesktopPlayback(
             queueRevision = if (automaticRetry) it.queueRevision else it.queueRevision + 1,
             transportRevision = if (automaticRetry) it.transportRevision + 1 else it.transportRevision) }
         player?.controls()?.stop(); player?.release(); player = null
-        source?.close(); source = null
-        videoSource?.close(); videoSource = null; videoRequiresAudioSlave = false
+        source?.close(); source = null; cachedLease?.close(); cachedLease = null; currentAudioUri = null
+        videoSource?.close(); videoSource = null; cachedVideoLease?.close(); cachedVideoLease = null
+        videoLocator = null; videoRequiresAudioSlave = false
         videoSurface = null
         boundVideoCanvas = null
         remoteActive = false
@@ -1115,18 +1650,72 @@ class DesktopPlayback(
                     "local" -> localAudioFile(track).absolutePath
                     "youtube" -> {
                         check(offline?.state?.value?.offlineOnly != true) { "Offline mode is enabled" }
-                        remoteActive = true
-                        val resolved = provider.resolve(track) ?: error("Recording has no playable audio")
-                        ensureActive()
-                        if (generation != ticket) return@launch
-                        DesktopAudioSource(resolved) {
-                            provider.resolve(track)?.takeIf { !stageVideoEnabled || sameDesktopYouTubeRepresentation(resolved, it) }
-                        }.also { source = it }.uri
+                        val cached = if (stagePreparationEnabled && activeGroup == null) runCatching {
+                            stageMediaCache?.pin(track.id)
+                        }.getOrNull() else null
+                        if (cached != null) {
+                            cachedLease = cached
+                            currentAudioUri = cached.file.absolutePath
+                            cached.file.absolutePath
+                        } else {
+                            remoteActive = true
+                            val resolved = provider.resolve(track) ?: error("Recording has no playable audio")
+                            ensureActive()
+                            if (generation != ticket) return@launch
+                            val capture = if (stagePreparationEnabled && activeGroup == null) runCatching {
+                                stageMediaCache?.beginStreamCapture(track, resolved)
+                            }.getOrNull() else null
+                            try {
+                                lateinit var relay: DesktopAudioSource
+                                relay = relayedSource(resolved, capture = capture,
+                                    onLocalPlaybackChanged = {
+                                        scope.launch { if (!closed && generation == ticket && source === relay) {
+                                            refreshStageTransferRate()
+                                            stagePreparationVersion.value++
+                                        } }
+                                    }) {
+                                    provider.resolve(track)?.takeIf { !stageVideoEnabled || sameDesktopYouTubeRepresentation(resolved, it) }
+                                }
+                                source = relay
+                                currentAudioUri = relay.uri
+                                if (capture != null) {
+                                    stagePreparationVersion.value++
+                                    scope.launch {
+                                        try {
+                                            val completed = capture.awaitComplete()
+                                            if (!closed && stagePreparationEnabled && activeGroup == null && generation == ticket && source === relay) {
+                                                val pin = stageMediaCache?.pinStreamCapture(track.id, capture, completed)
+                                                if (pin != null) {
+                                                    if (!stagePreparationEnabled || activeGroup != null) {
+                                                        pin.close()
+                                                        stageMediaCache?.discardStreamCapture(track.id, capture, completed)
+                                                    } else if (!relay.attachCapturedFile(capture, completed, pin)) {
+                                                        stageMediaCache?.discardStreamCapture(track.id, capture, completed)
+                                                    }
+                                                }
+                                                refreshStageTransferRate()
+                                            } else stageMediaCache?.discardStreamCapture(track.id, capture, completed)
+                                        } catch (cancelled: CancellationException) { throw cancelled }
+                                        catch (_: Exception) { /* Capture failure leaves the live relay untouched. */ }
+                                        finally {
+                                            capture.awaitSettled()
+                                            stageMediaCache?.clearDiscardedStreamCapture(track.id)
+                                            stagePreparationVersion.value++
+                                        }
+                                    }
+                                }
+                                relay.uri
+                            } catch (failure: Throwable) {
+                                capture?.close()
+                                throw failure
+                            }
+                        }
                     }
                     else -> error("This provider is not supported on desktop yet")
                 }
                 ensureActive()
                 if (generation != ticket) return@launch
+                currentAudioUri = locator
                 val native = nativePlayer(ticket)
                 native.audio().setVolume((state.value.volume * 100).toInt())
                 // Native callbacks are queued onto this dispatcher after the loading flag is cleared.
@@ -1136,6 +1725,10 @@ class DesktopPlayback(
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Throwable) {
                 if (generation == ticket) {
+                    if (cachedLease != null) {
+                        player?.controls()?.stop(); player?.release(); player = null
+                        cachedLease?.close(); cachedLease = null; currentAudioUri = null
+                    }
                     val message =
                     if (error is UnsatisfiedLinkError || error is NoClassDefFoundError) "Install 64-bit VLC 3, then restart Echo to enable playback."
                     else if (offline?.state?.value?.offlineOnly == true) "Offline mode is enabled. Choose downloaded music or a local file."
@@ -1212,7 +1805,10 @@ class DesktopPlayback(
     private fun setPlayingNow(playing: Boolean) {
         if (activeGroup != null) return
         val wasActive = if (switchingVideoGeneration == generation) wantsPlaying else desktopPlaybackIsActive(state.value)
-        if (!playing) cancelPlaybackRetry()
+        if (!playing) {
+            stageMediaCache?.setForegroundBuffering(false)
+            cancelPlaybackRetry()
+        }
         if (wasActive != playing) update { it.copy(transportRevision = it.transportRevision + 1) }
         if (state.value.loading || switchingVideoGeneration == generation) {
             wantsPlaying = playing
@@ -1401,9 +1997,15 @@ class DesktopPlayback(
             preparedTransfer?.let(::discardPrepared)
             discardBackups()
             source?.close(); source = null
-            videoSource?.close(); videoSource = null; videoRequiresAudioSlave = false
+            cachedLease?.close(); cachedLease = null
+            currentAudioUri = null
+            videoSource?.close(); videoSource = null
+            cachedVideoLease?.close(); cachedVideoLease = null
+            videoLocator = null; videoRequiresAudioSlave = false
             player?.controls()?.stop(); player?.release(); player = null
             factory?.release(); factory = null
+            stageMediaCache?.close()
+            stageVideoCache?.close()
             scope.cancel()
         } }
         dispatcher.close()
