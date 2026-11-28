@@ -53,7 +53,12 @@ private val GroupAccent = Color(0xFF83E0D2)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun PlayerDock(vm: EchoViewModel, tracks: List<dev.echo.core.Track>, open: () -> Unit) {
+internal fun PlayerDock(
+    vm: EchoViewModel,
+    tracks: List<dev.echo.core.Track>,
+    modifier: Modifier = Modifier,
+    open: () -> Unit,
+) {
     val deck = rememberPlayerDeck(vm, tracks)
     val latestDeck by rememberUpdatedState(deck)
     val keys = deck.entries.map { it.key }
@@ -71,7 +76,7 @@ internal fun PlayerDock(vm: EchoViewModel, tracks: List<dev.echo.core.Track>, op
     val pageSpacing = if (multiple) 8.dp else 0.dp
 
     BoxWithConstraints(
-        Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 8.dp).height(cardHeight),
+        modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 8.dp).height(cardHeight),
     ) {
         val width = minOf(maxWidth, 560.dp)
         val cardWidth = if (multiple) width - previewWidth - pageSpacing else width

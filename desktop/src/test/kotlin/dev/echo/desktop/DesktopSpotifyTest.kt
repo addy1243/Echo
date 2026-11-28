@@ -9,6 +9,8 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -109,6 +111,8 @@ class DesktopSpotifyTest {
             listOf(recording, recording.copy(id = "youtube:lmnopqrstuv", durationMs = 64_000))
         })
         assertTrue(ambiguous.isEmpty())
+        val importedLocal = imported.copy(id = "local:phone", provider = "local")
+        assertEquals(recording, automaticDesktopMatches(listOf(importedLocal), emptyList(), { listOf(recording) })[importedLocal.id])
     }
 
     @Test fun matchingPrefersUniqueLocalRecordingAndPropagatesCancellation() = runBlocking {
@@ -119,5 +123,31 @@ class DesktopSpotifyTest {
             automaticDesktopMatches(listOf(imported), emptyList(), { throw CancellationException("cancel") })
             fail("Cancellation should escape without applying matches")
         } catch (_: CancellationException) { }
+    }
+
+    @Test fun recordingSearchIsOnlyNeededForUnmatchedImportedMetadata() {
+        assertTrue(desktopNeedsRecording(imported))
+        assertTrue(desktopNeedsRecording(Track("local:phone", "Song", "Artist", provider = "local")))
+        assertFalse(desktopNeedsRecording(recording))
+        assertFalse(desktopNeedsRecording(imported.copy(sourceUri = recording.sourceUri)))
+        assertFalse(desktopNeedsManualRecording(recording))
+        assertTrue(desktopNeedsManualRecording(Track("local:phone", "Song", "Artist", provider = "local")))
+    }
+
+    @Test fun backupPlaylistRetainsDuplicateUnresolvedOccurrences() {
+        val json = JSONObject().put("format", "echo-library").put("version", 1)
+            .put("tracks", JSONArray().put(JSONObject()
+                .put("id", "local:phone").put("title", "Song").put("artist", "Artist")
+                .put("provider", "local").put("sourceUri", "content://media/audio/42")))
+            .put("playlists", JSONArray().put(JSONObject()
+                .put("id", "phone-playlist").put("name", "Phone")
+                .put("trackIds", JSONArray(listOf("local:phone", "local:phone")))))
+            .put("favorites", JSONArray().put("local:phone"))
+        val store = library()
+        store.importBackup(json.toString())
+        val imported = store.snapshot()
+        assertEquals(listOf("local:phone", "local:phone"), imported.playlists.single().trackIds)
+        assertTrue(desktopNeedsManualRecording(imported.tracks.single()))
+        assertNull(imported.tracks.single().sourceUri)
     }
 }

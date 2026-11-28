@@ -12,7 +12,9 @@ class LicensesUiTest {
     @Test fun packagedLicenseGrantAndDependencyNoticesAreReachableOffline() {
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.onNodeWithContentDescription("Settings").performClick()
-            compose.onNode(hasScrollAction()).performScrollToNode(hasText("Licenses & source"))
+            compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("settings-section-about"))
+            compose.onNodeWithTag("settings-section-about").performClick()
+            compose.onNodeWithTag("settings-screen").performScrollToNode(hasText("Licenses & source"))
             compose.onNodeWithText("Licenses & source").performClick()
             compose.waitUntil(10_000) { compose.onAllNodesWithText("NOTICE-Echo.txt").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("NOTICE-Echo.txt").performScrollTo().performClick()

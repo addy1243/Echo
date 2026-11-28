@@ -13,7 +13,12 @@ import dev.echo.data.offline.downloadPercent
 import kotlinx.coroutines.launch
 
 @Composable
-fun DesktopDownloadsPanel(repository: DesktopOfflineRepository, modifier: Modifier = Modifier, onPlay: (Track) -> Unit) {
+fun DesktopDownloadsPanel(
+    repository: DesktopOfflineRepository,
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
+    onPlay: (Track) -> Unit,
+) {
     val state by repository.state.collectAsState()
     val scope = rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
@@ -28,7 +33,7 @@ fun DesktopDownloadsPanel(repository: DesktopOfflineRepository, modifier: Modifi
         }
         (error ?: state.error)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (state.entries.isEmpty()) Text("Use Download beside a playable recording to save it here.")
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(state.entries, key = { it.track.id }) { entry ->
                 ElevatedCard(Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,

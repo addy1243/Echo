@@ -36,7 +36,7 @@ import kotlinx.coroutines.withContext
         } catch (cancelled: CancellationException) { throw cancelled
         } catch (_: Exception) { error = "License text could not be opened. Matching source and notices are included with the release." }
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = browseContentPadding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text(selected ?: "Licenses & source", style = MaterialTheme.typography.headlineSmall) }
         if (selected == null) {
             item { Text("Echo Music is GPL-3.0-or-later. Third-party components retain their own licenses and notices.") }

@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -53,6 +54,15 @@ internal suspend fun desktopArtworkAccent(uri: String?): Color? {
         }
         Color((red / 64).toInt(), (green / 64).toInt(), (blue / 64).toInt())
     }
+}
+
+internal fun desktopVideoFrameAccent(image: BufferedImage): Int {
+    var red = 0L; var green = 0L; var blue = 0L
+    for (y in 0 until 8) for (x in 0 until 8) {
+        val pixel = image.getRGB(x * (image.width - 1) / 7, y * (image.height - 1) / 7)
+        red += pixel shr 16 and 255; green += pixel shr 8 and 255; blue += pixel and 255
+    }
+    return (0xFF shl 24) or ((red / 64).toInt() shl 16) or ((green / 64).toInt() shl 8) or (blue / 64).toInt()
 }
 
 internal fun trustedDesktopArtworkUrl(uri: String?): Boolean {

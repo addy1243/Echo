@@ -23,7 +23,14 @@ internal data class PlayerPresentationState(
     val remoteEnabled: Boolean,
     val reconnecting: Boolean,
     val independentDevices: List<ConnectedDevice>,
-)
+    val localMediaItemId: String?,
+) {
+    val hasCurrentSong: Boolean get() = when {
+        remote != null -> !remote.player.trackId.isNullOrBlank()
+        group != null -> group.timeline?.let { timeline -> timeline.queue.entries.getOrNull(timeline.cursor)?.recording != null } == true
+        else -> current != null || !localMediaItemId.isNullOrBlank()
+    }
+}
 
 internal data class PlayerDeckEntry(
     val key: String,
@@ -172,7 +179,8 @@ private fun buildPlayerPresentation(
         else -> vm.current?.mediaMetadata?.artist?.toString().orEmpty()
     }
     val artwork = if (remoteSelected) connectedArtworkUri(remote?.player?.trackId, tracks)
-        else if (group != null) current?.artworkUri else current?.artworkUri ?: vm.current?.mediaMetadata?.artworkUri?.toString()
+        else current?.let { connectedArtworkUri(it.id, listOf(it)) }
+            ?: vm.current?.mediaMetadata?.artworkUri?.toString()
     val playing = if (remoteSelected) remote?.player?.isPlaying == true else group?.timeline?.playing ?: (group == null && vm.playing)
     val localGroupOccurrenceId = group?.timeline?.let { timeline -> timeline.queue.entries.getOrNull(timeline.cursor)?.id }
     val localGroupOccurrenceMatches = groupEntry != null && group?.members?.firstOrNull {
@@ -196,5 +204,6 @@ private fun buildPlayerPresentation(
         durationMs = duration.coerceAtLeast(0), remoteEnabled = remote != null && vm.canControlConnectedDevice(remote),
         reconnecting = remoteSelected && liveRemote == null,
         independentDevices = independentDevices,
+        localMediaItemId = vm.current?.mediaId,
     )
 }

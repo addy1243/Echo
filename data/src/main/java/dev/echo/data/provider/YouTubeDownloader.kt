@@ -10,6 +10,11 @@ import org.schabi.newpipe.extractor.downloader.Response
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.DisposableHandle
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 
 internal const val YOUTUBE_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
@@ -26,6 +31,8 @@ internal class YouTubeDownloader(private val client: OkHttpClient = OkHttpClient
                 throw YouTubeRequestException("YouTube redirected to an unsupported address")
             chain.proceed(chain.request())
         }.build()) : Downloader() {
+    @Volatile internal var speculativeToken: SpeculativeExtractionToken? = null
+
     override fun execute(request: Request): Response {
         val url = request.url().toHttpUrlOrNull()
         if (url == null || !trustedYouTubeRequestUrl(url))
@@ -39,7 +46,11 @@ internal class YouTubeDownloader(private val client: OkHttpClient = OkHttpClient
         val body = request.dataToSend()?.toRequestBody()
             ?: if (method in setOf("POST", "PUT", "PATCH")) ByteArray(0).toRequestBody() else null
         builder.method(method, body)
-        return client.newCall(builder.build()).execute().use { response ->
+        speculativeToken?.throwIfCancelled()
+        val call = client.newCall(builder.build())
+        val token = speculativeToken
+        token?.attach(call)
+        return try { call.execute().use { response ->
             if (response.code == 429)
                 throw YouTubeRequestException("YouTube is rate limiting requests (HTTP 429). Wait before trying again.")
             if (response.code in 500..599)
@@ -50,9 +61,39 @@ internal class YouTubeDownloader(private val client: OkHttpClient = OkHttpClient
                 throw YouTubeRequestException("YouTube denied access (HTTP ${response.code}). This recording may be restricted.")
             Response(response.code, response.message, response.headers.toMultimap(),
                 response.body?.string().orEmpty(), response.request.url.toString())
-        }
+        } } finally { token?.detach(call) }
     }
 }
+
+/** Owns the active OkHttp call for one speculative extraction. */
+internal class SpeculativeExtractionToken {
+    private val cancelled = AtomicBoolean(false)
+    @Volatile private var activeCall: okhttp3.Call? = null
+
+    fun cancel() {
+        cancelled.set(true)
+        activeCall?.cancel()
+    }
+
+    fun attach(call: okhttp3.Call) {
+        activeCall = call
+        if (cancelled.get()) call.cancel()
+    }
+
+    fun detach(call: okhttp3.Call) {
+        if (activeCall === call) activeCall = null
+    }
+
+    fun throwIfCancelled() {
+        if (cancelled.get()) throw kotlinx.coroutines.CancellationException("Speculative YouTube resolution was preempted")
+    }
+}
+
+@OptIn(InternalCoroutinesApi::class)
+internal suspend fun cancelSpeculationOnJobCancellation(token: SpeculativeExtractionToken): DisposableHandle =
+    currentCoroutineContext()[Job]!!.invokeOnCompletion(onCancelling = true, invokeImmediately = true) { cause ->
+        if (cause != null) token.cancel()
+    }
 
 internal fun trustedYouTubeRequestUrl(url: HttpUrl): Boolean =
     url.isHttps && url.port == 443 && url.username.isEmpty() && url.password.isEmpty() &&

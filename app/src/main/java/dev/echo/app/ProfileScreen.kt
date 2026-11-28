@@ -18,7 +18,7 @@ internal fun ProfileScreen(vm: EchoViewModel) {
     val email by vm.googleAccounts.email.collectAsStateWithLifecycle()
     val playlists by vm.playlists.collectAsStateWithLifecycle()
     val lastSynced by vm.firebaseLastSynced.collectAsStateWithLifecycle()
-    LazyColumn(Modifier.fillMaxSize().testTag("profile-screen"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    LazyColumn(Modifier.fillMaxSize().testTag("profile-screen"), contentPadding = browseContentPadding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Your profile", style = MaterialTheme.typography.headlineMedium) }
         item { AccountSection(vm) }
         item { ConnectedPlaybackSection(vm) }

@@ -8,6 +8,47 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DesktopPlaybackTest {
+    @Test fun localFocusedVideoIsProductionEnabledAndStageRequiresLiveLocalPlayback() {
+        assertTrue(desktopLocalVideoEligible(stagingMode = false, stageLiveLocal = false,
+            remoteFocused = false, focusedGroupPresent = false))
+        assertTrue(desktopLocalVideoEligible(stagingMode = true, stageLiveLocal = true,
+            remoteFocused = false, focusedGroupPresent = false))
+        assertFalse(desktopLocalVideoEligible(stagingMode = true, stageLiveLocal = false,
+            remoteFocused = false, focusedGroupPresent = false))
+        assertFalse(desktopLocalVideoEligible(stagingMode = false, stageLiveLocal = false,
+            remoteFocused = true, focusedGroupPresent = false))
+        assertFalse(desktopLocalVideoEligible(stagingMode = false, stageLiveLocal = false,
+            remoteFocused = false, focusedGroupPresent = true))
+    }
+
+    @Test fun audioOnlyVlcMediaAlwaysDisablesVideo() {
+        assertEquals(listOf(":no-video"), desktopAudioOnlyMediaOptions())
+    }
+
+    @Test fun videoSwitchRejectsChangedOccurrenceOrTransportSnapshot() {
+        val track = song("aaaaaaaaaaa")
+        val captured = DesktopPlaybackState(listOf(track, track), index = 0, occurrence = 4, transportRevision = 7)
+        assertTrue(desktopVideoSwitchSnapshotMatches(captured, track.id, 4, 7))
+        assertFalse(desktopVideoSwitchSnapshotMatches(captured.copy(occurrence = 5), track.id, 4, 7))
+        assertFalse(desktopVideoSwitchSnapshotMatches(captured.copy(index = 1, occurrence = 5), track.id, 4, 7))
+        assertFalse(desktopVideoSwitchSnapshotMatches(captured.copy(transportRevision = 8), track.id, 4, 7))
+        assertTrue(desktopVideoSwitchSnapshotMatches(captured.copy(transportRevision = 8), track.id, 4))
+    }
+    @Test fun videoFailureErrorSurvivesAutomaticAudioRestore() {
+        assertEquals("Video stopped; restoring audio", desktopVideoSwitchError("Video stopped; restoring audio", true))
+        assertNull(desktopVideoSwitchError("Old switch error", false))
+    }
+    @Test fun focusedVideoAttemptsOncePerReadyYouTubeOccurrence() {
+        val track = song("aaaaaaaaaaa")
+        val first = DesktopPlaybackState(listOf(track, track, track.copy(provider = "local")), index = 0, occurrence = 4)
+        val second = first.copy(index = 1, occurrence = 5)
+        assertTrue(first.canEnableFocusedVideo(expectedOccurrence = 4))
+        assertFalse(first.copy(loading = true).canEnableFocusedVideo(expectedOccurrence = 4))
+        assertFalse(first.copy(videoError = "No compatible video").canEnableFocusedVideo(4, attemptedOccurrence = 4))
+        assertFalse(second.canEnableFocusedVideo(expectedOccurrence = 4))
+        assertTrue(second.canEnableFocusedVideo(5, attemptedOccurrence = 4))
+        assertFalse(second.copy(index = 2, occurrence = 6).canEnableFocusedVideo(6, attemptedOccurrence = 5))
+    }
     @Test fun transientPlaybackRetryUsesOneThreeSixThenCapsAtOneMinute() {
         assertEquals(1_000L, desktopPlaybackRetryDelayMs(1))
         assertEquals(3_000L, desktopPlaybackRetryDelayMs(2))

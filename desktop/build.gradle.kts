@@ -86,7 +86,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi)
             packageName = "EchoMusic"
-            packageVersion = "0.2.7"
+            packageVersion = "0.2.8"
             windows {
                 iconFile.set(project.file("resources/echo.ico"))
                 installationPath = "EchoMusicDesktop"
@@ -109,6 +109,7 @@ tasks.register<JavaExec>("playbackCheck") {
     mainClass.set("dev.echo.desktop.PlaybackCheckKt")
     jvmArgs("--add-modules=jdk.httpserver")
     if (providers.gradleProperty("echoLiveYouTube").orNull == "true") args("--youtube")
+    if (providers.gradleProperty("echoVideoCapablePlayback").orNull == "true") args("--video-capable")
     if (providers.gradleProperty("echoPackagedRuntimeCheck").orNull == "true") {
         providers.gradleProperty("desktopJavaHome").orNull?.let { executable = "$it/bin/java.exe" }
         doFirst {
@@ -178,8 +179,8 @@ tasks.register<JavaExec>("msiCheck") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass.set("dev.echo.desktop.DesktopMsiCheckKt")
-    args(providers.gradleProperty("echoMsiPath").getOrElse(layout.buildDirectory.file("compose/binaries/main/msi/EchoMusic-0.2.6.msi").get().asFile.absolutePath),
-        providers.gradleProperty("echoMsiVersion").getOrElse("0.2.6"))
+    args(providers.gradleProperty("echoMsiPath").getOrElse(layout.buildDirectory.file("compose/binaries/main/msi/EchoMusic-0.2.8.msi").get().asFile.absolutePath),
+        providers.gradleProperty("echoMsiVersion").getOrElse("0.2.8"))
 }
 
 tasks.register<JavaExec>("publishedWindowsUpdateCheck") {
@@ -190,4 +191,34 @@ tasks.register<JavaExec>("publishedWindowsUpdateCheck") {
     mainClass.set("dev.echo.desktop.DesktopUpdateCheckKt")
     providers.gradleProperty("echoDiagnoseWindowsBaseline").orNull?.let { args("--diagnose-from-version", it) }
         ?: providers.gradleProperty("echoPublishedWindowsBaseline").orNull?.let { args("--download-from-version", it) }
+}
+tasks.register<JavaExec>("stageCacheNativeCheck") {
+    group = "verification"
+    description = "Verify generated Stage cache bytes with native VLC and a disabled synthetic origin."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.echo.desktop.DesktopStageCacheNativeCheckKt")
+    jvmArgs("--add-modules=jdk.httpserver")
+}
+tasks.register<JavaExec>("stageStreamCaptureNativeCheck") {
+    group = "verification"
+    description = "Verify VLC can cache a generated stream without an additional download."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.echo.desktop.DesktopStageStreamCaptureNativeCheckKt")
+    jvmArgs("--add-modules=jdk.httpserver")
+}
+
+tasks.register<JavaExec>("realVideoAcceptanceCheck") {
+    group = "verification"
+    description = "Opt-in native YouTube audio-video-audio acceptance check using temporary playback state."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.echo.desktop.RealVideoAcceptanceCheckKt")
+    jvmArgs("--add-modules=jdk.httpserver")
+    doFirst {
+        require(providers.gradleProperty("echoRealVideoAcceptance").orNull == "true") {
+            "Pass -PechoRealVideoAcceptance=true to run the live native video check."
+        }
+    }
 }

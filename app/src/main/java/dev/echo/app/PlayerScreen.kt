@@ -36,7 +36,7 @@ import androidx.media3.common.Player
 import dev.echo.core.Track
 import dev.echo.core.Playlist
 
-@Composable internal fun FullPlayer(vm: EchoViewModel, tracks: List<Track>, playlists: List<Playlist>, favorites: Set<String>, close: () -> Unit) {
+@Composable internal fun FullPlayer(vm: EchoViewModel, tracks: List<Track>, playlists: List<Playlist>, favorites: Set<String>, openStandby: () -> Unit, close: () -> Unit) {
     var showQueue by remember { mutableStateOf(false) }
     var credits by remember { mutableStateOf(false) }
     var add by remember { mutableStateOf<Track?>(null) }
@@ -76,6 +76,18 @@ import dev.echo.core.Playlist
                         style = MaterialTheme.typography.labelSmall, letterSpacing = 2.sp, color = if (localGroup != null) Color(0xFF83E0D2) else accent,
                         modifier = Modifier.testTag("player-output-label"))
                     Text(if (localGroup != null) "Shared listening session" else if (!remoteSelected && vm.recommendedIds.contains(vm.current?.mediaId)) "Recommended for this session" else "Your music, in the moment", style = MaterialTheme.typography.bodySmall)
+                }
+                val canOpenStandby = shouldShowStageStandby(presentation.hasCurrentSong, presentation.playing) &&
+                    !presentation.reconnecting
+                IconButton(
+                    enabled = canOpenStandby,
+                    onClick = openStandby,
+                    modifier = Modifier.testTag("player-open-standby"),
+                ) {
+                    Icon(
+                        Icons.Default.Fullscreen,
+                        if (canOpenStandby) "Open Standby" else "Standby unavailable. Play a song first.",
+                    )
                 }
                 if (remoteSelected || localGroup == null || localGroup.timeline != null) IconButton(onClick = { showQueue = true }) {
                     Icon(Icons.AutoMirrored.Filled.QueueMusic, when {

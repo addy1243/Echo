@@ -67,6 +67,7 @@ class NavigationPlayerTest {
                 }
                 compose.onNodeWithTag("mini-player").performClick()
                 compose.onNodeWithTag("player-screen").assertIsDisplayed()
+                compose.onNodeWithTag("player-open-standby").assertIsEnabled()
                 compose.onNodeWithTag("tab-home").assertDoesNotExist()
                 val savedCurrent = model.current!!.mediaId
                 repeat(2) {

@@ -9,5 +9,17 @@ internal class SpaceShortcutRepeatGuard {
         return true
     }
 
-    fun release() { held = false }
+    fun release(): Boolean {
+        val wasHeld = held
+        held = false
+        return wasHeld
+    }
+}
+
+internal class SpaceShortcutInputMode {
+    private var pointerInput = false
+
+    fun pointerInput() { pointerInput = true }
+    fun keyboardInput() { pointerInput = false }
+    fun shouldHandlePlaybackShortcut(textInputFocused: Boolean) = pointerInput && !textInputFocused
 }

@@ -25,7 +25,10 @@ internal class DesktopPreferences(
     private val file: Path,
     private val legacyFile: Path? = null,
 ) {
-    private data class Appearance(val theme: DesktopThemeMode, val accent: String, val closeToTray: Boolean)
+    private data class Appearance(
+        val theme: DesktopThemeMode, val accent: String, val closeToTray: Boolean,
+        val stageVideoCachingEnabled: Boolean = true, val mediaCachingEnabled: Boolean = false,
+    )
     private data class Loaded(val appearance: Appearance, val error: String?)
 
     private val tutorialMarker = file.resolveSibling(file.fileName.toString().removeSuffix(".json") + ".tutorial-complete")
@@ -34,6 +37,8 @@ internal class DesktopPreferences(
     var themeMode by mutableStateOf(loaded.appearance.theme); private set
     var customAccent by mutableStateOf(loaded.appearance.accent); private set
     var closeToTray by mutableStateOf(loaded.appearance.closeToTray); private set
+    var stageVideoCachingEnabled by mutableStateOf(loaded.appearance.stageVideoCachingEnabled); private set
+    var mediaCachingEnabled by mutableStateOf(loaded.appearance.mediaCachingEnabled); private set
     var error by mutableStateOf(loaded.error); private set
 
     fun setTheme(value: DesktopThemeMode) = update(theme = value)
@@ -42,6 +47,8 @@ internal class DesktopPreferences(
         update(accent = value)
     }
     fun updateCloseToTray(value: Boolean) = update(closeToTray = value)
+    fun updateStageVideoCachingEnabled(value: Boolean) = update(stageVideoCachingEnabled = value)
+    fun updateMediaCachingEnabled(value: Boolean) = update(mediaCachingEnabled = value)
 
     fun completeTutorial() {
         Files.createDirectories(tutorialMarker.parent)
@@ -67,20 +74,29 @@ internal class DesktopPreferences(
         if (source == null) return Loaded(Appearance(DesktopThemeMode.DARK, "", true), loadError)
         val mode = runCatching { DesktopThemeMode.valueOf(source.optString("theme", "DARK")) }.getOrDefault(DesktopThemeMode.DARK)
         val accent = source.optString("accent", "").takeIf { it.isBlank() || it.matches(Regex("#[0-9a-fA-F]{6}")) }.orEmpty()
-        return Loaded(Appearance(mode, accent, source.optBoolean("closeToTray", true)), loadError)
+        return Loaded(Appearance(mode, accent, source.optBoolean("closeToTray", true),
+            source.optBoolean("stageVideoCachingEnabled", true), source.optBoolean("mediaCachingEnabled", false)), loadError)
     }
 
-    private fun update(theme: DesktopThemeMode = themeMode, accent: String = customAccent, closeToTray: Boolean = this.closeToTray) {
+    private fun update(
+        theme: DesktopThemeMode = themeMode, accent: String = customAccent, closeToTray: Boolean = this.closeToTray,
+        stageVideoCachingEnabled: Boolean = this.stageVideoCachingEnabled,
+        mediaCachingEnabled: Boolean = this.mediaCachingEnabled,
+    ) {
         try {
             val values = if (Files.exists(file)) {
                 require(Files.size(file) <= 65_536) { "Appearance settings are too large; the file was preserved." }
                 JSONObject(Files.readString(file))
             } else JSONObject()
             values.put("theme", theme.name).put("accent", accent).put("closeToTray", closeToTray)
+                .put("stageVideoCachingEnabled", stageVideoCachingEnabled)
+                .put("mediaCachingEnabled", mediaCachingEnabled)
             writeAtomically(file, values.toString())
             themeMode = theme
             customAccent = accent
             this.closeToTray = closeToTray
+            this.stageVideoCachingEnabled = stageVideoCachingEnabled
+            this.mediaCachingEnabled = mediaCachingEnabled
             error = null
         } catch (_: Exception) {
             error = "Appearance settings could not be saved. The existing file was preserved."

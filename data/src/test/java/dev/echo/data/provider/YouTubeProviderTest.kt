@@ -1,6 +1,7 @@
 package dev.echo.data.provider
 
 import dev.echo.core.Track
+import dev.echo.core.PlayableSource
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
@@ -11,6 +12,7 @@ import org.schabi.newpipe.extractor.stream.ContentAvailability
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.stream.StreamType
+import org.schabi.newpipe.extractor.stream.VideoStream
 
 class YouTubeProviderTest {
     @Test fun usesLargestTrustedArtworkForFullScreenPlayer() {
@@ -111,6 +113,62 @@ class YouTubeProviderTest {
         }
     }
 
+    @Test fun selectsHighestQualitySeparateVideoAndFallsBackToMuxedStreams() {
+        val low = video(url = mediaUrl, resolution = "360p")
+        val highMuxed = video(url = "$mediaUrl&quality=high", resolution = "720p")
+        val highFrameRate = video(url = "$mediaUrl&fps=60", resolution = "720p60")
+        val higherResolution = video(url = "$mediaUrl&quality=1080", resolution = "1080p")
+        val separate = video(url = "$mediaUrl&videoOnly=1", resolution = "1080p", videoOnly = true)
+        val selection = selectYouTubeVideoSelection(listOf(low, highMuxed, highFrameRate, separate), nowMs = 1_000)!!
+        assertEquals(separate.content, selection.source.uri)
+        assertTrue(selection.requiresAudioSlave)
+        assertEquals(highFrameRate.content, selection.muxedFallback?.uri)
+        val dashSeparate = video(url = "$mediaUrl&dash=1", resolution = "1440p", videoOnly = true, method = DeliveryMethod.DASH)
+        val dashSelection = selectYouTubeVideoSelection(listOf(dashSeparate), nowMs = 1_000)!!
+        assertEquals(dashSeparate.content, dashSelection.source.uri)
+        assertTrue(dashSelection.requiresAudioSlave)
+        val muxed = selectYouTubeVideoSelection(listOf(low, highMuxed, highFrameRate, higherResolution), nowMs = 1_000)!!
+        assertEquals(higherResolution.content, muxed.source.uri)
+        assertFalse(muxed.requiresAudioSlave)
+        listOf(video("http://googlevideo.com/file"), video("https://googlevideo.com.evil.example/file"),
+            video("https://googlevideo.com/file?expire=1"), video(isUrl = false, method = DeliveryMethod.DASH)).forEach {
+            assertNull(selectYouTubeVideo(listOf(it), nowMs = 1_000))
+        }
+    }
+
+    @Test fun cachedVideoSelectionExpiresByElapsedAgeAndSignedUrlExpiry() {
+        var elapsed = 0L
+        var wall = 1_000_000L
+        val cache = YouTubeVideoSelectionCache({ elapsed }, { wall })
+        val selection = YouTubeVideoSelection(PlayableSource(mediaUrl, expiresAt = wall + 120_000), false)
+        cache.put(videoId, selection)
+        assertEquals(selection, cache.get(videoId))
+        wall += 61_000
+        assertNull(cache.get(videoId))
+
+        val secondId = "zB12_cD34-e"
+        wall = 1_000_000L
+        cache.put(secondId, YouTubeVideoSelection(PlayableSource(mediaUrl), false))
+        elapsed += 15 * 60 * 1000L
+        assertNotNull(cache.get(secondId))
+        elapsed += 15 * 60 * 1000L
+        assertNull(cache.get(secondId))
+    }
+
+    @Test fun cachedVideoSelectionIsBoundedAndEvictsLeastRecentlyUsed() {
+        var elapsed = 0L
+        val cache = YouTubeVideoSelectionCache({ elapsed }, { 1_000_000L })
+        val selection = YouTubeVideoSelection(PlayableSource(mediaUrl), false)
+        repeat(64) { cache.put("video-$it", selection) }
+        assertEquals(selection, cache.get("video-0")) // Refresh access order.
+        cache.put("video-64", selection)
+        assertNull(cache.get("video-1"))
+        assertEquals(selection, cache.get("video-0"))
+        assertEquals(selection, cache.get("video-64"))
+        cache.remove("video-64")
+        assertNull(cache.get("video-64"))
+    }
+
     @Test fun invalidTracksReturnWithoutAnyNetworkRequest() = runTest {
         val provider = YouTubeProvider()
         val track = Track("youtube:$videoId", "Song", "Artist", provider = "youtube", sourceUri = youtubeWatchUrl(videoId))
@@ -124,4 +182,9 @@ class YouTubeProviderTest {
         method: DeliveryMethod = DeliveryMethod.PROGRESSIVE_HTTP): AudioStream = AudioStream.Builder()
         .setId("$bitrate-${type ?: "default"}").setContent(url, true).setMediaFormat(MediaFormat.M4A)
         .setAverageBitrate(bitrate).setAudioTrackType(type).setDeliveryMethod(method).build()
+
+    private fun video(url: String = mediaUrl, resolution: String = "720p", videoOnly: Boolean = false,
+        method: DeliveryMethod = DeliveryMethod.PROGRESSIVE_HTTP, isUrl: Boolean = true): VideoStream = VideoStream.Builder()
+        .setId("video-$resolution").setContent(url, isUrl).setMediaFormat(MediaFormat.MPEG_4)
+        .setResolution(resolution).setIsVideoOnly(videoOnly).setDeliveryMethod(method).build()
 }

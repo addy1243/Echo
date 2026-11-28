@@ -1,6 +1,11 @@
 # Release history
 
-## 0.2.7 / Android code18 — 2026-11-12
+## 0.2.7.1 — published
+
+- Android 0.2.7.1/code19 and Windows 0.2.8: improve Spotify partial playlist imports, paused Android queue recovery and artwork colors, and Windows Space handling after a mouse click.
+- Emulator recovery, artwork and Bluetooth acceptance, native Windows keyboard behavior, and installed-app updater acceptance remain outstanding.
+
+## 0.2.7 / Android code18 and Windows 0.2.7 — published
 
 - Add first-run guidance, appearance and background settings, single-instance Windows startup, playback shortcuts, and player icons.
 - Import Spotify account-data ZIPs into encrypted local archives and browse supported history, saved artists, and albums.

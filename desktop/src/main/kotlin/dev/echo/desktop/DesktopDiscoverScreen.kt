@@ -27,6 +27,7 @@ fun DesktopDiscoverScreen(
     modifier: Modifier = Modifier,
     onlineAllowed: Boolean = true,
     onSaveMix: ((List<Track>) -> Unit)? = null,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
     val scope = rememberCoroutineScope()
     var result by remember { mutableStateOf<DesktopDiscoveryResult?>(null) }
@@ -80,7 +81,7 @@ fun DesktopDiscoverScreen(
             Button(onClick = { onPlay(tracks, 0) }) { Text("Play ${if (tab == 0) "discoveries" else "results"}") }
             onSaveMix?.let { save -> OutlinedButton(onClick = { save(tracks) }) { Text("Save as playlist") } }
         }
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        LazyColumn(Modifier.weight(1f), contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
                 Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,

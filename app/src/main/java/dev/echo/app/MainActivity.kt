@@ -11,6 +11,29 @@ import dagger.hilt.android.AndroidEntryPoint
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     private lateinit var model: EchoViewModel
+    internal val standbyClock = StageStandbyIdleClock(android.os.SystemClock.elapsedRealtime())
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        standbyClock.recordInteraction(android.os.SystemClock.elapsedRealtime())
+    }
+    override fun onResume() {
+        super.onResume()
+        updateStandbyForeground()
+    }
+    override fun onPause() {
+        standbyClock.setForeground(false, android.os.SystemClock.elapsedRealtime())
+        super.onPause()
+    }
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        updateStandbyForeground(hasFocus)
+    }
+    private fun updateStandbyForeground(windowHasFocus: Boolean = hasWindowFocus()) {
+        standbyClock.setForeground(
+            lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) && windowHasFocus,
+            android.os.SystemClock.elapsedRealtime(),
+        )
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
