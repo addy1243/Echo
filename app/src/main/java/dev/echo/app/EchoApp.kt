@@ -134,12 +134,21 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
         if (light && readableAccent.luminance() > .18f) readableAccent = androidx.compose.ui.graphics.lerp(readableAccent, Color.Black, .12f)
         if (!light && readableAccent.luminance() < .36f) readableAccent = androidx.compose.ui.graphics.lerp(readableAccent, Color.White, .12f)
     }
+    val surface = if (light) Color.White else Color(0xFF19191F)
+    val onSurface = if (light) Ink else Color.White
+    val themedSurface = androidx.compose.ui.graphics.lerp(surface, accent, .06f)
     val colors = if (light) lightColorScheme(primary = readableAccent, onPrimary = Color.White,
+        primaryContainer = androidx.compose.ui.graphics.lerp(surface, accent, .16f), onPrimaryContainer = onSurface,
+        secondaryContainer = androidx.compose.ui.graphics.lerp(surface, accent, .12f), onSecondaryContainer = onSurface,
+        surfaceVariant = themedSurface, onSurfaceVariant = onSurface,
         background = androidx.compose.ui.graphics.lerp(Color.White, accent, .04f),
         surface = androidx.compose.ui.graphics.lerp(Color.White, accent, .07f))
         else darkColorScheme(primary = readableAccent, onPrimary = Color.Black,
+            primaryContainer = androidx.compose.ui.graphics.lerp(surface, accent, .22f), onPrimaryContainer = onSurface,
+            secondaryContainer = androidx.compose.ui.graphics.lerp(surface, accent, .16f), onSecondaryContainer = onSurface,
+            surfaceVariant = themedSurface, onSurfaceVariant = onSurface,
             background = androidx.compose.ui.graphics.lerp(Ink, accent, .04f),
-            surface = androidx.compose.ui.graphics.lerp(Color(0xFF19191F), accent, .06f))
+            surface = androidx.compose.ui.graphics.lerp(surface, accent, .06f))
     val snackbar = remember { SnackbarHostState() }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         val audio = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE

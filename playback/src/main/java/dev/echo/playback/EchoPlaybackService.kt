@@ -142,6 +142,12 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
     private var connectedV1Job: Job? = null
     private var connectedV2Job: Job? = null
     private var queueWasSet = false
+    private var queueRestoreRevision = 0L
+    private var pendingRestoredShuffleOrder: IntArray? = null
+    private var pendingRestoredQueueIds: List<String>? = null
+    private var pendingGroupRecoveryKey: String? = null
+    private var preserveActiveTransferOnNextPersist = false
+    private var startupRestoreJob: Job? = null
     private val subscriptions = mutableMapOf<String, MutableSet<MediaSession.ControllerInfo>>()
     private var recoveryJob: Job? = null
     private var recoveryAttempts = 0
@@ -264,9 +270,10 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
                 finishTaskRemovalIfIdle()
             }
 
-            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) { finishTaskRemovalIfIdle() }
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) { queueRestoreRevision++; finishTaskRemovalIfIdle() }
 
             override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                queueRestoreRevision++
                 if (reason != Player.DISCONTINUITY_REASON_AUTO_TRANSITION) v2TransportRevision++
             }
 
@@ -326,15 +333,55 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
             }
 
             override fun onEvents(player: Player, events: Player.Events) {
-                if (events.contains(Player.EVENT_TIMELINE_CHANGED)) { queueWasSet = true; v2QueueRevision++ }
-                if (events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED) || events.contains(Player.EVENT_REPEAT_MODE_CHANGED)) v2QueueRevision++
-                if (queueWasSet) persistQueue()
+                if (events.contains(Player.EVENT_TIMELINE_CHANGED)) {
+                    queueWasSet = true; queueRestoreRevision++; v2QueueRevision++
+                    val expectedIds = pendingRestoredQueueIds
+                    val installedIds = List(player.mediaItemCount) { player.getMediaItemAt(it).mediaId }
+                    if (expectedIds != null && installedIds == expectedIds) {
+                        pendingRestoredShuffleOrder?.takeIf { it.size == player.mediaItemCount }?.let {
+                            this@EchoPlaybackService.player.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(it, 0L))
+                        }
+                    } else {
+                        if (pendingGroupRecoveryKey != null) preserveActiveTransferOnNextPersist = true
+                        pendingGroupRecoveryKey = null
+                    }
+                    pendingRestoredShuffleOrder = null
+                    pendingRestoredQueueIds = null
+                }
+                if (events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED)) queueRestoreRevision++
+                if (events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED) || events.contains(Player.EVENT_REPEAT_MODE_CHANGED)) {
+                    queueRestoreRevision++; v2QueueRevision++
+                }
+                if (queueWasSet) {
+                    val recoveryKey = pendingGroupRecoveryKey
+                    if (persistQueue(preserveActiveTransfer = preserveActiveTransferOnNextPersist) && recoveryKey != null) {
+                        removeRecovery(recoveryKey)
+                    }
+                    pendingGroupRecoveryKey = null
+                    preserveActiveTransferOnNextPersist = false
+                }
                 if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
                     listeningTracker.playing(player.currentMediaItem?.mediaId, player.duration, player.isPlaying, SystemClock.elapsedRealtime())
                 }
             }
         }
         player.addListener(playbackListener)
+        startupRestoreJob = scope.launch {
+            delay(150)
+            try {
+                val savedIds = preferences.getString("ids", null)
+                if ((savedIds.isNullOrBlank() || savedIds.trim() == "[]") && readActiveTransfer() == null) return@launch
+                val restored = resumeQueue()
+                if (player.mediaItemCount == 0) {
+                    player.setMediaItems(restored.mediaItems, restored.startIndex, restored.startPositionMs)
+                    player.playWhenReady = false
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                session.sendError(SessionError(SessionError.ERROR_IO,
+                    "The saved queue could not be restored. Select a song to start a new queue."))
+            } finally { startupRestoreJob = null }
+        }
         scope.launch {
             while (true) {
                 delay(5_000)
@@ -881,18 +928,23 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
             player.currentPosition.coerceAtLeast(0), player.repeatMode, player.shuffleModeEnabled, order)
     }
 
-    private suspend fun restoreBackupPaused(backup: PlaybackBackup) {
+    private suspend fun backupMediaItems(backup: PlaybackBackup): List<MediaItem> {
         val library = repository.tracks.first()
-        val items = backup.items.mapIndexed { index, row ->
+        return backup.items.mapIndexed { index, row ->
             val track = when {
-                row.provider == "youtube" && row.key.matches(Regex("youtube:[A-Za-z0-9_-]{11}")) ->
+                row.provider == "youtube" ->
                     Track(row.key, row.title, row.artist, row.album, row.durationMs, provider = "youtube",
-                        sourceUri = "https://www.youtube.com/watch?v=${row.key.removePrefix("youtube:")}")
+                        sourceUri = canonicalYoutubeWatchUri(row.key)
+                            ?: error("Queue position ${index + 1} (${row.title}) has an invalid YouTube recording ID"))
                 else -> library.firstOrNull { it.provider == row.provider && safeV2RecordingId(it.id) == row.key }
                     ?: error("Queue position ${index + 1} (${row.title}): its local recording is no longer available")
             }
             resolve(track) ?: error("Queue position ${index + 1} (${row.title}) could not be restored on this device")
         }
+    }
+
+    private suspend fun restoreBackupPaused(backup: PlaybackBackup) {
+        val items = backupMediaItems(backup)
         v2Stage?.stagingPlayer?.release(); v2Stage = null
         if (items.isEmpty()) {
             player.clearMediaItems()
@@ -1043,18 +1095,22 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
         super.onDestroy()
     }
 
-    private fun persistQueue() {
+    private fun persistQueue(preserveActiveTransfer: Boolean = false): Boolean {
         val ids = JSONArray()
         repeat(player.mediaItemCount) { ids.put(player.getMediaItemAt(it).mediaId) }
-        preferences.edit().putString("ids", ids.toString())
-            .putInt("index", player.currentMediaItemIndex.coerceAtLeast(0))
-            .putLong("position", player.currentPosition.coerceAtLeast(0))
-            .putInt("repeat", player.repeatMode)
-            .putBoolean("shuffle", player.shuffleModeEnabled).apply()
+        val order = JSONArray()
+        (if (player.shuffleModeEnabled) fullShuffleOrder(player) else List(player.mediaItemCount) { it }).forEach(order::put)
+        if (!preferences.edit().putString("ids", ids.toString())
+                .putInt("index", player.currentMediaItemIndex.coerceAtLeast(0))
+                .putLong("position", player.currentPosition.coerceAtLeast(0))
+                .putInt("repeat", player.repeatMode).putBoolean("shuffle", player.shuffleModeEnabled)
+                .putString("order", order.toString()).commit()) return false
+        if (preserveActiveTransfer) return true
         runCatching { persistActiveTransfer() }.onFailure {
             if (v2Queue != null) runCatching { session.sendError(SessionError(SessionError.ERROR_IO,
                 "The shared queue could not be saved for playback recovery.")) }
         }
+        return true
     }
 
     private fun persistActiveTransfer() {
@@ -1091,15 +1147,28 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
     }
 
     private suspend fun resumeQueue(): MediaSession.MediaItemsWithStartPosition {
+        val restoreRevision = queueRestoreRevision
+        check(player.mediaItemCount == 0) { "Playback already has a queue; keeping the current queue" }
         readActiveTransfer()?.takeIf { it.group != null }?.let { saved ->
             val ref = requireNotNull(saved.group)
             val backup = readRecovery(groupRecoveryKey(ref.groupId))
                 ?: error("The independent queue for the previous Play together session is unavailable")
-            restoreBackupPaused(backup)
-            removeRecovery(groupRecoveryKey(ref.groupId))
-            return MediaSession.MediaItemsWithStartPosition(
-                List(player.mediaItemCount) { player.getMediaItemAt(it) },
-                player.currentMediaItemIndex.coerceAtLeast(0), player.currentPosition.coerceAtLeast(0))
+            val items = backupMediaItems(backup)
+            require(items.isNotEmpty() && backup.index in items.indices) {
+                "The saved independent queue for the previous Play together session is empty or invalid"
+            }
+            check(canApplyQueueRestore(restoreRevision, queueRestoreRevision, player.mediaItemCount == 0)) {
+                "Playback changed while its previous queue was being restored; keeping the current queue"
+            }
+            val order = backup.shuffleOrder.takeIf { it.size == items.size && it.toSet() == items.indices.toSet() }
+                ?: items.indices.toList()
+            player.repeatMode = backup.repeatMode.takeIf { it in Player.REPEAT_MODE_OFF..Player.REPEAT_MODE_ALL }
+                ?: Player.REPEAT_MODE_OFF
+            player.shuffleModeEnabled = backup.shuffleEnabled
+            pendingRestoredShuffleOrder = order.toIntArray()
+            pendingRestoredQueueIds = items.map { it.mediaId }
+            pendingGroupRecoveryKey = groupRecoveryKey(ref.groupId)
+            return MediaSession.MediaItemsWithStartPosition(items, backup.index, backup.positionMs)
         }
         val ids = try {
             val stored = JSONArray(preferences.getString("ids", "[]"))
@@ -1110,17 +1179,28 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
         active?.queue?.entries?.forEach { entry -> tracks.putIfAbsent(entry.recording.id, portableAndroidTrack(entry.recording)) }
         val resolved = mutableMapOf<String, MediaItem>()
         for (id in ids.distinct()) {
-            val track = tracks[id] ?: continue
-            resolve(track)?.let { resolved[id] = it }
+            val track = tracks[id]?.let { saved ->
+                if (saved.provider != "youtube") saved else saved.copy(sourceUri = canonicalYoutubeWatchUri(saved.id)
+                    ?: error("A saved YouTube queue recording has an invalid ID; the saved queue was kept"))
+            } ?: continue
+            resolved[id] = resolve(track) ?: error("A saved queue recording could not be prepared; the saved queue was kept")
         }
         val restored = restoreQueue(ids, preferences.getInt("index", 0),
             preferences.getLong("position", 0), resolved.keys)
             ?: throw IllegalStateException("No playable saved queue. Select a song from the library.")
+        check(canApplyQueueRestore(restoreRevision, queueRestoreRevision, player.mediaItemCount == 0)) {
+            "Playback changed while its saved queue was being restored; keeping the current queue"
+        }
         player.repeatMode = preferences.getInt("repeat", Player.REPEAT_MODE_OFF)
             .takeIf { it in Player.REPEAT_MODE_OFF..Player.REPEAT_MODE_ALL } ?: Player.REPEAT_MODE_OFF
+        val savedOrder = runCatching {
+            val json = JSONArray(preferences.getString("order", "[]"))
+            List(json.length()) { json.getInt(it) }
+        }.getOrDefault(emptyList())
+        pendingRestoredShuffleOrder = restoredShuffleOrder(savedOrder, restored.originalIndices).toIntArray()
+        pendingRestoredQueueIds = restored.ids
         player.shuffleModeEnabled = preferences.getBoolean("shuffle", false)
         if (active != null) {
-            player.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(IntArray(restored.ids.size) { it }, 0L))
             v2Queue = active.queue
             v2Group = null
         }
@@ -1485,7 +1565,16 @@ class EchoPlaybackService : MediaLibraryService(), NativePlaybackBridgeV2 {
 
         override fun onPlaybackResumption(mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future {
-            resumeQueue()
+            startupRestoreJob?.cancel()
+            startupRestoreJob = null
+            if (player.mediaItemCount > 0) {
+                val items = List(player.mediaItemCount) { player.getMediaItemAt(it) }
+                pendingRestoredQueueIds = items.map { it.mediaId }
+                pendingRestoredShuffleOrder = (if (player.shuffleModeEnabled) fullShuffleOrder(player)
+                    else items.indices.toList()).toIntArray()
+                MediaSession.MediaItemsWithStartPosition(items,
+                    player.currentMediaItemIndex.coerceAtLeast(0), player.currentPosition.coerceAtLeast(0))
+            } else resumeQueue()
         }
     }
 }

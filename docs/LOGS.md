@@ -6,8 +6,8 @@ Keep the three most recent completed work sessions only. Add a concise entry aft
 
 - Added default-off Windows media-cache Settings, audio-only or audio/video Stage choices, +1/+2 preparation priority, validated live video capture, cancellation at opt-out, and independent-group guards. Stage cancels speculative transfers while video is loading or network-backed to reduce competition; normal Windows currently supports the audio cache only.
 - **Executed evidence:** Desktop tests and both generated-audio native VLC cache checks passed with dummy output. Android debug compilation and the focused YouTubeDownloader unit test passed; the full data unit test run was stopped after it did not finish. Independent review found cancellation and group-boundary issues, which were addressed and re-reviewed without further findings in those fixes.
-- **Remaining limits:** Real video continuity and weak-network buffering were not tested, and the user's interruption has not been reproduced. PR #2 is based on main without published 0.2.7.1 fixes; Android dream and Windows packaged Stage acceptance are also incomplete. Temporary directories may remain after abrupt exit. No release or merge.
-- **Next improvement:** Complete final review, reconcile 0.2.7.1 into the integration branch, and verify actual Stage video and playlist continuity before production promotion.
+- **Remaining limits:** Real video continuity and weak-network buffering were not tested, and the user's interruption has not been reproduced. The local integration candidate includes published 0.2.7.1 fixes; Android dream and Windows packaged Stage acceptance are also incomplete. Temporary directories may remain after abrupt exit. No release or merge.
+- **Next improvement:** Complete final review and verify actual Stage video and playlist continuity before production promotion.
 
 ## 2026-11-28 — Reuse the current captured stream
 

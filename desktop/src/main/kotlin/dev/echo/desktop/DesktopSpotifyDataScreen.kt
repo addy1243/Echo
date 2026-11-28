@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.echo.data.spotify.PlaylistFile
@@ -149,6 +150,7 @@ internal fun DesktopSpotifyDataScreen(
 @Composable
 internal fun DesktopSpotifySettingsPage(
     preferences: DesktopPreferences,
+    onTextInputFocusChanged: (Boolean) -> Unit,
     onImport: () -> Unit,
     onBrowse: () -> Unit,
     onDelete: () -> Unit,
@@ -183,7 +185,7 @@ internal fun DesktopSpotifySettingsPage(
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            OutlinedTextField(customAccent, { customAccent = it.take(7) }, label = { Text("Custom accent color (hex)") },
+            OutlinedTextField(customAccent, { customAccent = it.take(7) }, modifier = Modifier.onFocusChanged { onTextInputFocusChanged(it.isFocused) }, label = { Text("Custom accent color (hex)") },
             placeholder = { Text("#83E5CB") }, singleLine = true)
             Button(enabled = customAccent.matches(Regex("#[0-9a-fA-F]{6}")), onClick = { preferences.setAccent(customAccent) }) { Text("Save") }
         }
