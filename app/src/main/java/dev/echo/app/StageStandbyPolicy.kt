@@ -23,6 +23,9 @@ internal fun shouldEnterStageStandby(
 ): Boolean = settings.automaticEnabled && appForeground && idleForMs >= settings.idleTimeoutMs &&
     (!settings.chargingOnly || charging == true)
 
+internal fun shouldShowStageStandby(hasCurrentSong: Boolean, activelyPlaying: Boolean): Boolean =
+    hasCurrentSong && activelyPlaying
+
 /** Keep the idle clock monotonic and restart it when the app resumes or receives input. */
 internal class StageStandbyIdleClock(startedAtMs: Long) {
     private var lastActivityMs = startedAtMs

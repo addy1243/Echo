@@ -77,8 +77,17 @@ import dev.echo.core.Playlist
                         modifier = Modifier.testTag("player-output-label"))
                     Text(if (localGroup != null) "Shared listening session" else if (!remoteSelected && vm.recommendedIds.contains(vm.current?.mediaId)) "Recommended for this session" else "Your music, in the moment", style = MaterialTheme.typography.bodySmall)
                 }
-                IconButton(onClick = openStandby) {
-                    Icon(Icons.Default.Fullscreen, "Open Standby")
+                val canOpenStandby = shouldShowStageStandby(presentation.hasCurrentSong, presentation.playing) &&
+                    !presentation.reconnecting
+                IconButton(
+                    enabled = canOpenStandby,
+                    onClick = openStandby,
+                    modifier = Modifier.testTag("player-open-standby"),
+                ) {
+                    Icon(
+                        Icons.Default.Fullscreen,
+                        if (canOpenStandby) "Open Standby" else "Standby unavailable. Play a song first.",
+                    )
                 }
                 if (remoteSelected || localGroup == null || localGroup.timeline != null) IconButton(onClick = { showQueue = true }) {
                     Icon(Icons.AutoMirrored.Filled.QueueMusic, when {

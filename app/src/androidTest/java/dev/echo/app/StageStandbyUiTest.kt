@@ -7,6 +7,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -24,12 +26,23 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import android.content.Context
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModelProvider
 import androidx.media3.common.VideoSize
+import androidx.media3.common.Player
+import android.database.sqlite.SQLiteDatabase
+import android.net.Uri
 import dev.echo.core.Track
 import dev.echo.core.PlayableSource
+import dev.echo.data.library.LibraryRepository
+import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.rules.RuleChain
+import org.junit.After
 import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -40,6 +53,12 @@ class StageStandbyUiTest {
     private val compose = createAndroidComposeRule<MainActivity>()
     @get:Rule val standbyUiRules = RuleChain.outerRule(StandbyUiSafetyRule()).around(compose)
     private val context: Context get() = ApplicationProvider.getApplicationContext()
+    private val fixtureId = "standby-ui-${UUID.randomUUID()}"
+    private val fixtureArtist = "Standby UI fixture ${UUID.randomUUID()}"
+    private var fixtureAudio: File? = null
+    private var fixturePlaylistId: String? = null
+    private var fixtureTrack: Track? = null
+    private var fixtureVm: EchoViewModel? = null
     private fun dismissTutorialIfShown() {
         if (compose.onAllNodesWithTag("tutorial-skip").fetchSemanticsNodes().isNotEmpty()) {
             compose.onNodeWithTag("tutorial-skip").performClick()
@@ -50,6 +69,53 @@ class StageStandbyUiTest {
         compose.onNodeWithTag("settings-section-standby").performClick()
     }
 
+    private fun startFixturePlayback() {
+        val audio = File(context.filesDir, "$fixtureId.wav")
+        fixtureAudio = audio
+        val samples = 8_000 * 60
+        val wav = ByteBuffer.allocate(44 + samples * 2).order(ByteOrder.LITTLE_ENDIAN)
+        wav.put("RIFF".toByteArray()).putInt(36 + samples * 2).put("WAVEfmt ".toByteArray())
+            .putInt(16).putShort(1).putShort(1).putInt(8000).putInt(16000).putShort(2).putShort(16)
+            .put("data".toByteArray()).putInt(samples * 2)
+        audio.writeBytes(wav.array())
+        val song = Track(fixtureId, "Standby UI fixture", fixtureArtist, durationMs = 60_000,
+            provider = "local", sourceUri = Uri.fromFile(audio).toString())
+        fixtureTrack = song
+        runBlocking {
+            val library = LibraryRepository(context)
+            library.upsertTracks(listOf(song))
+            fixturePlaylistId = library.createPlaylist("$fixtureId playlist")
+        }
+        lateinit var vm: EchoViewModel
+        compose.activityRule.scenario.onActivity { vm = ViewModelProvider(it)[EchoViewModel::class.java] }
+        fixtureVm = vm
+        compose.waitUntil(15_000) { vm.controller != null }
+        compose.activityRule.scenario.onActivity { vm.play(listOf(song), 0, false) }
+        compose.waitUntil(15_000) { vm.playing && vm.current?.mediaId == fixtureId }
+    }
+
+    private fun cleanFixture() {
+        val song = fixtureTrack ?: return
+        fixtureVm?.let { vm ->
+            compose.activityRule.scenario.onActivity {
+                vm.controller?.let { player -> player.pause(); player.clearMediaItems(); player.repeatMode = Player.REPEAT_MODE_OFF }
+            }
+        }
+        val libraryId = fixturePlaylistId
+        SQLiteDatabase.openDatabase(context.getDatabasePath("echo-library.db").path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
+            db.setForeignKeyConstraintsEnabled(true)
+            if (libraryId != null) db.delete("playlists", "id = ?", arrayOf(libraryId))
+            db.delete("tracks", "id = ?", arrayOf(song.id))
+            db.delete("artists", "name = ?", arrayOf(song.artist))
+            db.delete("albums", "artist = ?", arrayOf(song.artist))
+        }
+        fixtureAudio?.delete()
+        fixtureTrack = null
+        fixtureVm = null
+    }
+
+    @After fun restoreFixtureState() = cleanFixture()
+
     @Test fun settingsSectionsExpandAndCollapse() {
         dismissTutorialIfShown()
         compose.onNodeWithContentDescription("Settings").performClick()
@@ -57,45 +123,54 @@ class StageStandbyUiTest {
         compose.onNodeWithTag("stage-standby-open").assertDoesNotExist()
         expandStandby()
         compose.onNodeWithTag("stage-standby-open").assertIsDisplayed()
+        compose.onNodeWithTag("stage-standby-open").assertIsNotEnabled()
+        compose.onNodeWithTag("stage-standby-unavailable").assertIsDisplayed()
         compose.onNodeWithTag("settings-section-standby").performClick()
         compose.onNodeWithTag("stage-standby-open").assertDoesNotExist()
     }
 
-    @Test fun settingsStandbyReturnsToSameScreen() {
+    @Test fun settingsStandbyEntryIsDisabledWithoutPlayback() {
         dismissTutorialIfShown()
         compose.onNodeWithContentDescription("Settings").performClick()
         expandStandby()
-        compose.mainClock.advanceTimeBy(6_000)
         compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("stage-standby-open"))
-        compose.onNodeWithTag("stage-standby-open").performClick()
-        compose.onNodeWithTag("stage-standby-screen").assertIsDisplayed()
-        compose.activityRule.scenario.onActivity { it.standbyClock.recordInteraction(android.os.SystemClock.elapsedRealtime() - 600_000) }
-        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-        compose.activityRule.scenario.onActivity { assertTrue(it.standbyClock.idleFor(android.os.SystemClock.elapsedRealtime()) < 5_000) }
-        compose.onNodeWithTag("stage-standby-open").assertIsDisplayed()
+        compose.onNodeWithTag("stage-standby-open").assertIsNotEnabled()
+        compose.onNodeWithTag("stage-standby-unavailable").assertIsDisplayed()
     }
 
-    @Test fun touchExitsStandbyAndPausedPlaybackRemainsPaused() {
+    @Test fun standbyReturnsToSettingsDuringFixturePlayback() {
+        startFixturePlayback()
         dismissTutorialIfShown()
         compose.onNodeWithContentDescription("Settings").performClick()
         expandStandby()
-        compose.mainClock.advanceTimeBy(6_000)
         compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("stage-standby-open"))
-        compose.onNodeWithTag("stage-standby-open").performClick()
+        compose.onNodeWithTag("stage-standby-open").assertIsEnabled().performClick()
         compose.onNodeWithTag("stage-standby-screen").assertIsDisplayed()
-        compose.onNodeWithText("Playback is paused · tap or press any key to exit").assertIsDisplayed()
+        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithTag("stage-standby-open").assertIsEnabled()
+    }
+
+    @Test fun touchExitsStandbyDuringFixturePlayback() {
+        startFixturePlayback()
+        dismissTutorialIfShown()
+        compose.onNodeWithContentDescription("Settings").performClick()
+        expandStandby()
+        compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("stage-standby-open"))
+        compose.onNodeWithTag("stage-standby-open").assertIsEnabled().performClick()
+        compose.onNodeWithTag("stage-standby-screen").assertIsDisplayed()
+        compose.onNodeWithText("Tap or press any key to exit").assertIsDisplayed()
         compose.onNodeWithTag("stage-standby-screen").performTouchInput { click() }
         compose.onNodeWithTag("stage-standby-screen").assertDoesNotExist()
         compose.onNodeWithContentDescription("Settings").assertIsDisplayed()
     }
 
-    @Test fun accessibilityCustomActionExitsStandbyAndResetsIdleClock() {
+    @Test fun accessibilityCustomActionExitsStandbyDuringFixturePlayback() {
+        startFixturePlayback()
         dismissTutorialIfShown()
         compose.onNodeWithContentDescription("Settings").performClick()
         expandStandby()
-        compose.mainClock.advanceTimeBy(6_000)
         compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("stage-standby-open"))
-        compose.onNodeWithTag("stage-standby-open").performClick()
+        compose.onNodeWithTag("stage-standby-open").assertIsEnabled().performClick()
         val actions = compose.onNodeWithTag("stage-standby-screen").fetchSemanticsNode().config[SemanticsActions.CustomActions]
         compose.runOnIdle { assertTrue(actions.single { it.label == "Exit Standby" }.action()) }
         compose.onNodeWithTag("stage-standby-screen").assertDoesNotExist()
@@ -122,7 +197,7 @@ class StageStandbyUiTest {
         assertEquals(before, store.read())
     }
 
-    @Test fun automaticStandbyEntersOnIdleAndExitResetsClock() {
+    @Test fun automaticStandbyDoesNotEnterWithoutActivePlayback() {
         val store = StageStandbyPreferences(context)
         val before = store.read()
         try {
@@ -154,11 +229,11 @@ class StageStandbyUiTest {
                 val now = android.os.SystemClock.elapsedRealtime()
                 it.standbyClock.recordInteraction(now - 1_000_000L)
             }
-            compose.waitUntil(10_000) { compose.onAllNodesWithTag("stage-standby-screen").fetchSemanticsNodes().isNotEmpty() }
-            compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-            compose.activityRule.scenario.onActivity { assertTrue(it.standbyClock.idleFor(android.os.SystemClock.elapsedRealtime()) < 5_000) }
+            compose.mainClock.advanceTimeBy(6_000)
+            compose.onNodeWithTag("stage-standby-screen").assertDoesNotExist()
             compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("stage-standby-open"))
-            compose.onNodeWithTag("stage-standby-open").assertIsDisplayed()
+            compose.onNodeWithTag("stage-standby-open").assertIsDisplayed().assertIsNotEnabled()
+            compose.onNodeWithTag("stage-standby-unavailable").assertIsDisplayed()
         } finally { store.update(before) }
     }
 

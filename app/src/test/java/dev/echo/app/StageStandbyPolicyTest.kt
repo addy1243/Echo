@@ -5,6 +5,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StageStandbyPolicyTest {
+    @Test fun standbyRequiresAPlayingSong() {
+        assertFalse(shouldShowStageStandby(hasCurrentSong = false, activelyPlaying = true))
+        assertFalse(shouldShowStageStandby(hasCurrentSong = true, activelyPlaying = false))
+        assertTrue(shouldShowStageStandby(hasCurrentSong = true, activelyPlaying = true))
+    }
+
     @Test fun autoStandbyRequiresOptInForegroundAndFullIdleTimeout() {
         val settings = StageStandbySettings(automaticEnabled = true, idleTimeoutMs = 10_000)
         assertFalse(shouldEnterStageStandby(settings, 10_000, appForeground = false, charging = true))

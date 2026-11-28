@@ -2,6 +2,13 @@
 
 Keep the three most recent completed work sessions only. Add a concise entry after a session is complete, including its date, what changed, executed evidence, and the next improvement. Do not copy proposed or failed checks as if they passed.
 
+## 2026-11-28 — Prevent empty Standby
+
+- Promoted focused Windows video and audio/video caching to production mode, retaining audio-only playback and connected-device guards. Guarded Android foreground Standby and Windows Stage screensaver entry against empty, paused or reconnecting playback; disabled manual controls with an explanation. Android system Dream exits when its local session has no actively playing song or cannot connect; its preview also exits without playback.
+- **Executed evidence:** Desktop suite, Android debug compilation, and focused Standby/player unit tests passed. Stage app and instrumentation APK assembled. The desktop suite and synthetic VLC cache checks passed; a muted generated-audio VLC check using the production video-capable player passed queue and offline-audio flows. Five targeted Stage UI tests passed on a dedicated read-only emulator, covering no-playback manual/automatic blocking and active-fixture entry, touch and accessibility exit. The emulator was shut down. An isolated 0.2.7.1 integration candidate compiled for desktop and Android; its desktop suite and focused queue restore and Spotify tests passed, but is not yet incorporated into the PR.
+- **Remaining limits:** Natural system Dream and no-session preview, native Windows screensaver behavior, real video continuity, buffering and complete production acceptance are unverified. Production-video integration is a candidate pending native acceptance; no release or merge to main.
+- **Next improvement:** Integrate the release fixes and perform native Windows and emulator acceptance on the combined commit.
+
 ## 2026-11-28 — Opt-in cache and video buffering mitigation
 
 - Added default-off Windows media-cache Settings, audio-only or audio/video Stage choices, +1/+2 preparation priority, validated live video capture, cancellation at opt-out, independent-group guards, and embedded-player creation for Stage transfers. Stage cancels speculative transfers while video is loading or network-backed to reduce competition; normal Windows currently supports the audio cache only.
@@ -15,10 +22,3 @@ Keep the three most recent completed work sessions only. Add a concise entry aft
 - **Executed evidence:** Full `:desktop:test` passed. Deterministic fake-origin tests cover local GET/HEAD/ranges, overlapping upstream requests, pin lifecycle, and blocked cleanup. The synthetic native VLC check passed with dummy output, an origin disabled after capture, a local range probe, and same-player playback; this does not prove VLC itself fetched the probed local range. Independent review found and verified the cleanup fix.
 - **Remaining limits:** Real YouTube playback, audible handoff, exact download rates, and weak-network continuity remain unverified. A badge alone cannot prove a different cache preparation is the exact stream representation; only an eligible original stream capture is adopted. Streamed video or an outstanding upstream read retains the conservative rate.
 - **Next improvement:** Restart Stage and verify the current-song capture and next-song rate with real recordings; inspect video and seek behavior without disrupting audio.
-
-## 2026-11-28 — Stage adaptive preparation speed
-
-- Shared audio/video preparation now uses a 128 KiB/s ceiling while active playback is network-backed or its source is unknown, and up to 2 MiB/s when paused or all active VLC inputs are local. A video using a streamed audio slave remains network-backed. Buffering still pauses background reads, and in-flight pacing changes without restarting the request.
-- **Executed evidence:** Full `:desktop:test` and the generated-audio `:desktop:stageStreamCaptureNativeCheck` passed. Focused deterministic tests cover both cache types, transitions in each direction, local video with audio slaves, buffering, and pacing without accumulated credit. Independent review found no confirmed adaptive-pacing defect.
-- **Remaining limits:** No live bandwidth or playback-continuity acceptance was performed; rates are source-based ceilings, not bandwidth measurements. The faster paused rate can compete with separate connected Move/group preparation. A blocked socket read can finish after buffering begins. The currently running Stage process predates this change.
-- **Next improvement:** Restart the isolated Stage preview and verify rates and uninterrupted audio/video on real strong and weak connections, including cached audio paired with streamed video.

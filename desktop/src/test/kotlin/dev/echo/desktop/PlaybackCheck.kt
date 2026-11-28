@@ -24,7 +24,7 @@ fun main(args: Array<String>) = runBlocking {
     }
     val histories = mutableListOf<String>()
     val provider = YouTubeProvider()
-    val playback = DesktopPlayback(provider) { _, event, listened -> histories += "$event:$listened" }
+    val playback = DesktopPlayback(provider, stageVideoEnabled = "--video-capable" in args) { _, event, listened -> histories += "$event:$listened" }
     fun tracePlaybackState(phase: String) {
         val state = playback.state.value
         val errorType = when {
@@ -38,7 +38,7 @@ fun main(args: Array<String>) = runBlocking {
             "ended=${state.ended} positionMs=${state.positionMs} durationMs=${state.durationMs} errorType=$errorType")
     }
     try {
-        playback.setVolume(0.05f)
+        playback.setVolume(if ("--video-capable" in args) 0f else 0.05f)
         val track = Track("local:check", "Desktop playback check", "Echo", durationMs = 12_000, sourceUri = file.toURI().toString())
         tracePlaybackState("before-first-play")
         playback.play(listOf(track, track))

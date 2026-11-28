@@ -6,6 +6,13 @@ import org.junit.Test
 import java.nio.file.Files
 
 class StageScreensaverTest {
+    @Test fun screensaverRequiresAPlayingFocusedTrack() {
+        assertTrue(stageScreensaverPlaybackReady(hasTrack = true, playing = true, reconnecting = false))
+        assertFalse(stageScreensaverPlaybackReady(hasTrack = false, playing = true, reconnecting = false))
+        assertFalse(stageScreensaverPlaybackReady(hasTrack = true, playing = false, reconnecting = false))
+        assertFalse(stageScreensaverPlaybackReady(hasTrack = true, playing = true, reconnecting = true))
+    }
+
     @Test fun idleClockHandlesUnsignedTickWrap() {
         assertEquals(32L, windowsIdleMillis(0xFFFFFFF0.toInt(), 0x10))
         assertEquals(5_000L, windowsIdleMillis(10_000, 15_000))

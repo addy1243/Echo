@@ -16,6 +16,10 @@ import dev.echo.data.firebase.ConnectedPlayerSnapshot
 import dev.echo.data.firebase.GroupV2Status
 
 class PlayerDeckModelTest {
+    @Test fun localMediaItemCountsAsCurrentEvenWhenLibraryTrackIsMissing() {
+        assertTrue(entry("local").presentation.copy(localMediaItemId = "youtube:unlisted").hasCurrentSong)
+    }
+
     @Test fun carouselSentinelsWrapUsingStablePlayerKeys() {
         val entries = listOf(entry("local"), entry("phone:session-a"), entry("laptop:session-b"))
 
@@ -98,7 +102,7 @@ class PlayerDeckModelTest {
             selectedRemoteId = null, remote = null, group = null, current = null,
             title = "Choose a song", artist = "", artworkUri = null, playing = false, buffering = false,
             positionMs = 0, durationMs = 0, remoteEnabled = false, reconnecting = false,
-            independentDevices = emptyList(),
+            independentDevices = emptyList(), localMediaItemId = null,
         ),
     )
 }
