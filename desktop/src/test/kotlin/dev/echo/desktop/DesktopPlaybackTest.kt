@@ -8,6 +8,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DesktopPlaybackTest {
+    @Test fun localFocusedVideoIsProductionEnabledAndStageRequiresLiveLocalPlayback() {
+        assertTrue(desktopLocalVideoEligible(stagingMode = false, stageLiveLocal = false,
+            remoteFocused = false, focusedGroupPresent = false))
+        assertTrue(desktopLocalVideoEligible(stagingMode = true, stageLiveLocal = true,
+            remoteFocused = false, focusedGroupPresent = false))
+        assertFalse(desktopLocalVideoEligible(stagingMode = true, stageLiveLocal = false,
+            remoteFocused = false, focusedGroupPresent = false))
+        assertFalse(desktopLocalVideoEligible(stagingMode = false, stageLiveLocal = false,
+            remoteFocused = true, focusedGroupPresent = false))
+        assertFalse(desktopLocalVideoEligible(stagingMode = false, stageLiveLocal = false,
+            remoteFocused = false, focusedGroupPresent = true))
+    }
+
+    @Test fun audioOnlyVlcMediaAlwaysDisablesVideo() {
+        assertEquals(listOf(":no-video"), desktopAudioOnlyMediaOptions())
+    }
+
     @Test fun videoSwitchRejectsChangedOccurrenceOrTransportSnapshot() {
         val track = song("aaaaaaaaaaa")
         val captured = DesktopPlaybackState(listOf(track, track), index = 0, occurrence = 4, transportRevision = 7)

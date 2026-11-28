@@ -93,10 +93,15 @@ class EchoDreamService : DreamService() {
 
     private fun connectToPlaybackSession() {
         if (controller != null || controllerFuture != null) return
-        if (!attached || connectionAttempts >= 5) return
+        if (!attached) return
+        if (connectionAttempts >= 5) {
+            finish()
+            return
+        }
         connectionAttempts++
         if (!echoPlaybackServiceRunning) {
-            handler.postDelayed(::connectToPlaybackSession, 1_000L)
+            if (connectionAttempts < 5) handler.postDelayed(::connectToPlaybackSession, 1_000L)
+            else finish()
             return
         }
         val hints = Bundle().apply { putBoolean(DREAM_CONTROLLER_HINT, true) }
@@ -134,6 +139,7 @@ class EchoDreamService : DreamService() {
                         controllerFuture = null
                         if (attached) {
                             if (connectionAttempts < 5) handler.postDelayed(::connectToPlaybackSession, 1_000L)
+                            else finish()
                         }
                     }
                 }
@@ -149,6 +155,10 @@ class EchoDreamService : DreamService() {
 
     private fun renderMetadata() {
         val player = controller ?: return
+        if (!shouldShowStageStandby(player.currentMediaItem != null, player.isPlaying)) {
+            finish()
+            return
+        }
         if (getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true) {
             title.text = getString(R.string.dream_echo)
             artist.text = getString(R.string.dream_playback_continues)

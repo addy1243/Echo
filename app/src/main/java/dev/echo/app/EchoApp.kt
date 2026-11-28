@@ -122,7 +122,8 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
     val appearance by vm.settings.appearance.collectAsStateWithLifecycle("artwork")
     val accentName by vm.settings.guiAccent.collectAsStateWithLifecycle("violet")
     val brightness by vm.settings.brightness.collectAsStateWithLifecycle("dark")
-    val focusedArtwork = rememberPlayerPresentation(vm, tracks).artworkUri
+    val focusedPlayer = rememberPlayerPresentation(vm, tracks)
+    val focusedArtwork = focusedPlayer.artworkUri
     val artworkAccent = rememberArtworkAccent(focusedArtwork)
     val accent = if (appearance == "artwork") artworkAccent else when (accentName) {
         "teal" -> Color(0xFF55C9B1); "rose" -> Color(0xFFE78EA8); "amber" -> Color(0xFFFFC15A)
@@ -169,13 +170,14 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
     var standbySettings by remember(standbyPreferences) { mutableStateOf(standbyPreferences.read()) }
     val activity = context as? MainActivity
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(route, standbySettings, activity, lifecycle, showTutorial, tutorialVisible) {
+    LaunchedEffect(route, standbySettings, activity, lifecycle, showTutorial, tutorialVisible, focusedPlayer.hasCurrentSong, focusedPlayer.playing && !focusedPlayer.reconnecting) {
         if (activity == null || !standbySettings.automaticEnabled) return@LaunchedEffect
         while (true) {
             val now = android.os.SystemClock.elapsedRealtime()
             val foreground = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) && activity.hasWindowFocus()
             activity.standbyClock.setForeground(foreground, now)
             if (foreground && route != "stage-standby" && (!showTutorial || !tutorialVisible) &&
+                shouldShowStageStandby(focusedPlayer.hasCurrentSong, focusedPlayer.playing && !focusedPlayer.reconnecting) &&
                 activity.standbyClock.shouldEnter(
                     standbySettings,
                     now,
@@ -280,13 +282,21 @@ fun EchoApp(vm: EchoViewModel, showTutorial: Boolean = true) {
                                 val id = back.arguments?.getString("id").orEmpty()
                                 PlaylistScreen(vm, id, playlists.find { it.id == id }, tracks, playlists, favorites)
                             }
-                            composable("player") { FullPlayer(vm, tracks, playlists, favorites, openStandby = { nav.navigate("stage-standby") }) { nav.popBackStack() } }
-                            composable("stage-standby") { StageStandbyScreen(vm) {
+                            composable("player") { FullPlayer(vm, tracks, playlists, favorites, openStandby = {
+                                if (shouldShowStageStandby(focusedPlayer.hasCurrentSong, focusedPlayer.playing && !focusedPlayer.reconnecting)) nav.navigate("stage-standby")
+                            }) { nav.popBackStack() } }
+                            composable("stage-standby") {
+                                LaunchedEffect(Unit) {
+                                    if (!shouldShowStageStandby(focusedPlayer.hasCurrentSong, focusedPlayer.playing && !focusedPlayer.reconnecting)) nav.popBackStack()
+                                }
+                                StageStandbyScreen(vm) {
                                 activity?.standbyClock?.recordInteraction(android.os.SystemClock.elapsedRealtime())
                                 nav.popBackStack()
                             } }
                             composable("profile") { ProfileScreen(vm) }
-                            composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }, { nav.navigate("profile") }, { nav.navigate("spotify-data") }, { nav.navigate("stage-standby") }, standbySettings) { value -> standbySettings = value; standbyPreferences.update(value); activity?.standbyClock?.recordInteraction(android.os.SystemClock.elapsedRealtime()) } }
+                            composable("settings") { SettingsScreen(vm, { nav.navigate("history") }, { nav.navigate("downloads") }, { nav.navigate("licenses") }, { nav.navigate("profile") }, { nav.navigate("spotify-data") }, {
+                                if (shouldShowStageStandby(focusedPlayer.hasCurrentSong, focusedPlayer.playing && !focusedPlayer.reconnecting)) nav.navigate("stage-standby")
+                            }, shouldShowStageStandby(focusedPlayer.hasCurrentSong, focusedPlayer.playing && !focusedPlayer.reconnecting), standbySettings) { value -> standbySettings = value; standbyPreferences.update(value); activity?.standbyClock?.recordInteraction(android.os.SystemClock.elapsedRealtime()) } }
                             composable("licenses") { LicensesScreen() }
                             composable("history") { HistoryScreen(vm) }
                             composable("downloads") { DownloadsScreen(vm) }
@@ -790,7 +800,7 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
     }) } } }, confirmButton = { TextButton(onClick = { match = null }) { Text("Cancel") } }) }
 }
 
-@Composable private fun SettingsScreen(vm: EchoViewModel, openHistory: () -> Unit, openDownloads: () -> Unit, openLicenses: () -> Unit, openProfile: () -> Unit, openSpotifyData: () -> Unit, openStageStandby: () -> Unit, standbySettings: StageStandbySettings, setStandbySettings: (StageStandbySettings) -> Unit) {
+@Composable private fun SettingsScreen(vm: EchoViewModel, openHistory: () -> Unit, openDownloads: () -> Unit, openLicenses: () -> Unit, openProfile: () -> Unit, openSpotifyData: () -> Unit, openStageStandby: () -> Unit, canOpenStandby: Boolean, standbySettings: StageStandbySettings, setStandbySettings: (StageStandbySettings) -> Unit) {
     val updateStatus by vm.updater.status.collectAsStateWithLifecycle()
     val connected by vm.spotify.connected.collectAsStateWithLifecycle()
     var sourcePriority by remember { mutableStateOf(vm.sources.priority) }
@@ -870,8 +880,8 @@ private data class PublicPlaylistPreview(val playlists: List<dev.echo.data.spoti
         item { SettingsSectionHeader("Standby", "Echo Standby and Android Dream", "standby" in expanded) { toggle("standby") } }
         if ("standby" in expanded) {
         run {
-            item { OutlinedButton(onClick = openStageStandby, modifier = Modifier.testTag("stage-standby-open")) { Text("Open Standby screen") } }
-            item { Text("Cinema in landscape, Ambient in portrait. Standby starts only while Echo is foregrounded.", style = MaterialTheme.typography.bodySmall) }
+            item { OutlinedButton(onClick = openStageStandby, enabled = canOpenStandby, modifier = Modifier.testTag("stage-standby-open")) { Text("Open Standby screen") } }
+            item { Text("Play a song to use Standby. Automatic entry requires Echo in the foreground.", modifier = Modifier.testTag("stage-standby-unavailable"), style = MaterialTheme.typography.bodySmall) }
             item {
                 val context = LocalContext.current
                 val dreamSettingsIntent = remember { Intent(android.provider.Settings.ACTION_DREAM_SETTINGS) }

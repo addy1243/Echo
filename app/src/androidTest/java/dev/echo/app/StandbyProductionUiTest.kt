@@ -1,6 +1,7 @@
 package dev.echo.app
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -17,7 +18,7 @@ class StandbyProductionUiTest {
     private val compose = createAndroidComposeRule<MainActivity>()
     @get:Rule val standbyUiRules = RuleChain.outerRule(StandbyUiSafetyRule()).around(compose)
 
-    @Test fun normalBuildExposesStandbyAndReturnsToSettings() {
+    @Test fun normalBuildShowsStandbyDisabledWithoutActivePlayback() {
         assumeFalse("This check targets the normal debug build", BuildConfig.STAGING)
         if (compose.onAllNodesWithTag("tutorial-skip").fetchSemanticsNodes().isNotEmpty()) {
             compose.onNodeWithTag("tutorial-skip").performClick()
@@ -25,11 +26,8 @@ class StandbyProductionUiTest {
         compose.onNodeWithContentDescription("Settings").performClick()
         compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("settings-section-standby"))
         compose.onNodeWithTag("settings-section-standby").performClick()
-        compose.mainClock.advanceTimeBy(6_000)
         compose.onNodeWithTag("settings-screen").performScrollToNode(hasTestTag("stage-standby-open"))
-        compose.onNodeWithTag("stage-standby-open").performClick()
-        compose.onNodeWithTag("stage-standby-screen").assertIsDisplayed()
-        compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-        compose.onNodeWithTag("stage-standby-open").assertIsDisplayed()
+        compose.onNodeWithTag("stage-standby-open").assertIsDisplayed().assertIsNotEnabled()
+        compose.onNodeWithTag("stage-standby-unavailable").assertIsDisplayed()
     }
 }

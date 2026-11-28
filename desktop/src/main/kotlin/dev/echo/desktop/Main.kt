@@ -222,8 +222,8 @@ internal fun launchDesktop(stagingMode: Boolean) = application {
     val stageMediaCache = remember(provider, stagingMode) {
         runCatching { DesktopStageMediaCache(provider, stageTransferGate) }.getOrNull()
     }
-    val stageVideoCache = remember(provider, stagingMode) {
-        if (stagingMode) runCatching { DesktopStageVideoCache(provider, stageTransferGate) }.getOrNull() else null
+    val stageVideoCache = remember(provider) {
+        runCatching { DesktopStageVideoCache(provider, stageTransferGate) }.getOrNull()
     }
     DisposableEffect(stageMediaCache, stageVideoCache) {
         onDispose {
@@ -233,7 +233,7 @@ internal fun launchDesktop(stagingMode: Boolean) = application {
     }
     val player = remember { store?.let { DesktopPlayback(provider, offline,
         recoveryFile = it.file.resolveSibling("playback-v2-recovery.json").toFile(),
-        stageVideoEnabled = stagingMode,
+        stageVideoEnabled = true,
         stageMediaCache = stageMediaCache,
         stageVideoCache = stageVideoCache,
         findLocalTrack = { key -> it.snapshot().tracks.firstOrNull { track -> safeEngineRecordingId(track) == key } }) { track, event, listened ->
@@ -309,7 +309,7 @@ internal fun launchDesktop(stagingMode: Boolean) = application {
                 windowVisible && !windowState.isMinimized, stageSaverMode, { stageSaverModeState.value },
                 ::enterStageSaver, ::exitStageSaver, videoFullscreen != null,
                 onEnterVideoFullscreen = {
-                    if (stagingMode && stageSaverMode == null && videoFullscreen == null) {
+                    if (stageSaverMode == null && videoFullscreen == null) {
                         val foreground = StageForegroundWindow.captureExternal()
                         try { videoFullscreen = StageWindowFullscreen.enter(window) }
                         finally { foreground?.restoreIfEchoForeground() }
@@ -588,21 +588,22 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     val presentedPosition = presentation.positionMs
     val presentedDuration = presentation.durationMs
     val stageSaverCanvas = remember(player) { java.awt.Canvas() }
-    val localStageVideo = stageLiveLocal && !remoteFocused && focusedGroup == null
+    val localFocusedVideo = desktopLocalVideoEligible(stagingMode, stageLiveLocal, remoteFocused, focusedGroup != null)
+    val localStageVideo = stagingMode && stageLiveLocal && !remoteFocused && focusedGroup == null
     var focusedVideoRequested by remember { mutableStateOf(false) }
     var focusedVideoAttemptedOccurrence by remember { mutableStateOf<Long?>(null) }
-    LaunchedEffect(localStageVideo, focusedVideoRequested, stageSaverMode) {
-        player.setStageVideoPreparationPriority(localStageVideo && (focusedVideoRequested || stageSaverMode != null))
+    LaunchedEffect(localFocusedVideo, focusedVideoRequested, stageSaverMode) {
+        player.setStageVideoPreparationPriority(localFocusedVideo && (focusedVideoRequested || stageSaverMode != null))
     }
-    LaunchedEffect(localStageVideo) {
-        if (!localStageVideo && focusedVideoRequested) {
+    LaunchedEffect(localFocusedVideo) {
+        if (!localFocusedVideo && focusedVideoRequested) {
             focusedVideoRequested = false
             val settled = player.state.first { !it.videoLoading }
             if (settled.videoMode && stageSaverMode == null) player.setVideoMode(false)
         }
     }
-    val stageVideoView = stagingMode && stageSaverMode == null && stageSaverCanvasRestored &&
-        fullPlayerOpen && localStageVideo && focusedVideoRequested
+    val stageVideoView = stageSaverMode == null && stageSaverCanvasRestored &&
+        fullPlayerOpen && localFocusedVideo && focusedVideoRequested
     val canLoadFocusedVideo = stageVideoView && !closingFullPlayer && !downloads.offlineOnly
     LaunchedEffect(canLoadFocusedVideo, playback.occurrence) {
         if (!canLoadFocusedVideo) return@LaunchedEffect
@@ -636,19 +637,20 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
     val stageVideoAllowed by rememberUpdatedState(localStageVideo && !downloads.offlineOnly &&
         stageScreensaverPreferences?.style == StageScreensaverStyle.CINEMA)
     val stageVideoOccurrence = playback.occurrence.takeIf { localStageVideo && playback.current?.provider == "youtube" }
+    val stageSaverPlaybackReady = stageScreensaverPlaybackReady(
+        hasTrack = presentedTrack != null,
+        playing = if (remoteFocused || focusedGroup != null) presentedPlaying else playback.playing,
+        reconnecting = presentation.reconnecting,
+    )
     fun startStageScreensaver() {
         if (!stagingMode || currentStageSaverMode() != null || !stageSaverCanvasRestored ||
-            !windowsInputDesktopInteractive()) return
+            !windowsInputDesktopInteractive() || !stageSaverPlaybackReady) return
         restoreVideoFullscreenOccurrence = playback.occurrence.takeIf { stageVideoView && videoFullscreen }
         onExitVideoFullscreen()
         saverDismissalQueued = false
         saverEntryInputTick = windowsLastInputTick()
         saverEntryPointer = MouseInfo.getPointerInfo()?.location
         saverStartedAtNanos = System.nanoTime()
-        if (!presentedPlaying || presentedTrack == null || presentation.reconnecting || (localStageVideo && playback.retrying)) {
-            onEnterStageSaver(StageSaverMode.MAIN_WINDOW)
-            return
-        }
         fullPlayerBeforeStageSaver = fullPlayerOpen
         queueOpenBeforeStageSaver = queueOpen
         videoModeBeforeStageSaver = playback.videoMode
@@ -1261,9 +1263,8 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                                             onCheckedChange = preferences::updateMediaCachingEnabled, enabled = mediaCacheAvailable)
                                     }
                                     if (!mediaCacheAvailable) Text("Media cache is unavailable. Playback can still stream.", color = MaterialTheme.colorScheme.error)
-                                    else if (stagingMode && !videoCacheAvailable) Text("Video caching is unavailable; audio caching can still work.", color = MaterialTheme.colorScheme.error)
-                                    Text(if (stagingMode) "Prepare temporary files for nearby songs. Audio only saves video bandwidth; video can still stream."
-                                        else "Prepare temporary audio files for nearby songs. Video caching is available in Stage.",
+                                    else if (!videoCacheAvailable) Text("Video caching is unavailable; audio caching can still work.", color = MaterialTheme.colorScheme.error)
+                                    Text("Prepare temporary files for nearby songs. Audio only saves video bandwidth; video can still stream.",
                                         color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         FilterChip(!preferences.stageVideoCachingEnabled || !videoCacheAvailable,
@@ -1273,7 +1274,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                                     }
                                 }
                                 stageScreensaverPreferences?.let {
-                                    StageScreensaverSettings(it, !stageSaverActive && stageSaverCanvasRestored, ::startStageScreensaver)
+                                    StageScreensaverSettings(it, !stageSaverActive && stageSaverCanvasRestored && stageSaverPlaybackReady, ::startStageScreensaver)
                                 }
                             },
                             onImport = { importInitialFilePicker = true; showImport = true },
@@ -1599,7 +1600,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
             DesktopFullPlayer(Modifier.fillMaxWidth(),
             playerOpen = fullPlayerOpen,
             stageBufferStatus = stageBufferStatus.takeIf {
-                stagingMode && stageLiveLocal && !remoteFocused && focusedGroup == null &&
+                (!stagingMode || stageLiveLocal) && preferences.mediaCachingEnabled && !remoteFocused && focusedGroup == null &&
                     stageSaverMode == null
             },
             track = presentedTrack, title = presentedTitle, artist = presentedArtist,
@@ -1640,12 +1641,13 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                 if (stageSimulator != null && !stageLiveLocal) stageSimulator.shuffleLocalUpcoming() else player.shuffleUpcoming() } },
             onLocalSleep = { if (focusedGroup == null) if (stageSimulator != null && !stageLiveLocal) stageSimulator.setLocalSleepTimer(it)
                 else player.setSleepTimer(it) },
-            videoCanvas = player.videoCanvas, videoMode = playback.videoMode && !remoteFocused && focusedGroup == null && stagingMode && stageLiveLocal,
-            videoLoading = playback.videoLoading && !remoteFocused && focusedGroup == null && stagingMode && stageLiveLocal,
+            videoCanvas = player.videoCanvas, videoMode = playback.videoMode && localFocusedVideo,
+            videoLoading = playback.videoLoading && localFocusedVideo,
             videoSurfaceMounted = playback.videoMode || playback.videoLoading || !stageSaverCanvasRestored,
             videoSurfaceReturning = !stageSaverCanvasRestored,
             stageCinemaActive = stageCinemaActive,
             stageSaverAvailable = stagingMode && stageSaverCanvasRestored,
+            stageSaverPlaybackReady = stageSaverPlaybackReady,
             onStartStageSaver = ::startStageScreensaver,
             videoError = when {
                 stagingMode && !stageLiveLocal -> "Select a real YouTube song to test video in Stage"
@@ -1654,7 +1656,7 @@ private fun DesktopApp(store: DesktopLibrary, provider: YouTubeProvider, player:
                 stageVideoView && playback.current?.provider != "youtube" -> "No video is available for this recording."
                 else -> playback.videoError
             },
-            videoEnabled = (stagingMode && stageLiveLocal && playback.current?.provider == "youtube") && !downloads.offlineOnly,
+            videoEnabled = localFocusedVideo && playback.current?.provider == "youtube" && !downloads.offlineOnly,
             onToggleVideo = {
                 if (focusedVideoRequested || playback.videoMode) showStageArtwork()
                 else {
@@ -1840,7 +1842,7 @@ private fun DesktopFullPlayer(
     onLocalVolume: (Float) -> Unit, onLocalRepeat: () -> Unit, onLocalShuffle: () -> Unit, onLocalSleep: (Int?) -> Unit,
     videoCanvas: java.awt.Canvas, videoMode: Boolean, videoLoading: Boolean, videoSurfaceMounted: Boolean,
     videoSurfaceReturning: Boolean,
-    stageCinemaActive: Boolean, stageSaverAvailable: Boolean, onStartStageSaver: () -> Unit,
+    stageCinemaActive: Boolean, stageSaverAvailable: Boolean, stageSaverPlaybackReady: Boolean, onStartStageSaver: () -> Unit,
     videoError: String?, videoEnabled: Boolean,
     onToggleVideo: () -> Unit,
     cinemaVideo: Boolean, cinemaOccurrence: Long, onCinemaSeek: (Long, Long) -> Unit,
@@ -1894,7 +1896,7 @@ private fun DesktopFullPlayer(
                             color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
                     }
                     if (!stageCinemaActive && stageSaverAvailable && track != null) {
-                        IconButton(onClick = onStartStageSaver, modifier = Modifier.semantics {
+                        IconButton(onClick = onStartStageSaver, enabled = stageSaverPlaybackReady, modifier = Modifier.semantics {
                             contentDescription = "Start screensaver"
                         }) { Icon(Icons.Default.Fullscreen, contentDescription = null) }
                     }

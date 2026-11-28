@@ -56,6 +56,12 @@ internal fun DesktopPlaybackState.canEnableFocusedVideo(expectedOccurrence: Long
     occurrence == expectedOccurrence && occurrence != attemptedOccurrence && current?.provider == "youtube" &&
         !loading && !videoLoading && !videoMode && !ended && error == null
 
+internal fun desktopLocalVideoEligible(stagingMode: Boolean, stageLiveLocal: Boolean,
+    remoteFocused: Boolean, focusedGroupPresent: Boolean): Boolean =
+    (!stagingMode || stageLiveLocal) && !remoteFocused && !focusedGroupPresent
+
+internal fun desktopAudioOnlyMediaOptions(): List<String> = listOf(":no-video")
+
 internal fun desktopVideoSwitchError(currentError: String?, recoveringVideoFailure: Boolean): String? =
     if (recoveringVideoFailure) currentError else null
 
@@ -730,7 +736,7 @@ class DesktopPlayback internal constructor(
                     override fun error(mediaPlayer: MediaPlayer) { ready.completeExceptionally(IllegalStateException("VLC could not prepare ${track.title}")) }
                 })
                 stagedPlayer.audio().setMute(true)
-                check(stagedPlayer.media().play(stagedSource.uri)) { "VLC could not prepare ${track.title}" }
+                check(stagedPlayer.media().play(stagedSource.uri, ":no-video")) { "VLC could not prepare ${track.title}" }
                 withTimeout(20_000) { ready.await() }
                 stagedPlayer.controls().setPause(true)
                 awaitNativePaused(stagedPlayer)
@@ -1031,7 +1037,7 @@ class DesktopPlayback internal constructor(
     private suspend fun playNativePaused(
         native: MediaPlayer,
         uri: String,
-        options: List<String> = emptyList(),
+        options: List<String> = desktopAudioOnlyMediaOptions(),
         requireAudioTrack: Boolean = false,
         startPositionMs: Long = 0,
         isCurrent: () -> Boolean = { true },
@@ -1363,17 +1369,17 @@ class DesktopPlayback internal constructor(
                                 }
                             }
                             activeVideoRequiresAudioSlave = false
-                            playNativePaused(native, replacementVideo!!.uri, requireAudioTrack = true,
+                            playNativePaused(native, replacementVideo!!.uri, videoMediaOptions(null), requireAudioTrack = true,
                                 startPositionMs = position, isCurrent = ::isCurrent)
                         }
-                    } else playNativePaused(native, previousAudioLocator, startPositionMs = position)
+                    } else playNativePaused(native, previousAudioLocator, desktopAudioOnlyMediaOptions(), startPositionMs = position)
                 } catch (error: Throwable) {
                     replacementVideo?.close(); replacementVideo = null
                     replacementVideoLease?.close(); replacementVideoLease = null
                     if (!isCurrent()) return@coroutineScope false
                     embedded.videoSurface().set(videoSurface)
                     try {
-                        val oldOptions = videoMediaOptions(oldAudioSlave)
+                        val oldOptions = if (snapshot.videoMode) videoMediaOptions(oldAudioSlave) else desktopAudioOnlyMediaOptions()
                         withContext(NonCancellable) { playNativePaused(native, oldMediaSource, oldOptions, startPositionMs = position) }
                     }
                     catch (restoreError: Throwable) {
@@ -1535,7 +1541,7 @@ class DesktopPlayback internal constructor(
                             try {
                                 native.videoSurface().set(null)
                                 val restorePosition = state.value.positionMs.coerceAtLeast(0)
-                                playNativePaused(native, audioUri ?: error("Audio source is unavailable"), startPositionMs = restorePosition)
+                                playNativePaused(native, audioUri ?: error("Audio source is unavailable"), desktopAudioOnlyMediaOptions(), startPositionMs = restorePosition)
                                 val latestPosition = state.value.positionMs.coerceAtLeast(0)
                                 if (latestPosition != restorePosition) native.controls().setTime(latestPosition)
                                 native.controls().setPause(!wantsPlaying)
@@ -1720,7 +1726,7 @@ class DesktopPlayback internal constructor(
                 val native = nativePlayer(ticket)
                 native.audio().setVolume((state.value.volume * 100).toInt())
                 // Native callbacks are queued onto this dispatcher after the loading flag is cleared.
-                check(if (wantsPlaying) native.media().play(locator) else native.media().play(locator, ":start-paused")) { "VLC could not start playback" }
+                check(if (wantsPlaying) native.media().play(locator, ":no-video") else native.media().play(locator, ":no-video", ":start-paused")) { "VLC could not start playback" }
                 if (requestedPositionMs > 0) native.controls().setTime(requestedPositionMs)
                 update { it.copy(loading = false) }
             } catch (cancelled: CancellationException) { throw cancelled }

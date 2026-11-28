@@ -109,6 +109,7 @@ tasks.register<JavaExec>("playbackCheck") {
     mainClass.set("dev.echo.desktop.PlaybackCheckKt")
     jvmArgs("--add-modules=jdk.httpserver")
     if (providers.gradleProperty("echoLiveYouTube").orNull == "true") args("--youtube")
+    if (providers.gradleProperty("echoVideoCapablePlayback").orNull == "true") args("--video-capable")
     if (providers.gradleProperty("echoPackagedRuntimeCheck").orNull == "true") {
         providers.gradleProperty("desktopJavaHome").orNull?.let { executable = "$it/bin/java.exe" }
         doFirst {

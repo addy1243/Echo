@@ -105,7 +105,7 @@ internal class StageScreensaverPreferences(private val file: Path) {
 internal fun StageScreensaverSettings(preferences: StageScreensaverPreferences, canStart: Boolean, onStart: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Stage screensaver", style = MaterialTheme.typography.titleMedium)
-        Text("Show the current song full screen, or open Echo full screen when nothing is playing.",
+        Text("Show the playing song full screen.",
             color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             StageScreensaverStyle.entries.forEach { style ->
@@ -149,7 +149,7 @@ internal fun StageScreensaverSettings(preferences: StageScreensaverPreferences, 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(enabled = canStart, onClick = onStart) { Text("Start now") }
         }
-        if (!canStart) Text("The screensaver is already active.",
+        if (!canStart) Text("Start playback or close the active screensaver to use this control.",
             color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         preferences.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     }
@@ -184,6 +184,9 @@ internal fun stageScreensaverAutoStartAllowed(
     idleLimitMillis: Long,
     displayRequired: () -> Boolean? = ::windowsDisplayRequired,
 ): Boolean = idleMillis != null && idleMillis >= idleLimitMillis && displayRequired() == false
+
+internal fun stageScreensaverPlaybackReady(hasTrack: Boolean, playing: Boolean, reconnecting: Boolean): Boolean =
+    hasTrack && playing && !reconnecting
 
 private interface StagePowerProfile : StdCallLibrary {
     fun CallNtPowerInformation(level: Int, input: Pointer?, inputSize: Int, output: IntByReference, outputSize: Int): Int
