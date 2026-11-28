@@ -208,3 +208,17 @@ tasks.register<JavaExec>("stageStreamCaptureNativeCheck") {
     mainClass.set("dev.echo.desktop.DesktopStageStreamCaptureNativeCheckKt")
     jvmArgs("--add-modules=jdk.httpserver")
 }
+
+tasks.register<JavaExec>("realVideoAcceptanceCheck") {
+    group = "verification"
+    description = "Opt-in native YouTube audio-video-audio acceptance check using temporary playback state."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.echo.desktop.RealVideoAcceptanceCheckKt")
+    jvmArgs("--add-modules=jdk.httpserver")
+    doFirst {
+        require(providers.gradleProperty("echoRealVideoAcceptance").orNull == "true") {
+            "Pass -PechoRealVideoAcceptance=true to run the live native video check."
+        }
+    }
+}
